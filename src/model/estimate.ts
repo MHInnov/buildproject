@@ -1,0 +1,364 @@
+import type { Catalog, LaborTask, Product } from './catalog';
+import { productById, taskById } from './catalog';
+import { detectRooms, wallFaceArea, wallLength } from './geometry';
+import { applyOperations } from './operations';
+import type { Building, Lot, Operation, Project, Wall } from './types';
+import { LOT_ORDER } from './types';
+
+export interface MaterialLine {
+  label: string;
+  quantity: number;
+  unit: string;
+  unitPrice: number;
+  total: number;
+  /** Détail du métré, ex. « 18,4 m² + 8 % de chute = 19,9 m² ». */
+  takeoff?: string;
+}
+
+export interface LaborLine {
+  taskId: string;
+  label: string;
+  quantity: number;
+  unit: string;
+  min: number;
+  max: number;
+}
+
+export interface EstimateLine {
+  id: string;
+  lot: Lot;
+  title: string;
+  subtitle?: string;
+  materials: MaterialLine[];
+  labor: LaborLine[];
+  warnings: string[];
+  materialTotal: number;
+  laborMin: number;
+  laborMax: number;
+}
+
+export interface LotSummary {
+  lot: Lot;
+  lines: EstimateLine[];
+  materialTotal: number;
+  laborMin: number;
+  laborMax: number;
+}
+
+export interface Estimate {
+  lots: LotSummary[];
+  materialTotal: number;
+  /** Main d'œuvre HTVA. */
+  laborMin: number;
+  laborMax: number;
+  vatRate: number;
+  /** Total TVAC : matériaux (prix publics TTC) + main d'œuvre TVAC. */
+  totalMin: number;
+  totalMax: number;
+  warnings: string[];
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+const fmt = (n: number, d = 1) => n.toLocaleString('fr-BE', { maximumFractionDigits: d, minimumFractionDigits: 0 });
+
+function labor(task: LaborTask, quantity: number): LaborLine {
+  return { taskId: task.id, label: task.label, quantity: round2(quantity), unit: task.unit, min: round2(task.min * quantity), max: round2(task.max * quantity) };
+}
+
+function finalize(line: Omit<EstimateLine, 'materialTotal' | 'laborMin' | 'laborMax'>): EstimateLine {
+  return {
+    ...line,
+    materialTotal: round2(line.materials.reduce((s, m) => s + m.total, 0)),
+    laborMin: round2(line.labor.reduce((s, l) => s + l.min, 0)),
+    laborMax: round2(line.labor.reduce((s, l) => s + l.max, 0)),
+  };
+}
+
+/** Matériau vendu au paquet (m²) : quantité arrondie au paquet supérieur, chute incluse. */
+export function packMaterial(p: Product, area: number): MaterialLine {
+  const waste = p.waste ?? 0.08;
+  const needed = area * (1 + waste);
+  const packs = Math.ceil(needed / (p.packSize ?? 1) - 1e-9);
+  return {
+    label: p.name,
+    quantity: packs,
+    unit: `paquet${packs > 1 ? 's' : ''} de ${fmt(p.packSize ?? 1, 2)} m²`,
+    unitPrice: p.price,
+    total: round2(packs * p.price),
+    takeoff: `${fmt(area)} m² + ${Math.round(waste * 100)} % de chute = ${fmt(needed)} m²`,
+  };
+}
+
+/** Peinture : litres = surface × couches ÷ rendement, arrondis au pot supérieur. */
+export function paintMaterial(p: Product, area: number): MaterialLine {
+  const coats = p.coats ?? 2;
+  const liters = (area * coats) / (p.coverage ?? 10);
+  const pots = Math.max(1, Math.ceil(liters / (p.packSize ?? 1) - 1e-9));
+  return {
+    label: p.name,
+    quantity: pots,
+    unit: `pot${pots > 1 ? 's' : ''} de ${fmt(p.packSize ?? 1)} L`,
+    unitPrice: p.price,
+    total: round2(pots * p.price),
+    takeoff: `${fmt(area)} m² × ${coats} couches ÷ ${p.coverage ?? 10} m²/L = ${fmt(liters)} L`,
+  };
+}
+
+function floorLaborTask(p: Product, catalog: Catalog): LaborTask {
+  if (p.tags.includes('carrelage')) return taskById(catalog, 'pose-carrelage-sol');
+  if (p.tags.includes('parquet')) return taskById(catalog, 'pose-parquet');
+  return taskById(catalog, 'pose-flottant');
+}
+
+export function computeEstimate(project: Project, catalog: Catalog): Estimate {
+  const { existing, operations } = project;
+  const projected = applyOperations(existing, operations);
+  const rooms = detectRooms(projected);
+  const lines: EstimateLine[] = [];
+  const warnings: string[] = [];
+  const vatRate = project.olderThan10Years ? 0.06 : 0.21;
+
+  const stateBefore = (i: number): Building => applyOperations(existing, operations.slice(0, i));
+  const existingWallIds = new Set(existing.walls.map((w) => w.id));
+  const isExistingWall = (id: string) => existingWallIds.has(id) || [...existingWallIds].some((e) => id.startsWith(`${e}.`));
+
+  let needsStabilityStudy = false;
+  const floorsByProduct = new Map<string, { area: number; plinth: number; rooms: string[] }>();
+  const finishesByProduct = new Map<string, { area: number; walls: number }>();
+  const furnitureByProduct = new Map<string, number>();
+
+  operations.forEach((op: Operation, i: number) => {
+    switch (op.type) {
+      case 'demolishWall': {
+        const before = stateBefore(i);
+        const w = before.walls.find((x) => x.id === op.wallId);
+        if (!w) return;
+        const area = wallFaceArea(w, before.openings);
+        const L = wallLength(w);
+        const items: LaborLine[] = [];
+        const lineWarnings: string[] = [];
+        if (w.kind === 'porteur') {
+          items.push(labor(taskById(catalog, 'demol-porteur'), area));
+          items.push(labor(taskById(catalog, 'renfort-porteur'), L));
+          needsStabilityStudy = true;
+          lineWarnings.push('Mur porteur : ne jamais démolir sans étude de stabilité ni étançonnement.');
+        } else {
+          items.push(labor(taskById(catalog, 'demol-cloison'), area));
+        }
+        items.push(labor(taskById(catalog, 'evacuation'), Math.max(0.5, area * w.thickness * 1.3)));
+        items.push(labor(taskById(catalog, 'raccord-sol'), L));
+        lines.push(
+          finalize({
+            id: `op-${i}`,
+            lot: 'demolition',
+            title: `Démolition ${w.kind === 'porteur' ? 'du mur porteur' : 'de la cloison'} (${fmt(L, 2)} m)`,
+            subtitle: `${fmt(area)} m² de mur, épaisseur ${Math.round(w.thickness * 100)} cm`,
+            materials: [],
+            labor: items,
+            warnings: lineWarnings,
+          }),
+        );
+        return;
+      }
+      case 'addWall': {
+        const w: Wall = op.wall;
+        const L = wallLength(w);
+        lines.push(
+          finalize({
+            id: `op-${i}`,
+            lot: 'gros-oeuvre',
+            title: `Nouvelle cloison (${fmt(L, 2)} m)`,
+            subtitle: `${fmt(L * w.height)} m² fourniture et pose`,
+            materials: [],
+            labor: [labor(taskById(catalog, 'cloison-plaque'), L * w.height)],
+            warnings: [],
+          }),
+        );
+        return;
+      }
+      case 'addOpening': {
+        const o = op.opening;
+        const p = productById(catalog, o.productId);
+        const items: LaborLine[] = [];
+        if (isExistingWall(o.wallId)) items.push(labor(taskById(catalog, 'creation-baie'), 1));
+        items.push(labor(taskById(catalog, o.kind === 'porte' ? 'pose-porte' : 'pose-chassis'), 1));
+        lines.push(
+          finalize({
+            id: `op-${i}`,
+            lot: 'menuiserie',
+            title: `Nouvelle ${o.kind === 'porte' ? 'porte' : 'fenêtre'} ${Math.round(o.width * 100)} × ${Math.round(o.height * 100)} cm`,
+            subtitle: p?.name,
+            materials: p ? [{ label: p.name, quantity: 1, unit: 'pièce', unitPrice: p.price, total: p.price }] : [],
+            labor: items,
+            warnings: isExistingWall(o.wallId) ? ['Ouverture dans un mur existant : vérifier s\'il est porteur.'] : [],
+          }),
+        );
+        return;
+      }
+      case 'removeOpening': {
+        const before = stateBefore(i);
+        const o = before.openings.find((x) => x.id === op.openingId);
+        if (!o) return;
+        lines.push(
+          finalize({
+            id: `op-${i}`,
+            lot: 'menuiserie',
+            title: `Suppression d'une ${o.kind === 'porte' ? 'porte' : 'fenêtre'}`,
+            subtitle: `${fmt(o.width * o.height)} m² à reboucher`,
+            materials: [],
+            labor: [
+              labor(taskById(catalog, o.kind === 'porte' ? 'depose-porte' : 'depose-chassis'), 1),
+              labor(taskById(catalog, 'rebouchage-baie'), o.width * o.height),
+            ],
+            warnings: [],
+          }),
+        );
+        return;
+      }
+      case 'replaceOpening': {
+        const before = stateBefore(i);
+        const o = before.openings.find((x) => x.id === op.openingId);
+        const p = productById(catalog, op.productId);
+        if (!o || !p) return;
+        const porte = o.kind === 'porte';
+        lines.push(
+          finalize({
+            id: `op-${i}`,
+            lot: 'menuiserie',
+            title: `Remplacement ${porte ? 'de porte' : 'de châssis'} ${Math.round(o.width * 100)} × ${Math.round(o.height * 100)} cm`,
+            subtitle: p.name,
+            materials: [{ label: p.name, quantity: 1, unit: 'pièce', unitPrice: p.price, total: p.price }],
+            labor: [
+              labor(taskById(catalog, porte ? 'depose-porte' : 'depose-chassis'), 1),
+              labor(taskById(catalog, porte ? 'pose-porte' : 'pose-chassis'), 1),
+            ],
+            warnings: [],
+          }),
+        );
+        return;
+      }
+      case 'setFloor': {
+        const room = rooms.find((r) => r.label.id === op.roomId);
+        if (!room) return;
+        const doors = projected.openings.filter((o) => o.kind === 'porte' && room.wallIds.includes(o.wallId));
+        const plinth = Math.max(0, room.perimeter - doors.reduce((s, d) => s + d.width, 0));
+        const acc = floorsByProduct.get(op.productId) ?? { area: 0, plinth: 0, rooms: [] };
+        acc.area += room.area;
+        acc.plinth += plinth;
+        acc.rooms.push(room.label.name);
+        floorsByProduct.set(op.productId, acc);
+        return;
+      }
+      case 'setWallFinish': {
+        const w = projected.walls.find((x) => x.id === op.wallId);
+        if (!w) return;
+        const acc = finishesByProduct.get(op.productId) ?? { area: 0, walls: 0 };
+        acc.area += wallFaceArea(w, projected.openings);
+        acc.walls += 1;
+        finishesByProduct.set(op.productId, acc);
+        return;
+      }
+      case 'addFurniture':
+        furnitureByProduct.set(op.item.productId, (furnitureByProduct.get(op.item.productId) ?? 0) + 1);
+        return;
+      default:
+        return;
+    }
+  });
+
+  for (const [pid, acc] of floorsByProduct) {
+    const p = productById(catalog, pid);
+    if (!p || acc.area <= 0) continue;
+    const pose = floorLaborTask(p, catalog);
+    lines.push(
+      finalize({
+        id: `floor-${pid}`,
+        lot: pose.lot,
+        title: `Sol : ${p.name}`,
+        subtitle: `${acc.rooms.join(', ')} · ${fmt(acc.area)} m²`,
+        materials: [packMaterial(p, acc.area)],
+        labor: [labor(taskById(catalog, 'depose-sol'), acc.area), labor(pose, acc.area), labor(taskById(catalog, 'plinthes'), acc.plinth)],
+        warnings: [],
+      }),
+    );
+  }
+
+  for (const [pid, acc] of finishesByProduct) {
+    const p = productById(catalog, pid);
+    if (!p || acc.area <= 0) continue;
+    const isPaint = p.category === 'peinture';
+    lines.push(
+      finalize({
+        id: `finish-${pid}`,
+        lot: isPaint ? 'peinture' : 'carrelage',
+        title: `${isPaint ? 'Peinture' : 'Faïence'} : ${p.name}`,
+        subtitle: `${acc.walls} face${acc.walls > 1 ? 's' : ''} de mur · ${fmt(acc.area)} m² ouvertures déduites`,
+        materials: [isPaint ? paintMaterial(p, acc.area) : packMaterial(p, acc.area)],
+        labor: isPaint
+          ? [labor(taskById(catalog, 'prep-murs'), acc.area), labor(taskById(catalog, 'peinture-murs'), acc.area)]
+          : [labor(taskById(catalog, 'pose-faience'), acc.area)],
+        warnings: [],
+      }),
+    );
+  }
+
+  for (const [pid, qty] of furnitureByProduct) {
+    const p = productById(catalog, pid);
+    if (!p) continue;
+    const task =
+      p.subcategory === 'cuisine' ? 'pose-cuisine' : p.subcategory === 'salle-de-bain' ? 'pose-sanitaire' : 'montage-meuble';
+    lines.push(
+      finalize({
+        id: `furn-${pid}`,
+        lot: 'mobilier',
+        title: `${qty > 1 ? `${qty} × ` : ''}${p.name}`,
+        materials: [{ label: p.name, quantity: qty, unit: 'pièce', unitPrice: p.price, total: round2(qty * p.price) }],
+        labor: [labor(taskById(catalog, task), qty)],
+        warnings: [],
+      }),
+    );
+  }
+
+  if (needsStabilityStudy) {
+    lines.push(
+      finalize({
+        id: 'etude-stabilite',
+        lot: 'gros-oeuvre',
+        title: 'Étude de stabilité',
+        subtitle: 'Obligatoire avant toute démolition de mur porteur',
+        materials: [],
+        labor: [labor(taskById(catalog, 'etude-stabilite'), 1)],
+        warnings: [],
+      }),
+    );
+    warnings.push('Le projet touche un mur porteur : faites intervenir un architecte ou un ingénieur en stabilité.');
+  }
+
+  const lots: LotSummary[] = LOT_ORDER.map((lot) => {
+    const ls = lines.filter((l) => l.lot === lot);
+    return {
+      lot,
+      lines: ls,
+      materialTotal: round2(ls.reduce((s, l) => s + l.materialTotal, 0)),
+      laborMin: round2(ls.reduce((s, l) => s + l.laborMin, 0)),
+      laborMax: round2(ls.reduce((s, l) => s + l.laborMax, 0)),
+    };
+  }).filter((l) => l.lines.length > 0);
+
+  const materialTotal = round2(lots.reduce((s, l) => s + l.materialTotal, 0));
+  const laborMin = round2(lots.reduce((s, l) => s + l.laborMin, 0));
+  const laborMax = round2(lots.reduce((s, l) => s + l.laborMax, 0));
+  return {
+    lots,
+    materialTotal,
+    laborMin,
+    laborMax,
+    vatRate,
+    totalMin: round2(materialTotal + laborMin * (1 + vatRate)),
+    totalMax: round2(materialTotal + laborMax * (1 + vatRate)),
+    warnings,
+  };
+}
+
+export const euro = (n: number) =>
+  n.toLocaleString('fr-BE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });

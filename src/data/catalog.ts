@@ -1,0 +1,104 @@
+import type { Catalog, Product } from '../model/catalog';
+
+/**
+ * Catalogue de démonstration.
+ * ATTENTION : produits génériques et prix fictifs, uniquement pour faire tourner le MVP.
+ * Ils seront remplacés par des flux fournisseurs réels (voir README).
+ */
+const D = '2026-11-01';
+
+const floors: Product[] = [
+  { id: 'sol-strat-chene-clair', category: 'sol', name: 'Stratifié chêne clair 8 mm', brand: 'Générique', saleUnit: 'paquet', packSize: 2.2, price: 39, priceDate: D, color: '#d9bf94', tone: 'clair', tags: ['bois', 'stratifié', 'scandinave', 'chaleureux'], waste: 0.08 },
+  { id: 'sol-strat-chene-naturel', category: 'sol', name: 'Stratifié chêne naturel 8 mm', brand: 'Générique', saleUnit: 'paquet', packSize: 2.2, price: 35, priceDate: D, color: '#b88a55', tone: 'moyen', tags: ['bois', 'stratifié', 'classique', 'chaleureux'], waste: 0.08 },
+  { id: 'sol-strat-chene-fume', category: 'sol', name: 'Stratifié chêne fumé 9,5 mm', brand: 'Générique', saleUnit: 'paquet', packSize: 2.0, price: 47, priceDate: D, color: '#6e4b2f', tone: 'fonce', tags: ['bois', 'stratifié', 'élégant'], waste: 0.08 },
+  { id: 'sol-strat-gris', category: 'sol', name: 'Stratifié chêne gris 8 mm', brand: 'Générique', saleUnit: 'paquet', packSize: 2.2, price: 33, priceDate: D, color: '#a39d94', tone: 'moyen', tags: ['bois', 'stratifié', 'gris', 'moderne'], waste: 0.08 },
+  { id: 'sol-parquet-chene', category: 'sol', name: 'Parquet contrecollé chêne huilé', brand: 'Générique', saleUnit: 'paquet', packSize: 1.8, price: 99, priceDate: D, color: '#c49a63', tone: 'moyen', tags: ['bois', 'parquet', 'naturel', 'haut de gamme'], waste: 0.1 },
+  { id: 'sol-vinyle-beton', category: 'sol', name: 'Vinyle clipsable effet béton', brand: 'Générique', saleUnit: 'paquet', packSize: 2.5, price: 62, priceDate: D, color: '#8f8f8c', tone: 'moyen', tags: ['vinyle', 'béton', 'gris', 'moderne', 'étanche'], waste: 0.07 },
+  { id: 'sol-vinyle-bois-clair', category: 'sol', name: 'Vinyle clipsable chêne blanchi', brand: 'Générique', saleUnit: 'paquet', packSize: 2.5, price: 58, priceDate: D, color: '#e6dccb', tone: 'clair', tags: ['vinyle', 'bois', 'étanche', 'scandinave'], waste: 0.07 },
+  { id: 'sol-carrelage-gris-60', category: 'sol', name: 'Carrelage grès cérame gris 60x60', brand: 'Générique', saleUnit: 'paquet', packSize: 1.44, price: 42, priceDate: D, color: '#7d7f82', tone: 'moyen', tags: ['carrelage', 'gris', 'moderne', 'grand format'], waste: 0.1 },
+  { id: 'sol-carrelage-blanc-60', category: 'sol', name: 'Carrelage grès cérame blanc mat 60x60', brand: 'Générique', saleUnit: 'paquet', packSize: 1.44, price: 45, priceDate: D, color: '#eeece7', tone: 'clair', tags: ['carrelage', 'blanc', 'lumineux', 'grand format'], waste: 0.1 },
+  { id: 'sol-carrelage-ciment', category: 'sol', name: 'Carreaux ciment motif 20x20', brand: 'Générique', saleUnit: 'paquet', packSize: 1.0, price: 55, priceDate: D, color: '#9aa6a8', tone: 'moyen', tags: ['carrelage', 'motif', 'rétro', 'petit format'], waste: 0.12 },
+];
+
+const paints: Product[] = [
+  { id: 'peint-blanc-mat', category: 'peinture', name: 'Peinture murale blanc mat', brand: 'Générique', saleUnit: 'pot', packSize: 10, price: 69, priceDate: D, color: '#f6f5f1', tone: 'clair', tags: ['blanc', 'lumineux', 'neutre'], coverage: 10, coats: 2 },
+  { id: 'peint-blanc-casse', category: 'peinture', name: 'Peinture murale blanc cassé', brand: 'Générique', saleUnit: 'pot', packSize: 2.5, price: 32, priceDate: D, color: '#eee8da', tone: 'clair', tags: ['blanc', 'chaleureux', 'neutre'], coverage: 10, coats: 2 },
+  { id: 'peint-greige', category: 'peinture', name: 'Peinture murale greige', brand: 'Générique', saleUnit: 'pot', packSize: 2.5, price: 36, priceDate: D, color: '#cfc5b6', tone: 'clair', tags: ['beige', 'gris', 'doux', 'neutre'], coverage: 10, coats: 2 },
+  { id: 'peint-vert-sauge', category: 'peinture', name: 'Peinture murale vert sauge', brand: 'Générique', saleUnit: 'pot', packSize: 2.5, price: 38, priceDate: D, color: '#a6b39b', tone: 'moyen', tags: ['vert', 'nature', 'doux'], coverage: 10, coats: 2 },
+  { id: 'peint-terracotta', category: 'peinture', name: 'Peinture murale terracotta', brand: 'Générique', saleUnit: 'pot', packSize: 2.5, price: 38, priceDate: D, color: '#c2704f', tone: 'moyen', tags: ['orange', 'chaleureux', 'couleur'], coverage: 10, coats: 2 },
+  { id: 'peint-bleu-nuit', category: 'peinture', name: 'Peinture murale bleu nuit', brand: 'Générique', saleUnit: 'pot', packSize: 2.5, price: 39, priceDate: D, color: '#27354a', tone: 'fonce', tags: ['bleu', 'élégant', 'couleur'], coverage: 9, coats: 2 },
+  { id: 'peint-gris-anthracite', category: 'peinture', name: 'Peinture murale gris anthracite', brand: 'Générique', saleUnit: 'pot', packSize: 2.5, price: 39, priceDate: D, color: '#45484c', tone: 'fonce', tags: ['gris', 'moderne', 'contraste'], coverage: 9, coats: 2 },
+];
+
+const wallTiles: Product[] = [
+  { id: 'faience-blanc-metro', category: 'faience', name: 'Faïence métro blanc 7,5x15', brand: 'Générique', saleUnit: 'paquet', packSize: 1.0, price: 24, priceDate: D, color: '#f4f4f2', tone: 'clair', tags: ['blanc', 'métro', 'classique', 'salle de bain', 'cuisine'], waste: 0.1 },
+  { id: 'faience-vert-zellige', category: 'faience', name: 'Faïence effet zellige vert 10x10', brand: 'Générique', saleUnit: 'paquet', packSize: 0.5, price: 39, priceDate: D, color: '#4f7a68', tone: 'moyen', tags: ['vert', 'artisanal', 'couleur', 'cuisine'], waste: 0.12 },
+  { id: 'faience-marbre', category: 'faience', name: 'Faïence effet marbre 30x60', brand: 'Générique', saleUnit: 'paquet', packSize: 1.26, price: 45, priceDate: D, color: '#e5e3df', tone: 'clair', tags: ['marbre', 'blanc', 'élégant', 'salle de bain', 'grand format'], waste: 0.1 },
+];
+
+const doors: Product[] = [
+  { id: 'porte-int-blanche', category: 'porte', name: 'Porte intérieure blanche lisse 83 cm', brand: 'Générique', saleUnit: 'piece', price: 189, priceDate: D, color: '#f3f3f0', tone: 'clair', tags: ['blanc', 'lisse', 'moderne'], size: { w: 0.83, d: 0.04, h: 2.01 } },
+  { id: 'porte-int-chene', category: 'porte', name: 'Porte intérieure plaquée chêne 83 cm', brand: 'Générique', saleUnit: 'piece', price: 279, priceDate: D, color: '#b88a55', tone: 'moyen', tags: ['bois', 'chaleureux'], size: { w: 0.83, d: 0.04, h: 2.01 } },
+  { id: 'porte-int-noire-vitree', category: 'porte', name: 'Porte vitrée cadre noir 83 cm', brand: 'Générique', saleUnit: 'piece', price: 449, priceDate: D, color: '#222222', tone: 'fonce', tags: ['vitré', 'noir', 'industriel', 'lumineux'], size: { w: 0.83, d: 0.04, h: 2.01 } },
+];
+
+const windows: Product[] = [
+  { id: 'chassis-pvc-blanc', category: 'fenetre', name: 'Châssis PVC blanc double vitrage', brand: 'Générique', saleUnit: 'piece', price: 520, priceDate: D, color: '#f5f5f5', tone: 'clair', tags: ['pvc', 'blanc', 'isolant'], size: { w: 1.2, d: 0.07, h: 1.35 } },
+  { id: 'chassis-pvc-anthracite', category: 'fenetre', name: 'Châssis PVC anthracite triple vitrage', brand: 'Générique', saleUnit: 'piece', price: 790, priceDate: D, color: '#3b3f44', tone: 'fonce', tags: ['pvc', 'anthracite', 'moderne', 'très isolant'], size: { w: 1.2, d: 0.08, h: 1.35 } },
+  { id: 'chassis-alu-noir', category: 'fenetre', name: 'Châssis aluminium noir double vitrage', brand: 'Générique', saleUnit: 'piece', price: 980, priceDate: D, color: '#1d1d1f', tone: 'fonce', tags: ['aluminium', 'noir', 'fin', 'industriel'], size: { w: 1.2, d: 0.07, h: 1.35 } },
+  { id: 'chassis-bois', category: 'fenetre', name: 'Châssis bois meranti double vitrage', brand: 'Générique', saleUnit: 'piece', price: 890, priceDate: D, color: '#8a5a36', tone: 'moyen', tags: ['bois', 'chaleureux', 'naturel'], size: { w: 1.2, d: 0.08, h: 1.35 } },
+  { id: 'baie-alu-noir', category: 'fenetre', name: 'Baie coulissante aluminium noir 240 cm', brand: 'Générique', saleUnit: 'piece', price: 2450, priceDate: D, color: '#1d1d1f', tone: 'fonce', tags: ['aluminium', 'noir', 'grand', 'lumineux', 'coulissant'], size: { w: 2.4, d: 0.1, h: 2.15 } },
+];
+
+const furniture: Product[] = [
+  { id: 'canape-3p-gris', category: 'meuble', subcategory: 'canape', name: 'Canapé 3 places tissu gris', brand: 'Générique', saleUnit: 'piece', price: 799, priceDate: D, color: '#8d9095', tone: 'moyen', tags: ['canapé', 'gris', 'tissu', 'moderne'], size: { w: 2.1, d: 0.9, h: 0.8 } },
+  { id: 'canape-angle-beige', category: 'meuble', subcategory: 'canape', name: "Canapé d'angle bouclette beige", brand: 'Générique', saleUnit: 'piece', price: 1290, priceDate: D, color: '#e3dacb', tone: 'clair', tags: ['canapé', 'beige', 'grand', 'cosy'], size: { w: 2.7, d: 1.7, h: 0.78 } },
+  { id: 'canape-2p-cuir', category: 'meuble', subcategory: 'canape', name: 'Canapé 2 places cuir cognac', brand: 'Générique', saleUnit: 'piece', price: 1190, priceDate: D, color: '#8b4f2b', tone: 'fonce', tags: ['canapé', 'cuir', 'petit', 'vintage'], size: { w: 1.6, d: 0.85, h: 0.82 } },
+  { id: 'table-chene-6', category: 'meuble', subcategory: 'table', name: 'Table à manger chêne 6 personnes', brand: 'Générique', saleUnit: 'piece', price: 690, priceDate: D, color: '#c49a63', tone: 'moyen', tags: ['table', 'bois', 'chaleureux'], size: { w: 1.8, d: 0.9, h: 0.75 } },
+  { id: 'table-ronde-blanche', category: 'meuble', subcategory: 'table', name: 'Table ronde blanche 4 personnes', brand: 'Générique', saleUnit: 'piece', price: 299, priceDate: D, color: '#f0efeb', tone: 'clair', tags: ['table', 'ronde', 'petit', 'scandinave'], size: { w: 1.1, d: 1.1, h: 0.75 } },
+  { id: 'table-noire-8', category: 'meuble', subcategory: 'table', name: 'Table métal et bois foncé 8 personnes', brand: 'Générique', saleUnit: 'piece', price: 990, priceDate: D, color: '#3a2c22', tone: 'fonce', tags: ['table', 'grand', 'industriel'], size: { w: 2.2, d: 1.0, h: 0.76 } },
+  { id: 'chaise-bois', category: 'meuble', subcategory: 'chaise', name: 'Chaise bois clair', brand: 'Générique', saleUnit: 'piece', price: 89, priceDate: D, color: '#d9bf94', tone: 'clair', tags: ['chaise', 'bois', 'scandinave'], size: { w: 0.45, d: 0.5, h: 0.8 } },
+  { id: 'lit-160-blanc', category: 'meuble', subcategory: 'lit', name: 'Lit 160x200 tête de lit tissu', brand: 'Générique', saleUnit: 'piece', price: 549, priceDate: D, color: '#d8d4cc', tone: 'clair', tags: ['lit', 'double', 'doux'], size: { w: 1.7, d: 2.1, h: 1.0 } },
+  { id: 'lit-140-bois', category: 'meuble', subcategory: 'lit', name: 'Lit 140x190 bois massif', brand: 'Générique', saleUnit: 'piece', price: 429, priceDate: D, color: '#a87a4a', tone: 'moyen', tags: ['lit', 'bois', 'petit'], size: { w: 1.5, d: 2.0, h: 0.9 } },
+  { id: 'armoire-blanche', category: 'meuble', subcategory: 'armoire', name: 'Armoire 2 portes blanche', brand: 'Générique', saleUnit: 'piece', price: 379, priceDate: D, color: '#f2f2ef', tone: 'clair', tags: ['armoire', 'rangement', 'blanc'], size: { w: 1.0, d: 0.6, h: 2.0 } },
+  { id: 'armoire-chene-grande', category: 'meuble', subcategory: 'armoire', name: 'Grande armoire 3 portes chêne', brand: 'Générique', saleUnit: 'piece', price: 749, priceDate: D, color: '#b88a55', tone: 'moyen', tags: ['armoire', 'rangement', 'grand', 'bois'], size: { w: 1.5, d: 0.6, h: 2.2 } },
+  { id: 'cuisine-lineaire-blanche', category: 'meuble', subcategory: 'cuisine', name: 'Cuisine linéaire blanche 3 m (meubles bas)', brand: 'Générique', saleUnit: 'piece', price: 2900, priceDate: D, color: '#f1f1ee', tone: 'clair', tags: ['cuisine', 'blanc', 'moderne'], size: { w: 3.0, d: 0.62, h: 0.9 } },
+  { id: 'cuisine-lineaire-verte', category: 'meuble', subcategory: 'cuisine', name: 'Cuisine linéaire vert sauge 3 m (meubles bas)', brand: 'Générique', saleUnit: 'piece', price: 3400, priceDate: D, color: '#93a38b', tone: 'moyen', tags: ['cuisine', 'vert', 'couleur'], size: { w: 3.0, d: 0.62, h: 0.9 } },
+  { id: 'ilot-chene', category: 'meuble', subcategory: 'cuisine', name: 'Îlot central chêne 1,8 m', brand: 'Générique', saleUnit: 'piece', price: 1890, priceDate: D, color: '#b88a55', tone: 'moyen', tags: ['cuisine', 'îlot', 'bois', 'grand'], size: { w: 1.8, d: 0.9, h: 0.92 } },
+  { id: 'bureau-blanc', category: 'meuble', subcategory: 'bureau', name: 'Bureau blanc 120 cm', brand: 'Générique', saleUnit: 'piece', price: 159, priceDate: D, color: '#f2f2ef', tone: 'clair', tags: ['bureau', 'petit', 'blanc'], size: { w: 1.2, d: 0.6, h: 0.75 } },
+  { id: 'meuble-tv-chene', category: 'meuble', subcategory: 'rangement', name: 'Meuble TV chêne 180 cm', brand: 'Générique', saleUnit: 'piece', price: 349, priceDate: D, color: '#c49a63', tone: 'moyen', tags: ['rangement', 'bois', 'tv'], size: { w: 1.8, d: 0.45, h: 0.5 } },
+  { id: 'bibliotheque-noire', category: 'meuble', subcategory: 'rangement', name: 'Bibliothèque métal noir', brand: 'Générique', saleUnit: 'piece', price: 249, priceDate: D, color: '#262626', tone: 'fonce', tags: ['rangement', 'industriel', 'noir'], size: { w: 1.0, d: 0.35, h: 1.9 } },
+  { id: 'meuble-vasque', category: 'meuble', subcategory: 'salle-de-bain', name: 'Meuble vasque 80 cm blanc', brand: 'Générique', saleUnit: 'piece', price: 459, priceDate: D, color: '#f4f4f2', tone: 'clair', tags: ['salle de bain', 'blanc', 'vasque'], size: { w: 0.8, d: 0.46, h: 0.85 } },
+  { id: 'douche-italienne', category: 'meuble', subcategory: 'salle-de-bain', name: 'Douche à l\'italienne 90x140 (receveur + paroi)', brand: 'Générique', saleUnit: 'piece', price: 890, priceDate: D, color: '#dfe5e8', tone: 'clair', tags: ['salle de bain', 'douche', 'moderne'], size: { w: 1.4, d: 0.9, h: 2.0 } },
+];
+
+export const DEMO_CATALOG: Catalog = {
+  products: [...floors, ...paints, ...wallTiles, ...doors, ...windows, ...furniture],
+  /** Fourchettes HTVA fictives, à valider avec des artisans. */
+  tasks: [
+    { id: 'demol-cloison', lot: 'demolition', label: 'Démolition de cloison non porteuse', unit: 'm²', min: 25, max: 45 },
+    { id: 'demol-porteur', lot: 'demolition', label: 'Démolition de mur porteur (hors renfort)', unit: 'm²', min: 90, max: 160 },
+    { id: 'renfort-porteur', lot: 'gros-oeuvre', label: 'Pose de poutre de reprise (IPE) et étançonnement', unit: 'm', min: 450, max: 900 },
+    { id: 'etude-stabilite', lot: 'gros-oeuvre', label: 'Étude de stabilité par un ingénieur', unit: 'forfait', min: 600, max: 1500 },
+    { id: 'evacuation', lot: 'demolition', label: 'Évacuation des gravats (conteneur)', unit: 'm³', min: 35, max: 60 },
+    { id: 'cloison-plaque', lot: 'gros-oeuvre', label: 'Cloison en plaques de plâtre sur ossature, isolée', unit: 'm²', min: 45, max: 70 },
+    { id: 'raccord-sol', lot: 'sols', label: 'Raccord de sol au droit du mur démoli', unit: 'm', min: 30, max: 60 },
+    { id: 'depose-sol', lot: 'sols', label: 'Dépose de l\'ancien revêtement de sol', unit: 'm²', min: 6, max: 12 },
+    { id: 'pose-flottant', lot: 'sols', label: 'Pose de sol flottant (sous-couche incluse)', unit: 'm²', min: 15, max: 25 },
+    { id: 'pose-parquet', lot: 'sols', label: 'Pose de parquet contrecollé collé', unit: 'm²', min: 25, max: 40 },
+    { id: 'pose-carrelage-sol', lot: 'carrelage', label: 'Pose de carrelage au sol (colle et joints)', unit: 'm²', min: 35, max: 60 },
+    { id: 'plinthes', lot: 'sols', label: 'Fourniture et pose de plinthes', unit: 'm', min: 8, max: 15 },
+    { id: 'prep-murs', lot: 'peinture', label: 'Préparation des murs (rebouchage, ponçage, primaire)', unit: 'm²', min: 5, max: 10 },
+    { id: 'peinture-murs', lot: 'peinture', label: 'Application peinture 2 couches', unit: 'm²', min: 8, max: 15 },
+    { id: 'pose-faience', lot: 'carrelage', label: 'Pose de faïence murale', unit: 'm²', min: 40, max: 70 },
+    { id: 'depose-porte', lot: 'menuiserie', label: 'Dépose de porte existante', unit: 'pièce', min: 40, max: 80 },
+    { id: 'pose-porte', lot: 'menuiserie', label: 'Pose de bloc-porte intérieur', unit: 'pièce', min: 120, max: 220 },
+    { id: 'depose-chassis', lot: 'menuiserie', label: 'Dépose de châssis existant', unit: 'pièce', min: 80, max: 150 },
+    { id: 'pose-chassis', lot: 'menuiserie', label: 'Pose de châssis, calfeutrement et finitions', unit: 'pièce', min: 250, max: 450 },
+    { id: 'creation-baie', lot: 'gros-oeuvre', label: 'Création d\'ouverture dans un mur (linteau inclus)', unit: 'pièce', min: 600, max: 1400 },
+    { id: 'rebouchage-baie', lot: 'gros-oeuvre', label: 'Rebouchage d\'une ouverture', unit: 'm²', min: 80, max: 150 },
+    { id: 'montage-meuble', lot: 'mobilier', label: 'Livraison et montage de mobilier', unit: 'pièce', min: 30, max: 90 },
+    { id: 'pose-cuisine', lot: 'mobilier', label: 'Pose de cuisine (raccordements eau et électricité)', unit: 'pièce', min: 900, max: 1800 },
+    { id: 'pose-sanitaire', lot: 'mobilier', label: 'Pose d\'équipement sanitaire (plomberie incluse)', unit: 'pièce', min: 300, max: 750 },
+  ],
+};
