@@ -21,6 +21,16 @@ npm run build    # version de production dans dist/
 
 Le projet est enregistré automatiquement dans le navigateur. Le menu ☰ permet d'exporter ou d'importer un projet en JSON, de repartir d'un plan vide ou de recharger la maison de démonstration.
 
+## Image Docker
+
+À chaque push, GitHub Actions construit une image Docker (nginx qui sert l'application) et la publie sur le registre GitHub :
+
+```bash
+docker run --rm -p 8080:80 ghcr.io/mhinnov/buildproject:latest   # puis http://localhost:8080
+```
+
+Étiquettes publiées : `latest` (branche principale), le nom de la branche (ex. `mvp-renovation`), le commit court (`sha-xxxxxxx`) et les tags `v*`.
+
 ## Raccourcis du plan
 
 | Action | Geste |
