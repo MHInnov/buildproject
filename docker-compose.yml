@@ -1,0 +1,9 @@
+# Lancer l'application en local : docker compose up --build
+# puis ouvrir http://localhost:8080
+services:
+  app:
+    build: .
+    image: construprojet:local
+    ports:
+      - "8080:80"
+    restart: unless-stopped
