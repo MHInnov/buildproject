@@ -130,7 +130,7 @@ details.sub summary { cursor: pointer; font-size: 13px; }
 /* Visite 3D */
 .visit { position: relative; flex: 1; min-height: 0; }
 .visit canvas { touch-action: none; }
-.visit__bar { position: absolute; top: 12px; left: 12px; }
+.visit__bar { position: absolute; top: 12px; left: 12px; z-index: 2; }
 .segmented { display: inline-flex; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px; box-shadow: 0 2px 8px rgba(0,0,0,.06); }
 .segmented button { border: 0; background: transparent; padding: 6px 12px; border-radius: 7px; cursor: pointer; }
 .segmented button.is-active { background: var(--accent); color: #fff; }
@@ -163,6 +163,56 @@ details.sub summary { cursor: pointer; font-size: 13px; }
 .artisan-form button { grid-column: 1 / -1; justify-self: start; }
 .artisan-list { list-style: none; padding: 0; margin: 16px 0 0; display: flex; flex-direction: column; gap: 8px; }
 .artisan-list li { display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+
+
+/* Niveaux, état de l'existant */
+.levelbar { position: absolute; top: 12px; right: 12px; z-index: 5; display: flex; flex-direction: column-reverse; gap: 4px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px; box-shadow: 0 2px 8px rgba(0,0,0,.06); }
+.levelbar button { border: 0; background: transparent; padding: 6px 12px; border-radius: 7px; cursor: pointer; text-align: left; white-space: nowrap; }
+.levelbar button:hover { background: var(--bg); }
+.levelbar button.is-active { background: var(--accent); color: #fff; }
+.levelbar__roof { font-size: 12px; color: var(--ink-soft); }
+.condition { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; font-size: 12px; color: var(--ink-soft); }
+.segmented--small { box-shadow: none; padding: 2px; flex-wrap: wrap; }
+.segmented--small button { padding: 4px 8px; font-size: 12px; }
+.segmented button.cond--bon.is-active { background: var(--new); }
+.segmented button.cond--moyen.is-active { background: #bf8700; }
+.segmented button.cond--mauvais.is-active { background: var(--danger); }
+.btn--small { padding: 4px 8px; font-size: 12px; }
+.swatch--inline { display: inline-block; width: 14px; height: 14px; vertical-align: -2px; margin-right: 4px; border-radius: 3px; }
+.link { border: 0; background: transparent; color: var(--accent); padding: 2px 0; cursor: pointer; text-align: left; }
+.link:hover { text-decoration: underline; }
+.vp-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 2px; }
+.inline-form { display: flex; gap: 6px; align-items: flex-end; }
+.inline-form .field, .inline-form input { flex: 1; }
+.inline-form input { border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; background: var(--paper); min-width: 0; }
+
+/* Plan importé */
+.underlay { display: flex; flex-direction: column; gap: 10px; }
+.steps-list { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; }
+.steps-list li.is-done > strong::after { content: ' ✓'; color: var(--new); }
+.steps-list p { margin: 4px 0; }
+
+/* Points de vue */
+.photo { position: relative; border-radius: 8px; overflow: hidden; cursor: crosshair; line-height: 0; margin: 8px 0; }
+.photo img { width: 100%; height: auto; display: block; }
+.photo__mark { position: absolute; width: 18px; height: 18px; margin: -9px 0 0 -9px; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 2px var(--accent); pointer-events: none; }
+.photo__found { position: absolute; display: grid; place-items: center; width: 20px; height: 20px; margin: -10px 0 0 -10px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 11px; line-height: 1; font-weight: 700; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+.photo-pick { display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.found ol { padding-left: 20px; margin: 4px 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.log { list-style: none; padding: 8px; margin: 8px 0 0; background: var(--bg); border-radius: 8px; font-size: 12px; color: var(--ink-soft); display: flex; flex-direction: column; gap: 2px; }
+
+/* Fenêtre d'administration */
+.modal { position: fixed; inset: 0; background: rgba(15,20,30,.45); display: grid; place-items: center; z-index: 50; padding: 16px; }
+.modal__box { background: var(--paper); border-radius: 14px; padding: 20px 24px; width: min(520px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,.25); display: flex; flex-direction: column; gap: 12px; }
+.modal__box section { display: flex; flex-direction: column; gap: 10px; }
+
+/* Visite : comparaison photo */
+.visit__bar { display: flex; gap: 8px; flex-wrap: wrap; max-width: calc(100% - 24px); }
+.visit__bar select { border: 0; background: transparent; padding: 4px 6px; }
+.visit__bar .toggle { padding: 0 8px; }
+.visit__photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.attention { background: var(--warn-bg); color: var(--warn); border-radius: var(--radius); padding: 12px 16px; margin: 12px 0; }
+.attention ul { margin: 4px 0 0; padding-left: 20px; }
 
 /* Petits écrans : le panneau passe sous le plan */
 @media (max-width: 860px) {

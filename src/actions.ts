@@ -1,6 +1,6 @@
 import { detectRooms, newId, wallSideFacingRoom } from './model/geometry';
 import { applyOperations, pushOperation as pushOp } from './model/operations';
-import type { FurnitureItem, Opening, Room, RoomLabel, WallSide } from './model/types';
+import type { Condition, FurnitureItem, Opening, Room, RoomLabel, Viewpoint, WallSide } from './model/types';
 import { useStore } from './store';
 
 /**
@@ -110,7 +110,7 @@ export function removeOpening(openingId: string) {
 }
 
 export function addFurniture(productId: string, x: number, y: number, rotation = 0): string {
-  const item: FurnitureItem = { id: newId('f'), productId, x, y, rotation };
+  const item: FurnitureItem = { id: newId('f'), levelId: st().levelId, productId, x, y, rotation };
   if (isExisting()) st().editExisting((b) => void b.furniture.push(item));
   else st().addOperation({ type: 'addFurniture', item });
   return item.id;
@@ -147,4 +147,41 @@ export function swapFurniture(item: FurnitureItem, productId: string) {
     p.operations = ops;
     queueMicrotask(() => st().select({ kind: 'furniture', id: added.id }));
   });
+}
+
+/** État d'un élément existant (relevé). */
+export function setCondition(target: { kind: 'wall' | 'opening' | 'room' | 'roof'; id: string; room?: Room }, condition: Condition | undefined) {
+  st().editExisting((b) => {
+    if (target.kind === 'wall') {
+      const w = b.walls.find((x) => x.id === target.id);
+      if (w) w.condition = condition;
+    } else if (target.kind === 'opening') {
+      const o = b.openings.find((x) => x.id === target.id);
+      if (o) o.condition = condition;
+    } else if (target.kind === 'room' && target.room) {
+      ensureLabel(b.rooms, target.room.label).floorCondition = condition;
+    } else if (target.kind === 'roof' && b.roof) b.roof.condition = condition;
+  });
+}
+
+export function setRoofCovering(productId: string) {
+  if (isExisting()) st().editExisting((b) => void (b.roof && (b.roof.coveringId = productId)));
+  else st().addOperation({ type: 'setRoofCovering', productId });
+}
+
+export function setRoofInsulation(productId: string) {
+  if (isExisting()) st().editExisting((b) => void (b.roof && (b.roof.insulationId = productId)));
+  else st().addOperation({ type: 'setRoofInsulation', productId });
+}
+
+export function updateViewpoint(id: string, fn: (v: Viewpoint) => void) {
+  st().updateProject((p) => {
+    const v = p.viewpoints.find((x) => x.id === id);
+    if (v) fn(v);
+  });
+}
+
+export function removeViewpoint(id: string) {
+  st().updateProject((p) => void (p.viewpoints = p.viewpoints.filter((v) => v.id !== id)));
+  st().select(null);
 }

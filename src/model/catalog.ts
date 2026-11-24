@@ -1,6 +1,42 @@
 import type { Lot } from './types';
 
-export type Category = 'sol' | 'peinture' | 'faience' | 'porte' | 'fenetre' | 'meuble';
+export type Category = 'sol' | 'peinture' | 'mur' | 'faience' | 'porte' | 'fenetre' | 'meuble' | 'escalier' | 'toiture' | 'isolation';
+
+/**
+ * Aspect d'un matériau, dessiné par l'application (aucune image à télécharger) :
+ * - planks : lames de bois (w = largeur de lame, h = longueur)
+ * - parquet : chevrons ou bâtons rompus (w = largeur de lame)
+ * - tiles : carreaux (w × h), joint de couleur `joint`
+ * - bricks : briques (w × h)
+ * - stone : pierres irrégulières
+ * - wallpaper : papier peint à motif (couleur `accent`)
+ * - paneling : lambris vertical (w = largeur de lame)
+ * - plaster, concrete, carpet, smooth : surfaces continues avec grain plus ou moins marqué
+ * - slate, rooftiles, zinc : couvertures de toiture
+ */
+export type PatternKind =
+  | 'planks'
+  | 'parquet'
+  | 'tiles'
+  | 'bricks'
+  | 'stone'
+  | 'wallpaper'
+  | 'paneling'
+  | 'plaster'
+  | 'concrete'
+  | 'carpet'
+  | 'smooth'
+  | 'slate'
+  | 'rooftiles'
+  | 'zinc';
+
+export interface Pattern {
+  kind: PatternKind;
+  w?: number;
+  h?: number;
+  joint?: string;
+  accent?: string;
+}
 export type Tone = 'clair' | 'moyen' | 'fonce';
 
 export interface Product {
@@ -32,6 +68,16 @@ export interface Product {
   coats?: number;
   /** Taux de chute pour les revêtements (0.08 = 8 %). */
   waste?: number;
+  /** Aspect du matériau pour le plan et la 3D. */
+  pattern?: Pattern;
+  /** Rugosité pour le rendu 3D (0 = brillant, 1 = mat). */
+  roughness?: number;
+  /** Matériau qu'on trouve dans une maison existante mais qu'on ne vend pas (relevé de l'existant uniquement). */
+  existingOnly?: boolean;
+  /** Tâche de dépose propre à ce matériau, utilisée quand le projet le remplace. */
+  removal?: string;
+  /** Isolation : résistance thermique R (m².K/W). */
+  rValue?: number;
 }
 
 export interface LaborTask {

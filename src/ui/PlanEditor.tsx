@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { addFurniture, addOpening, moveFurniture, removeFurniture, removeOpening, removeWall } from '../actions';
-import { productById } from '../model/catalog';
+import { addFurniture, addOpening, moveFurniture, removeFurniture, removeOpening, removeWall, removeViewpoint, updateViewpoint } from '../actions';
+import { useAsset } from '../assets';
+import { productById, type Product } from '../model/catalog';
+import { levelBelow, levelById, onLevel } from '../model/levels';
+import { patternTile, patternUrl } from '../textures/patterns';
+import { useUi } from '../uiState';
 import { projectDiff } from '../model/diff';
 import {
   detectRooms,
@@ -15,7 +19,7 @@ import {
   wallLength,
   wallNormal,
 } from '../model/geometry';
-import type { Building, Opening, Point, Wall, WallKind } from '../model/types';
+import type { Building, Opening, Point, Viewpoint, Wall, WallKind } from '../model/types';
 import { useBuilding, useStore } from '../store';
 
 interface View {
@@ -29,12 +33,24 @@ type Drag =
   | { kind: 'furniture'; id: string; dx: number; dy: number; x: number; y: number; rotation: number; moved: boolean }
   | { kind: 'node'; from: Point; to: Point }
   | { kind: 'room'; start: Point; end: Point }
+  | { kind: 'underlay'; start: Point; x: number; y: number; dx: number; dy: number }
+  | { kind: 'viewpoint'; id: string; mode: 'move' | 'turn'; x: number; y: number; direction: number; moved: boolean }
   | null;
 
 const fmtM = (n: number) => `${n.toLocaleString('fr-BE', { maximumFractionDigits: 2 })} m`;
 
 export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
-  const building = useBuilding();
+  const full = useBuilding();
+  const levelId = useStore((s) => s.levelId);
+  const building = useMemo(() => onLevel(full, levelId), [full, levelId]);
+  const level = levelById(full, levelId) ?? full.levels[0];
+  const lower = useMemo(() => {
+    const l = levelBelow(full, levelId);
+    return l ? onLevel(full, l.id) : null;
+  }, [full, levelId]);
+  const underlay = levelById(useStore((s) => s.project.existing), levelId)?.underlay;
+  const underlaySrc = useAsset(underlay?.assetId);
+  const ui = useUi();
   const project = useStore((s) => s.project);
   const catalog = useStore((s) => s.catalog);
   const step = useStore((s) => s.step);
@@ -72,7 +88,7 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
   // Cadrage initial sur le bâtiment
   const fitted = useRef(false);
   useEffect(() => {
-    if (fitted.current || building.walls.length === 0 || size.w === 800) return;
+    if (fitted.current || (building.walls.length === 0 && !underlay) || size.w === 800) return;
     fitted.current = true;
     fit(building);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -81,6 +97,10 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
   function fit(b: Building) {
     const xs = b.walls.flatMap((w) => [w.a.x, w.b.x]);
     const ys = b.walls.flatMap((w) => [w.a.y, w.b.y]);
+    if (underlay?.visible) {
+      xs.push(underlay.x, underlay.x + underlay.width * underlay.scale);
+      ys.push(underlay.y, underlay.y + underlay.height * underlay.scale);
+    }
     if (!xs.length) return;
     const minX = Math.min(...xs) - 1.5;
     const maxX = Math.max(...xs) + 1.5;
@@ -123,6 +143,7 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
       }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selection) {
         e.preventDefault();
+        if (selection.kind === 'viewpoint') removeViewpoint(selection.id);
         if (selection.kind === 'wall') removeWall(selection.id);
         if (selection.kind === 'opening') removeOpening(selection.id);
         if (selection.kind === 'furniture') removeFurniture(selection.id);
@@ -136,7 +157,12 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [tool, selection, building, select, setTool]);
 
-  useEffect(() => setWallStart(null), [tool, step]);
+  useEffect(() => setWallStart(null), [tool, step, levelId]);
+  // Recadrage quand on change de niveau ou qu'un plan est importé
+  useEffect(() => {
+    if (size.w !== 800) fit(building);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [levelId, underlay?.assetId]);
 
   const toWorld = (e: { clientX: number; clientY: number }): Point => {
     const rect = svgRef.current!.getBoundingClientRect();
@@ -156,11 +182,12 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
     if (dist(a, b) < 0.05) return;
     const wall: Wall = {
       id: newId('w'),
+      levelId,
       a,
       b,
       kind,
       thickness: kind === 'porteur' ? 0.3 : 0.1,
-      height: 2.6,
+      height: level?.height ?? 2.6,
       finish: { gauche: null, droite: null },
     };
     if (isExisting) useStore.getState().editExisting((bld) => insertWall(bld, wall));
@@ -196,9 +223,26 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
     (e.target as Element).setPointerCapture?.(e.pointerId);
     const raw = toWorld(e);
     const p = snapPoint(raw, building);
+    if (tool === 'select' && ui.moveUnderlay && underlay && e.button === 0) {
+      setDrag({ kind: 'underlay', start: raw, x: underlay.x, y: underlay.y, dx: 0, dy: 0 });
+      return;
+    }
     if (e.button === 1 || tool === 'select') {
       setDrag({ kind: 'pan', start: raw, view, screen: { x: e.clientX, y: e.clientY } });
       if (e.button !== 1) select(null);
+      return;
+    }
+    if (tool === 'calibrate') {
+      const pts = ui.calibration.length >= 2 ? [] : ui.calibration;
+      ui.set({ calibration: [...pts, raw] });
+      return;
+    }
+    if (tool === 'viewpoint') {
+      const v: Viewpoint = { id: newId('v'), levelId, x: Math.round(raw.x * 20) / 20, y: Math.round(raw.y * 20) / 20, direction: 0, fov: 66, eye: 1.5, assetId: null, caption: '' };
+      useStore.getState().updateProject((pr) => void pr.viewpoints.push(v));
+      setTool('select');
+      select({ kind: 'viewpoint', id: v.id });
+      setDrag({ kind: 'viewpoint', id: v.id, mode: 'turn', x: v.x, y: v.y, direction: 0, moved: false });
       return;
     }
     if (tool === 'wall') {
@@ -237,16 +281,33 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
       setDrag({ ...drag, to: snapPoint(raw, { ...building, walls: building.walls.filter((w) => !samePoint(w.a, drag.from) && !samePoint(w.b, drag.from)) }) });
     } else if (drag.kind === 'room') {
       setDrag({ ...drag, end: p });
+    } else if (drag.kind === 'underlay') {
+      setDrag({ ...drag, dx: raw.x - drag.start.x, dy: raw.y - drag.start.y });
+    } else if (drag.kind === 'viewpoint') {
+      if (drag.mode === 'move') setDrag({ ...drag, x: Math.round(raw.x * 20) / 20, y: Math.round(raw.y * 20) / 20, moved: true });
+      else if (dist(raw, drag) > 0.1) setDrag({ ...drag, direction: Math.round((Math.atan2(raw.y - drag.y, raw.x - drag.x) * 180) / Math.PI), moved: true });
     }
   };
 
   const onPointerUp = () => {
     if (!drag) return;
     if (drag.kind === 'furniture' && drag.moved) moveFurniture(drag.id, drag.x, drag.y, drag.rotation);
+    if (drag.kind === 'underlay' && (drag.dx || drag.dy)) {
+      const { x, y, dx, dy } = drag;
+      useStore.getState().editExisting((b) => {
+        const l = b.levels.find((m) => m.id === levelId);
+        if (l?.underlay) Object.assign(l.underlay, { x: x + dx, y: y + dy });
+      });
+    }
+    if (drag.kind === 'viewpoint' && drag.moved) {
+      const { x, y, direction } = drag;
+      updateViewpoint(drag.id, (v) => Object.assign(v, { x, y, direction }));
+    }
     if (drag.kind === 'node' && !samePoint(drag.from, drag.to)) {
       const { from, to } = drag;
       useStore.getState().editExisting((b) => {
         for (const w of b.walls) {
+          if (w.levelId !== levelId) continue;
           if (samePoint(w.a, from)) w.a = { ...to };
           if (samePoint(w.b, from)) w.b = { ...to };
         }
@@ -262,7 +323,7 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
         if (isExisting) {
           const n = building.rooms.length + 1;
           useStore.getState().editExisting((b) =>
-            void b.rooms.push({ id: newId('r'), at: { x: (s.x + t.x) / 2, y: (s.y + t.y) / 2 }, name: `Pièce ${n}`, floorProductId: null }),
+            void b.rooms.push({ id: newId('r'), levelId, at: { x: (s.x + t.x) / 2, y: (s.y + t.y) / 2 }, name: `Pièce ${n}`, floorProductId: null }),
           );
         }
       }
@@ -288,7 +349,13 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
   const isSel = (kind: string, id: string) => selection?.kind === kind && selection.id === id;
   const selectedWall = selection?.kind === 'wall' ? walls.find((w) => w.id === selection.id) : undefined;
 
-  const cursorClass = tool === 'select' ? (drag?.kind === 'pan' ? 'grabbing' : 'default') : 'crosshair';
+  const cursorClass = tool === 'select' ? (drag?.kind === 'pan' || drag?.kind === 'underlay' ? 'grabbing' : ui.moveUnderlay && underlay ? 'move' : 'default') : 'crosshair';
+  const floorProducts = [...new Set(rooms.map((r) => r.label.floorProductId).filter(Boolean))].map((id) => productById(catalog, id)).filter((p): p is Product => !!p);
+  const viewpoints = project.viewpoints
+    .filter((v) => v.levelId === levelId)
+    .map((v) => (drag?.kind === 'viewpoint' && drag.id === v.id ? { ...v, x: drag.x, y: drag.y, direction: drag.direction } : v));
+  const stairsBelow = lower ? lower.furniture.filter((f) => productById(catalog, f.productId)?.category === 'escalier') : [];
+  const ul = underlay && drag?.kind === 'underlay' ? { ...underlay, x: drag.x + drag.dx, y: drag.y + drag.dy } : underlay;
 
   const zoom = (k: number) =>
     setView((v) => {
@@ -325,8 +392,34 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
         <pattern id="hatch" width="0.15" height="0.15" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
           <line x1="0" y1="0" x2="0" y2="0.15" stroke="var(--danger)" strokeWidth="0.03" />
         </pattern>
+        {floorProducts.map((p) => (
+          <MaterialPattern key={p.id} product={p} />
+        ))}
       </defs>
       <rect x={view.x} y={view.y} width={view.w} height={viewH} fill="url(#grid)" />
+
+      {/* Plan importé (calque) */}
+      {ul && ul.visible && underlaySrc && (
+        <image href={underlaySrc} x={ul.x} y={ul.y} width={ul.width * ul.scale} height={ul.height * ul.scale} opacity={ul.opacity} preserveAspectRatio="none" pointerEvents="none" />
+      )}
+      {ul && ui.tracePreview && (
+        <image href={ui.tracePreview} x={ul.x} y={ul.y} width={ul.width * ul.scale} height={ul.height * ul.scale} opacity={0.55} preserveAspectRatio="none" pointerEvents="none" />
+      )}
+
+      {/* Niveau inférieur en filigrane, pour superposer les murs */}
+      {lower?.walls.map((w) => (
+        <line key={`lw-${w.id}`} x1={w.a.x} y1={w.a.y} x2={w.b.x} y2={w.b.y} stroke="var(--ink-soft)" strokeOpacity={0.18} strokeWidth={w.thickness} strokeLinecap="square" pointerEvents="none" />
+      ))}
+      {stairsBelow.map((f) => {
+        const s = productById(catalog, f.productId)?.size ?? { w: 0.8, d: 3, h: 2.8 };
+        return (
+          <g key={`tr-${f.id}`} transform={`translate(${f.x} ${f.y}) rotate(${f.rotation})`} pointerEvents="none">
+            <rect x={-s.w / 2} y={-s.d / 2} width={s.w} height={s.d} fill="none" stroke="var(--ink-soft)" strokeWidth={fs * 0.12} strokeDasharray={`${fs * 0.5} ${fs * 0.3}`} />
+            <line x1={-s.w / 2} y1={-s.d / 2} x2={s.w / 2} y2={s.d / 2} stroke="var(--ink-soft)" strokeWidth={fs * 0.08} />
+            <line x1={s.w / 2} y1={-s.d / 2} x2={-s.w / 2} y2={s.d / 2} stroke="var(--ink-soft)" strokeWidth={fs * 0.08} />
+          </g>
+        );
+      })}
 
       {/* Pièces */}
       {rooms.map((r) => {
@@ -335,8 +428,8 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
           <polygon
             key={r.label.id}
             points={r.polygon.map((p) => `${p.x},${p.y}`).join(' ')}
-            fill={floor?.color ?? 'var(--room)'}
-            fillOpacity={floor ? 0.45 : 0.6}
+            fill={floor ? (floor.pattern ? `url(#mat-${floor.id})` : floor.color) : 'var(--room)'}
+            fillOpacity={floor ? 0.75 : 0.6}
             stroke={isSel('room', r.label.id) ? 'var(--accent)' : 'none'}
             strokeWidth={isSel('room', r.label.id) ? fs * 0.35 : 0}
             onPointerDown={(e) => {
@@ -424,7 +517,11 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
               stroke={sel ? 'var(--accent)' : diff?.newFurnitureIds.has(f.id) ? 'var(--new)' : 'var(--ink-soft)'}
               strokeWidth={sel ? fs * 0.3 : fs * 0.12}
             />
-            <line x1={-s.w / 2} y1={-s.d / 2 + 0.06} x2={s.w / 2} y2={-s.d / 2 + 0.06} stroke="var(--ink-soft)" strokeWidth={fs * 0.08} opacity={0.6} />
+            {p?.category === 'escalier' ? (
+              <StairSymbol w={s.w} d={s.d} fs={fs} />
+            ) : (
+              <line x1={-s.w / 2} y1={-s.d / 2 + 0.06} x2={s.w / 2} y2={-s.d / 2 + 0.06} stroke="var(--ink-soft)" strokeWidth={fs * 0.08} opacity={0.6} />
+            )}
           </g>
         );
       })}
@@ -463,6 +560,34 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
         </g>
       )}
 
+      {/* Points de vue (photos) */}
+      {viewpoints.map((v) => (
+        <ViewpointMark
+          key={v.id}
+          v={v}
+          fs={fs}
+          selected={isSel('viewpoint', v.id)}
+          onDown={(e, mode) => {
+            if (tool !== 'select') return;
+            e.stopPropagation();
+            (e.target as Element).setPointerCapture?.(e.pointerId);
+            select({ kind: 'viewpoint', id: v.id });
+            setDrag({ kind: 'viewpoint', id: v.id, mode, x: v.x, y: v.y, direction: v.direction, moved: false });
+          }}
+        />
+      ))}
+
+      {/* Étalonnage du plan importé */}
+      {tool === 'calibrate' && ui.calibration.length > 0 && (
+        <g pointerEvents="none">
+          {ui.calibration.map((c, i) => (
+            <circle key={i} cx={c.x} cy={c.y} r={fs * 0.4} fill="var(--danger)" />
+          ))}
+          {ui.calibration.length === 1 && cursor && <line x1={ui.calibration[0].x} y1={ui.calibration[0].y} x2={cursor.x} y2={cursor.y} stroke="var(--danger)" strokeWidth={fs * 0.15} />}
+          {ui.calibration.length === 2 && <line x1={ui.calibration[0].x} y1={ui.calibration[0].y} x2={ui.calibration[1].x} y2={ui.calibration[1].y} stroke="var(--danger)" strokeWidth={fs * 0.15} />}
+        </g>
+      )}
+
       {/* Aperçus */}
       {tool === 'wall' && wallStart && cursor && (
         <g pointerEvents="none">
@@ -486,7 +611,7 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
           <Dimension a={{ x: drag.end.x, y: drag.start.y }} b={drag.end} offset={-fs * 1.5} fs={fs} />
         </g>
       )}
-      {cursor && tool !== 'select' && (
+      {cursor && tool !== 'select' && tool !== 'calibrate' && (
         <circle cx={cursor.x} cy={cursor.y} r={fs * 0.3} fill="var(--accent)" pointerEvents="none" />
       )}
     </svg>
@@ -554,3 +679,49 @@ function crossSign(w: Wall): boolean {
   const d = { x: w.b.x - w.a.x, y: w.b.y - w.a.y };
   return n.x * d.y - n.y * d.x < 0;
 }
+
+/** Motif SVG d'un matériau (sol), à l'échelle réelle. */
+function MaterialPattern({ product }: { product: Product }) {
+  const tile = patternTile(product.pattern, product.color, 96);
+  return (
+    <pattern id={`mat-${product.id}`} width={tile.w} height={tile.h} patternUnits="userSpaceOnUse">
+      <image href={patternUrl(product.pattern, product.color, 96)} width={tile.w} height={tile.h} preserveAspectRatio="none" />
+    </pattern>
+  );
+}
+
+/** Escalier en plan : marches et flèche de montée (vers le haut du symbole). */
+function StairSymbol({ w, d, fs }: { w: number; d: number; fs: number }) {
+  const n = Math.max(3, Math.round(d / 0.25));
+  return (
+    <g pointerEvents="none">
+      {Array.from({ length: n - 1 }, (_, i) => {
+        const y = -d / 2 + ((i + 1) * d) / n;
+        return <line key={i} x1={-w / 2} y1={y} x2={w / 2} y2={y} stroke="var(--ink-soft)" strokeWidth={fs * 0.07} />;
+      })}
+      <line x1={0} y1={d / 2 - 0.15} x2={0} y2={-d / 2 + 0.2} stroke="var(--ink)" strokeWidth={fs * 0.1} />
+      <path d={`M${-0.12} ${-d / 2 + 0.35} L0 ${-d / 2 + 0.15} L${0.12} ${-d / 2 + 0.35}`} fill="none" stroke="var(--ink)" strokeWidth={fs * 0.1} />
+    </g>
+  );
+}
+
+/** Point de vue : appareil photo et cône de vision, orientable par la poignée. */
+function ViewpointMark({ v, fs, selected, onDown }: { v: Viewpoint; fs: number; selected: boolean; onDown: (e: React.PointerEvent, mode: 'move' | 'turn') => void }) {
+  const a = (v.direction * Math.PI) / 180;
+  const half = (v.fov * Math.PI) / 360;
+  const L = 1.6;
+  const p1 = { x: v.x + Math.cos(a - half) * L, y: v.y + Math.sin(a - half) * L };
+  const p2 = { x: v.x + Math.cos(a + half) * L, y: v.y + Math.sin(a + half) * L };
+  const handle = { x: v.x + Math.cos(a) * L, y: v.y + Math.sin(a) * L };
+  const color = selected ? 'var(--accent)' : '#d97706';
+  return (
+    <g>
+      <path d={`M${v.x} ${v.y} L${p1.x} ${p1.y} A${L} ${L} 0 0 1 ${p2.x} ${p2.y} Z`} fill={color} fillOpacity={0.14} stroke={color} strokeWidth={fs * 0.08} pointerEvents="none" />
+      <circle cx={v.x} cy={v.y} r={fs * 0.75} fill={color} stroke="#fff" strokeWidth={fs * 0.12} style={{ cursor: 'move' }} onPointerDown={(e) => onDown(e, 'move')} />
+      <rect x={v.x - fs * 0.32} y={v.y - fs * 0.22} width={fs * 0.64} height={fs * 0.44} rx={fs * 0.06} fill="#fff" pointerEvents="none" />
+      <circle cx={v.x} cy={v.y} r={fs * 0.14} fill={color} pointerEvents="none" />
+      {selected && <circle cx={handle.x} cy={handle.y} r={fs * 0.5} className="plan__handle" style={{ cursor: 'grab' }} onPointerDown={(e) => onDown(e, 'turn')} />}
+    </g>
+  );
+}
+

@@ -67,6 +67,17 @@ export function Summary() {
         </p>
       ))}
 
+      {e.attention.length > 0 && (
+        <div className="attention">
+          <strong>Points d'attention de l'existant</strong>
+          <ul>
+            {e.attention.map((a) => (
+              <li key={a}>{a}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {e.lots.length === 0 && (
         <p className="empty">Aucune modification pour l'instant. Passez à l'étape « Projet » pour démolir, changer un sol ou ajouter des meubles : le chiffrage apparaîtra ici.</p>
       )}

@@ -5,12 +5,13 @@ import { computeEstimate, packMaterial, paintMaterial } from '../estimate';
 import { detectRooms, insertWall } from '../geometry';
 import { applyOperations, pushOperation } from '../operations';
 import { parseQuery, searchCatalog } from '../search';
+import { defaultLevel } from '../levels';
 import type { Building, Wall } from '../types';
 
 const w = (id: string, ax: number, ay: number, bx: number, by: number): Wall => ({
-  id, a: { x: ax, y: ay }, b: { x: bx, y: by }, thickness: 0, height: 2.5, kind: 'cloison', finish: { gauche: null, droite: null },
+  id, levelId: 'rdc', a: { x: ax, y: ay }, b: { x: bx, y: by }, thickness: 0, height: 2.5, kind: 'cloison', finish: { gauche: null, droite: null },
 });
-const empty = (): Building => ({ walls: [], openings: [], rooms: [], furniture: [] });
+const empty = (): Building => ({ levels: [defaultLevel()], walls: [], openings: [], rooms: [], furniture: [], roof: null });
 
 describe('détection des pièces', () => {
   it('un carré donne une pièce de 16 m²', () => {
@@ -46,7 +47,8 @@ describe('détection des pièces', () => {
 
   it('la maison de démo a 4 pièces étiquetées', () => {
     const rooms = detectRooms(demoBuilding());
-    expect(rooms.map((r) => r.label.name).sort()).toEqual(['Chambre', 'Cuisine', 'Salle de bain', 'Séjour']);
+    expect(rooms.filter((r) => r.label.levelId === 'rdc').map((r) => r.label.name).sort()).toEqual(['Chambre', 'Cuisine', 'Salle de bain', 'Séjour']);
+    expect(rooms.filter((r) => r.label.levelId === 'combles').map((r) => r.label.name)).toEqual(['Grenier']);
   });
 });
 
@@ -55,7 +57,7 @@ describe('opérations', () => {
     const b = demoBuilding();
     const ops = pushOperation([], { type: 'demolishWall', wallId: 'w-c1' });
     const rooms = detectRooms(applyOperations(b, ops));
-    expect(rooms).toHaveLength(3);
+    expect(rooms.filter((r) => r.label.levelId === 'rdc')).toHaveLength(3);
     expect(b.walls.some((x) => x.id === 'w-c1')).toBe(true); // l'existant n'est pas modifié
   });
 
@@ -66,7 +68,7 @@ describe('opérations', () => {
   });
 
   it('retirer un meuble ajouté annule son ajout', () => {
-    let ops = pushOperation([], { type: 'addFurniture', item: { id: 'x', productId: 'chaise-bois', x: 1, y: 1, rotation: 0 } });
+    let ops = pushOperation([], { type: 'addFurniture', item: { id: 'x', levelId: 'rdc', productId: 'chaise-bois', x: 1, y: 1, rotation: 0 } });
     ops = pushOperation(ops, { type: 'removeFurniture', furnitureId: 'x' });
     expect(ops).toHaveLength(0);
   });
@@ -96,7 +98,7 @@ describe('chiffrage', () => {
     p.operations = [
       { type: 'setFloor', roomId: 'r-sejour', productId: 'sol-parquet-chene' },
       { type: 'demolishWall', wallId: 'w-refend.1' },
-      { type: 'addFurniture', item: { id: 'n', productId: 'canape-angle-beige', x: 3, y: 2, rotation: 0 } },
+      { type: 'addFurniture', item: { id: 'n', levelId: 'rdc', productId: 'canape-angle-beige', x: 3, y: 2, rotation: 0 } },
     ];
     const e = computeEstimate(p, DEMO_CATALOG);
     const lots = e.lots.map((l) => l.lot);
@@ -136,5 +138,53 @@ describe('découpe 3D des murs', () => {
     expect(pieces).toHaveLength(4);
     const solid = pieces.reduce((s, p) => s + (p.x1 - p.x0) * (p.y1 - p.y0), 0);
     expect(solid).toBeCloseTo(4 * 2.5 - 1 * 1.2);
+  });
+});
+
+describe('visite : étages et escalier', () => {
+  it("monte l'escalier de la maison de démo jusqu'aux combles", async () => {
+    const { walkWorld, groundAt } = await import('../../three/physics');
+    const b = demoBuilding();
+    const world = walkWorld(b, DEMO_CATALOG);
+    // Escalier en x = 0,6, de y = 4,45 (départ) à y = 0,85 (arrivée)
+    let y = groundAt(world, { x: 0.6, y: 4.6 }, 0);
+    expect(y).toBe(0);
+    for (let py = 4.4; py >= 0.9; py -= 0.1) y = groundAt(world, { x: 0.6, y: py }, y);
+    expect(y).toBeGreaterThan(2.6);
+    // Arrivé en haut, on marche sur le plancher des combles
+    y = groundAt(world, { x: 0.6, y: 0.6 }, y);
+    y = groundAt(world, { x: 3, y: 0.6 }, y);
+    expect(y).toBeCloseTo(2.82);
+    // Au rez-de-chaussée, loin de l'escalier, on reste en bas
+    expect(groundAt(world, { x: 3, y: 3 }, 0)).toBe(0);
+  });
+});
+
+describe('visite : collisions', () => {
+  const square = (): Building => {
+    const b: Building = { levels: [defaultLevel()], walls: [], openings: [], rooms: [], furniture: [], roof: null };
+    const w = (id: string, ax: number, ay: number, bx: number, by: number): Wall => ({ id, levelId: 'rdc', a: { x: ax, y: ay }, b: { x: bx, y: by }, thickness: 0.2, height: 2.5, kind: 'porteur', finish: { gauche: null, droite: null } });
+    for (const x of [w('n', 0, 0, 4, 0), w('e', 4, 0, 4, 4), w('s', 4, 4, 0, 4), w('o', 0, 4, 0, 0)]) insertWall(b, x);
+    b.openings.push({ id: 'p', wallId: 'n', kind: 'porte', productId: 'ex-porte-bois', offset: 2, width: 0.9, height: 2.05, sill: 0 });
+    b.furniture.push({ id: 'c', levelId: 'rdc', productId: 'canape-3p-gris', x: 2, y: 3, rotation: 0 });
+    return b;
+  };
+
+  it('une porte fermée bloque, une porte ouverte laisse passer', async () => {
+    const { walkWorld, blocked } = await import('../../three/physics');
+    const world = walkWorld(square(), DEMO_CATALOG);
+    expect(blocked(world, { x: 2, y: 0 }, 0, () => false)).toBe(true);
+    expect(blocked(world, { x: 2, y: 0 }, 0, () => true)).toBe(false);
+  });
+
+  it('on ne traverse ni les meubles ni le vantail ouvert', async () => {
+    const { walkWorld, blocked } = await import('../../three/physics');
+    const world = walkWorld(square(), DEMO_CATALOG);
+    const open = () => true;
+    expect(blocked(world, { x: 2, y: 3 }, 0, open)).toBe(true);
+    expect(blocked(world, { x: 3.2, y: 3 }, 0, open)).toBe(true);
+    expect(blocked(world, { x: 2, y: 2 }, 0, open)).toBe(false);
+    // Vantail rabattu dans la pièce depuis la paumelle (x = 1,56)
+    expect(blocked(world, { x: 1.56, y: 0.5 }, 0, open)).toBe(true);
   });
 });

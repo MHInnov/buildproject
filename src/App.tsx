@@ -1,10 +1,14 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { putAsset, useAssets } from './assets';
 import { describeOperation } from './model/diff';
+import { migrateProject } from './model/levels';
 import { euro } from './model/estimate';
 import { detectRooms } from './model/geometry';
 import type { Project, WallKind } from './model/types';
 import { useStore, type Step, type Tool } from './store';
+import { AdminDialog } from './ui/AdminDialog';
 import { Artisans } from './ui/Artisans';
+import { LevelTabs } from './ui/HousePanels';
 import { Inspector } from './ui/Inspector';
 import { PlanEditor } from './ui/PlanEditor';
 import { Summary, useEstimate } from './ui/Summary';
@@ -111,8 +115,10 @@ function PlanStep() {
     { id: 'wall', label: 'Mur', hint: 'Cliquer point par point ; double-clic ou Échap pour terminer ; Maj pour un angle libre' },
     { id: 'door', label: 'Porte', hint: 'Cliquer sur un mur' },
     { id: 'window', label: 'Fenêtre', hint: 'Cliquer sur un mur' },
+    { id: 'viewpoint', label: 'Point de vue', hint: 'Cliquer là où la photo a été prise, puis glisser dans la direction visée' },
   ];
   const current = tools.find((t) => t.id === tool);
+  const hint = tool === 'calibrate' ? "Cliquez les deux extrémités d'une cote connue du plan importé" : current?.hint;
 
   return (
     <div className="workspace">
@@ -130,10 +136,11 @@ function PlanStep() {
             </select>
           )}
         </div>
+        <LevelTabs />
         <PlanEditor wallKind={wallKind} />
         <div className="statusbar">
           <span className={`mode-badge ${isExisting ? '' : 'mode-badge--project'}`}>{isExisting ? "Plan de l'existant" : 'Plan du projet'}</span>
-          <span className="muted">{tool === 'furniture' ? 'Cliquez dans le plan pour poser le meuble (Échap pour annuler)' : current?.hint}</span>
+          <span className="muted">{tool === 'furniture' ? 'Cliquez dans le plan pour poser le meuble (Échap pour annuler)' : hint}</span>
           {!isExisting && (
             <span className="legend">
               <i className="lg lg--new" /> nouveau <i className="lg lg--demo" /> démoli
@@ -177,6 +184,7 @@ function Operations() {
 
 function FileMenu() {
   const [open, setOpen] = useState(false);
+  const [admin, setAdmin] = useState(false);
   const project = useStore((s) => s.project);
   const loadProject = useStore((s) => s.loadProject);
   const resetDemo = useStore((s) => s.resetDemo);
@@ -184,7 +192,11 @@ function FileMenu() {
   const input = useRef<HTMLInputElement>(null);
 
   const exportJson = () => {
-    const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
+    // Les images (plans importés, photos) sont jointes au fichier pour qu'il soit complet.
+    const all = useAssets.getState().assets;
+    const ids = new Set([...project.existing.levels.flatMap((l) => (l.underlay ? [l.underlay.assetId] : [])), ...project.viewpoints.flatMap((v) => (v.assetId ? [v.assetId] : []))]);
+    const assets = Object.fromEntries([...ids].filter((id) => all[id]).map((id) => [id, all[id]]));
+    const blob = new Blob([JSON.stringify({ ...project, assets }, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `${project.name.replace(/[^\w-]+/g, '_') || 'projet'}.construprojet.json`;
@@ -204,6 +216,7 @@ function FileMenu() {
           <button onClick={() => { resetDemo(); setOpen(false); }}>Recharger la maison de démo</button>
           <button onClick={exportJson}>Exporter le projet (.json)</button>
           <button onClick={() => input.current?.click()}>Importer un projet…</button>
+          <button onClick={() => { setAdmin(true); setOpen(false); }}>Administration (IA)…</button>
           <input
             ref={input}
             type="file"
@@ -213,8 +226,12 @@ function FileMenu() {
               const f = ev.target.files?.[0];
               if (!f) return;
               try {
-                const p = JSON.parse(await f.text()) as Project;
-                if (p.version !== 1 || !p.existing) throw new Error('format');
+                const raw = JSON.parse(await f.text()) as Project & { assets?: Record<string, string> };
+                const assets = raw.assets ?? {};
+                delete raw.assets;
+                const p = migrateProject(raw);
+                if (!p) throw new Error('format');
+                for (const [id, url] of Object.entries(assets)) await putAsset(url, id);
                 loadProject(p);
               } catch {
                 alert("Ce fichier n'est pas un projet Constru'Projet valide.");
@@ -224,6 +241,7 @@ function FileMenu() {
           />
         </div>
       )}
+      {admin && <AdminDialog onClose={() => setAdmin(false)} />}
     </div>
   );
 }
