@@ -6,7 +6,7 @@ import { productById } from '../model/catalog';
 import { detectRooms, lerp, wallLength, wallNormal, wallSideFacingRoom } from '../model/geometry';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { floorToFloor, levelAbove, levelBelow, levelById } from '../model/levels';
-import type { Building, FurnitureItem, Level, Opening, Point, Room, Wall, WallSide } from '../model/types';
+import type { Building, FloorZone, FurnitureItem, Level, Opening, Point, Room, Wall, WallSide } from '../model/types';
 import type { Selection } from '../store';
 import { useUi } from '../uiState';
 import { CEILING, ceramic, chrome, FACADE, fromProduct, glassMaterial, meterBox, plain, PLASTER, RAW_FLOOR, surfaceMaterial, type Surface } from './materials';
@@ -143,7 +143,19 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
                   onClick={click({ kind: 'room', id: r.label.id })}
                 />
               ))}
-              {showCeiling && !underRoof && lRooms.map((r) => <Ceiling key={`c-${r.label.id}`} room={r} height={level.elevation + level.height} />)}
+              {(building.floorZones ?? [])
+                .filter((z) => z.levelId === level.id && z.productId)
+                .map((z) => (
+                  <ZoneFloor
+                    key={z.id}
+                    zone={z}
+                    elevation={level.elevation}
+                    surface={fromProduct(productById(catalog, z.productId), RAW_FLOOR)}
+                    selected={isSel('zone', z.id)}
+                    onClick={click({ kind: 'zone', id: z.id })}
+                  />
+                ))}
+              {showCeiling && !underRoof && lRooms.map((r) => <Ceiling key={`c-${r.label.id}`} room={r} height={level.elevation + level.height - 0.004} />)}
               {building.walls
                 .filter((w) => w.levelId === level.id)
                 .map((w) => (
@@ -231,6 +243,25 @@ function Floor({ room, elevation, thickness, holes, surface, selected, onClick }
   );
 }
 
+/** Sol posé sur une partie de pièce : légèrement au-dessus du sol de la pièce. */
+function ZoneFloor({ zone, elevation, surface, selected, onClick }: { zone: FloorZone; elevation: number; surface: Surface; selected: boolean; onClick: ClickHandler }) {
+  const geom = useMemo(() => {
+    const { x, y, w, h } = zone;
+    return new THREE.ShapeGeometry(shapeOf([{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }]));
+  }, [zone]);
+  return (
+    <mesh
+      geometry={geom}
+      rotation-x={-Math.PI / 2}
+      position-y={elevation + 0.005}
+      material={surfaceMaterial(surface, selected)}
+      userData={{ sel: { kind: 'zone', id: zone.id } }}
+      onClick={onClick}
+      receiveShadow
+    />
+  );
+}
+
 function pointInside(p: Point, poly: Point[]): boolean {
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
@@ -242,7 +273,12 @@ function pointInside(p: Point, poly: Point[]): boolean {
 }
 
 function Ceiling({ room, height }: { room: Room; height: number }) {
-  const geom = useMemo(() => new THREE.ShapeGeometry(shapeOf(room.polygon, room.holes)), [room]);
+  // Plan (x, y) tel quel puis rotation +90° autour de X : le point (x, y) arrive en (x, 0, y), face tournée vers le bas.
+  const geom = useMemo(() => {
+    const s = new THREE.Shape(room.polygon.map((p) => new THREE.Vector2(p.x, p.y)));
+    for (const h of room.holes ?? []) s.holes.push(new THREE.Path(h.map((p) => new THREE.Vector2(p.x, p.y))));
+    return new THREE.ShapeGeometry(s);
+  }, [room]);
   return <mesh geometry={geom} rotation-x={Math.PI / 2} position-y={height} material={surfaceMaterial(CEILING, false, { side: THREE.FrontSide })} receiveShadow />;
 }
 
@@ -539,7 +575,7 @@ function RBox({ size, pos, radius = 0.03, material, rot }: { size: [number, numb
   return <mesh geometry={geo} position={pos} rotation={rot} material={material} castShadow receiveShadow />;
 }
 
-const fabric = (color: string, selected: boolean) => surfaceMaterial({ color, pattern: { kind: 'carpet' }, roughness: 1 }, selected);
+const fabric = (color: string, selected: boolean) => surfaceMaterial({ color, pattern: { kind: 'carpet', photo: 'fabric' }, roughness: 0.95 }, selected);
 const woodMat = (color: string, selected: boolean, w = 0.25) => surfaceMaterial({ color, pattern: { kind: 'planks', w, h: 2 }, roughness: 0.55 }, selected);
 const metal = (color: string, selected: boolean) => plain(color, 0.35, selected, 0.6);
 

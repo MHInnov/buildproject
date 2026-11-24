@@ -1,9 +1,9 @@
 import type { Catalog, LaborTask, Product } from './catalog';
 import { productById, taskById } from './catalog';
-import { detectRooms, wallFaceArea, wallLength } from './geometry';
+import { detectRooms, inRoom, wallFaceArea, wallLength } from './geometry';
 import { applyOperations } from './operations';
 import { roofArea, roofInsulationArea } from './roof';
-import type { Building, Lot, Operation, Project, Wall } from './types';
+import type { Building, FloorZone, Lot, Operation, Project, Room, Wall } from './types';
 import { CONDITION_LABELS, LOT_ORDER } from './types';
 
 export interface MaterialLine {
@@ -106,6 +106,9 @@ export function paintMaterial(p: Product, area: number): MaterialLine {
     takeoff: `${fmt(area)} m² × ${coats} couches ÷ ${p.coverage ?? 10} m²/L = ${fmt(liters)} L`,
   };
 }
+
+const zoneArea = (z: FloorZone) => Math.max(0, z.w) * Math.max(0, z.h);
+const zoneInRoom = (z: FloorZone, r: Room) => z.levelId === r.label.levelId && inRoom({ x: z.x + z.w / 2, y: z.y + z.h / 2 }, r);
 
 function floorLaborTask(p: Product, catalog: Catalog): LaborTask {
   if (p.tags.includes('carrelage')) return taskById(catalog, 'pose-carrelage-sol');
@@ -249,14 +252,36 @@ export function computeEstimate(project: Project, catalog: Catalog): Estimate {
         const doors = projected.openings.filter((o) => o.kind === 'porte' && room.wallIds.includes(o.wallId));
         const plinth = Math.max(0, room.perimeter - doors.reduce((s, d) => s + d.width, 0));
         const acc = floorsByProduct.get(op.productId) ?? { area: 0, plinth: 0, rooms: [] as string[], removal: new Map<string, number>() };
-        acc.area += room.area;
+        // Les zones de sol posées dans la pièce gardent leur propre revêtement.
+        const zonesArea = (projected.floorZones ?? []).filter((z) => z.productId && zoneInRoom(z, room)).reduce((t, z) => t + zoneArea(z), 0);
+        const area = Math.max(0, room.area - zonesArea);
+        acc.area += area;
         acc.plinth += plinth;
         acc.rooms.push(room.label.name);
         // La dépose dépend du revêtement actuel (carrelage, moquette, plancher…).
         const before = stateBefore(i).rooms.find((r) => r.id === op.roomId);
         const old = productById(catalog, before?.floorProductId);
-        addTo(acc.removal, old ? old.removal : 'depose-sol', room.area);
+        addTo(acc.removal, old ? old.removal : 'depose-sol', area);
         floorsByProduct.set(op.productId, acc);
+        return;
+      }
+      case 'addFloorZone':
+      case 'setFloorZone': {
+        const id = op.type === 'addFloorZone' ? op.zone.id : op.zoneId;
+        const z = projected.floorZones?.find((x) => x.id === id);
+        if (!z?.productId) return;
+        const before = stateBefore(i);
+        const room = rooms.find((r) => zoneInRoom(z, r));
+        const acc = floorsByProduct.get(z.productId) ?? { area: 0, plinth: 0, rooms: [] as string[], removal: new Map<string, number>() };
+        const area = zoneArea(z);
+        acc.area += area;
+        acc.rooms.push(`zone de ${room?.label.name ?? 'pièce'}`);
+        // Sous la zone : l'ancien revêtement de la zone, sinon celui de la pièce.
+        const oldZone = before.floorZones?.find((x) => x.id === id);
+        const oldRoom = room && before.rooms.find((r) => r.id === room.label.id);
+        const old = productById(catalog, oldZone?.productId ?? oldRoom?.floorProductId);
+        addTo(acc.removal, old ? old.removal : 'depose-sol', area);
+        floorsByProduct.set(z.productId, acc);
         return;
       }
       case 'setWallFinish': {

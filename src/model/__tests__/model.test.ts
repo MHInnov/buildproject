@@ -203,3 +203,49 @@ describe('visite : collisions', () => {
     expect(blocked(world, { x: 1.56, y: 0.5 }, 0, open)).toBe(true);
   });
 });
+
+describe('zones de sol', () => {
+  const zone = { id: 'z1', levelId: 'rdc', x: 6.5, y: 0.5, w: 2, h: 1.5, productId: 'sol-carrelage-ciment' };
+
+  it('une zone ajoutée puis modifiée reste une seule opération', () => {
+    let ops = pushOperation([], { type: 'addFloorZone', zone: { ...zone, productId: null } });
+    ops = pushOperation(ops, { type: 'setFloorZone', zoneId: 'z1', productId: 'sol-carrelage-ciment' });
+    expect(ops).toHaveLength(1);
+    const b = applyOperations(demoBuilding(), ops);
+    expect(b.floorZones?.[0].productId).toBe('sol-carrelage-ciment');
+    expect(pushOperation(ops, { type: 'removeFloorZone', zoneId: 'z1' })).toHaveLength(0);
+  });
+
+  it('la zone est chiffrée à part et déduite du sol de la pièce', () => {
+    const p = demoProject();
+    const room = detectRooms(p.existing).find((r) => r.label.id === 'r-cuisine')!;
+    p.operations = [{ type: 'setFloor', roomId: 'r-cuisine', productId: 'sol-strat-chene-clair' }];
+    const before = computeEstimate(p, DEMO_CATALOG);
+    const areaOf = (e: ReturnType<typeof computeEstimate>, pid: string) =>
+      e.lots.flatMap((l) => l.lines).find((l) => l.id === `floor-${pid}`)?.materials[0];
+    expect(areaOf(before, 'sol-strat-chene-clair')).toBeTruthy();
+    p.operations.push({ type: 'addFloorZone', zone });
+    const after = computeEstimate(p, DEMO_CATALOG);
+    const lines = after.lots.flatMap((l) => l.lines);
+    const zoneLine = lines.find((l) => l.id === 'floor-sol-carrelage-ciment')!;
+    expect(zoneLine.subtitle).toContain('3 m²');
+    const solLine = lines.find((l) => l.id === 'floor-sol-strat-chene-clair')!;
+    expect(solLine.subtitle).toContain(`${(room.area - 3).toLocaleString('fr-BE', { maximumFractionDigits: 1 })}`);
+  });
+});
+
+describe('textures photo', () => {
+  it('chaque aspect du catalogue a une photo à son échelle réelle', async () => {
+    const { photoFor, photoSize } = await import('../../three/photoMaterials');
+    for (const p of DEMO_CATALOG.products) {
+      if (!p.pattern) continue;
+      const key = photoFor(p.pattern);
+      expect(key, p.id).toBeTruthy();
+      const [w, h] = photoSize(key!, p.pattern);
+      expect(w).toBeGreaterThan(0.2);
+      expect(h).toBeGreaterThan(0.2);
+    }
+    // 60 × 60 cm : 8 carreaux sur la photo
+    expect(photoSize('tiles-large', { kind: 'tiles', w: 0.6, h: 0.6 })).toEqual([4.8, 4.8]);
+  });
+});

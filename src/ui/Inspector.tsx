@@ -1,5 +1,10 @@
 import { useMemo } from 'react';
 import {
+  addFloorZone,
+  canEditZone,
+  editFloorZone,
+  removeFloorZone,
+  setFloorZoneProduct,
   finishRoomWalls,
   moveFurniture,
   removeFurniture,
@@ -14,10 +19,10 @@ import {
 } from '../actions';
 import { productById } from '../model/catalog';
 import { euro } from '../model/estimate';
-import { detectRooms, wallLength, wallSideFacingRoom } from '../model/geometry';
+import { detectRooms, inRoom, newId, wallLength, wallSideFacingRoom } from '../model/geometry';
 import { levelById } from '../model/levels';
 import { areaAboveHeight } from '../model/roof';
-import type { Room, Wall, WallSide } from '../model/types';
+import type { FloorZone, Room, Wall, WallSide } from '../model/types';
 import { useBuilding, useStore } from '../store';
 import { useUi } from '../uiState';
 import { ConditionField, HouseOverview, LevelPanel, RoofPanel } from './HousePanels';
@@ -71,6 +76,10 @@ export function Inspector() {
     const o = building.openings.find((x) => x.id === selection.id);
     if (!o) return <NoSelection />;
     return <OpeningPanel id={o.id} isExisting={isExisting} />;
+  }
+  if (selection.kind === 'zone') {
+    const z = building.floorZones?.find((x) => x.id === selection.id);
+    return z ? <ZonePanel z={z} rooms={rooms} isExisting={isExisting} /> : <NoSelection />;
   }
   const f = building.furniture.find((x) => x.id === selection.id);
   return f ? <FurniturePanel id={f.id} /> : <NoSelection />;
@@ -213,6 +222,12 @@ function RoomPanel({ r, isExisting }: { r: Room; isExisting: boolean }) {
       <h4>Sol {floor ? `: ${floor.name}` : ''}</h4>
       {isExisting && <ConditionField value={r.label.floorCondition} onChange={(c) => setCondition({ kind: 'room', id: r.label.id, room: r }, c)} label="État du sol" />}
       <ProductPicker categories={['sol']} currentId={r.label.floorProductId} onPick={(p) => setRoomFloor(r, p.id)} placeholder="« bois clair », « carrelage gris grand format »…" />
+      <div className="actions">
+        <button className="btn" onClick={() => addFloorZone(zoneInside(r))} title="Un autre sol sur une partie de la pièce (coin cuisine, entrée…)">
+          + Sol sur une partie de la pièce
+        </button>
+      </div>
+      <p className="muted small">Ou outil « Zone de sol » : glissez dans le plan pour délimiter la partie à revêtir.</p>
       <details className="sub">
         <summary>Revêtir tous les murs de la pièce</summary>
         <ProductPicker compact categories={['peinture', 'mur', 'faience']} onPick={(p) => finishRoomWalls(r, p.id)} />
@@ -289,6 +304,47 @@ function FurniturePanel({ id }: { id: string }) {
       </div>
       <h4>Remplacer par</h4>
       <ProductPicker categories={p?.category === 'escalier' ? ['escalier'] : ['meuble']} subcategory={p?.subcategory} currentId={f.productId} onPick={(np) => swapFurniture(f, np.id)} />
+    </div>
+  );
+}
+
+/** Zone de 1,2 × 1,2 m (ou moins) au centre d'une pièce. */
+export function zoneInside(r: Room): FloorZone {
+  const xs = r.polygon.map((p) => p.x);
+  const ys = r.polygon.map((p) => p.y);
+  const w = Math.min(1.2, (Math.max(...xs) - Math.min(...xs)) * 0.6);
+  const h = Math.min(1.2, (Math.max(...ys) - Math.min(...ys)) * 0.6);
+  const c = r.label.at;
+  return { id: newId('z'), levelId: r.label.levelId, x: Math.round((c.x - w / 2) * 20) / 20, y: Math.round((c.y - h / 2) * 20) / 20, w: n2(w), h: n2(h), productId: null };
+}
+
+function ZonePanel({ z, rooms, isExisting }: { z: FloorZone; rooms: Room[]; isExisting: boolean }) {
+  const catalog = useStore((s) => s.catalog);
+  const product = productById(catalog, z.productId);
+  const room = rooms.find((r) => r.label.levelId === z.levelId && inRoom({ x: z.x + z.w / 2, y: z.y + z.h / 2 }, r));
+  const editable = canEditZone(z.id);
+  const edit = (fn: (x: FloorZone) => void) => editFloorZone(z.id, fn);
+  return (
+    <div className="panel">
+      <h3>Zone de sol{room ? ` · ${room.label.name}` : ''}</h3>
+      <p className="muted">
+        {(z.w * z.h).toLocaleString('fr-BE', { maximumFractionDigits: 2 })} m² · {product ? product.name : 'revêtement à choisir'}
+      </p>
+      <div className="fields">
+        <NumberField label="Largeur (m)" value={z.w} min={0.1} disabled={!editable} onChange={(v) => edit((x) => void (x.w = v))} />
+        <NumberField label="Profondeur (m)" value={z.h} min={0.1} disabled={!editable} onChange={(v) => edit((x) => void (x.h = v))} />
+        <NumberField label="Position x (m)" value={z.x} min={-999} disabled={!editable} onChange={(v) => edit((x) => void (x.x = v))} />
+        <NumberField label="Position y (m)" value={z.y} min={-999} disabled={!editable} onChange={(v) => edit((x) => void (x.y = v))} />
+      </div>
+      {editable && <p className="muted small">Glissez la zone dans le plan pour la déplacer, ou tirez sa poignée (coin bas droit) pour la redimensionner.</p>}
+      {isExisting && <ConditionField value={z.condition} onChange={(c) => edit((x) => void (x.condition = c))} label="État du sol" />}
+      <h4>{isExisting ? 'Revêtement actuel' : 'Revêtement'}</h4>
+      <ProductPicker categories={['sol']} currentId={z.productId} onPick={(p) => setFloorZoneProduct(z.id, p.id)} placeholder="« carrelage », « parquet chêne »…" />
+      <div className="actions">
+        <button className="btn btn--danger" onClick={() => removeFloorZone(z.id)}>
+          Supprimer la zone
+        </button>
+      </div>
     </div>
   );
 }

@@ -116,6 +116,23 @@ export interface RoomLabel {
   floorCondition?: Condition;
 }
 
+/**
+ * Zone de sol : un revêtement posé sur une partie seulement d'une pièce
+ * (tapis de carrelage devant l'évier, coin parquet…). Rectangle aligné sur le plan.
+ */
+export interface FloorZone {
+  id: string;
+  levelId: string;
+  /** Coin haut gauche, en mètres. */
+  x: number;
+  y: number;
+  /** Largeur (selon x) et profondeur (selon y), en mètres. */
+  w: number;
+  h: number;
+  productId: string | null;
+  condition?: Condition;
+}
+
 export interface FurnitureItem {
   id: string;
   levelId: string;
@@ -133,6 +150,8 @@ export interface Building {
   openings: Opening[];
   rooms: RoomLabel[];
   furniture: FurnitureItem[];
+  /** Sols posés sur une partie de pièce (absent dans les anciens projets). */
+  floorZones?: FloorZone[];
   roof: Roof | null;
 }
 
@@ -176,6 +195,9 @@ export type Operation =
   | { type: 'removeOpening'; openingId: string }
   | { type: 'replaceOpening'; openingId: string; productId: string }
   | { type: 'setFloor'; roomId: string; productId: string }
+  | { type: 'addFloorZone'; zone: FloorZone }
+  | { type: 'setFloorZone'; zoneId: string; productId: string }
+  | { type: 'removeFloorZone'; zoneId: string }
   | { type: 'setWallFinish'; wallId: string; side: WallSide; productId: string }
   | { type: 'addFurniture'; item: FurnitureItem }
   | { type: 'removeFurniture'; furnitureId: string }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { addFurniture, addOpening, moveFurniture, removeFurniture, removeOpening, removeWall, removeViewpoint, updateViewpoint } from '../actions';
+import { addFloorZone, addFurniture, addOpening, canEditZone, editFloorZone, moveFurniture, removeFloorZone, removeFurniture, removeOpening, removeWall, removeViewpoint, updateViewpoint } from '../actions';
 import { useAsset } from '../assets';
 import { productById, type Product } from '../model/catalog';
 import { levelBelow, levelById, onLevel } from '../model/levels';
@@ -16,10 +16,11 @@ import {
   samePoint,
   snapAngle,
   snapPoint,
+  splitWall,
   wallLength,
   wallNormal,
 } from '../model/geometry';
-import type { Building, Opening, Point, Viewpoint, Wall, WallKind } from '../model/types';
+import type { Building, FloorZone, Opening, Point, Viewpoint, Wall, WallKind, WallSide } from '../model/types';
 import { useBuilding, useStore } from '../store';
 
 interface View {
@@ -35,7 +36,26 @@ type Drag =
   | { kind: 'room'; start: Point; end: Point }
   | { kind: 'underlay'; start: Point; x: number; y: number; dx: number; dy: number }
   | { kind: 'viewpoint'; id: string; mode: 'move' | 'turn'; x: number; y: number; direction: number; moved: boolean }
+  | { kind: 'zone'; start: Point; end: Point }
+  | { kind: 'zoneMove'; id: string; dx: number; dy: number; x: number; y: number; moved: boolean }
+  | { kind: 'zoneSize'; id: string; w: number; h: number }
   | null;
+
+/** Menu du clic droit. */
+interface MenuItem {
+  label: string;
+  run: () => void;
+  danger?: boolean;
+}
+interface ContextMenu {
+  x: number;
+  y: number;
+  title: string;
+  items: MenuItem[];
+}
+
+const DIMS_KEY = 'construprojet:cotes';
+const r05 = (n: number) => Math.round(n * 20) / 20;
 
 const fmtM = (n: number) => `${n.toLocaleString('fr-BE', { maximumFractionDigits: 2 })} m`;
 
@@ -67,6 +87,24 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
   const [cursor, setCursor] = useState<Point | null>(null);
   const [wallStart, setWallStart] = useState<Point | null>(null);
   const [drag, setDrag] = useState<Drag>(null);
+  const [menu, setMenu] = useState<ContextMenu | null>(null);
+  const [showDims, setShowDims] = useState(() => {
+    try {
+      return localStorage.getItem(DIMS_KEY) !== '0';
+    } catch {
+      return true;
+    }
+  });
+  const toggleDims = () => {
+    setShowDims((v) => {
+      try {
+        localStorage.setItem(DIMS_KEY, v ? '0' : '1');
+      } catch {
+        /* ignore */
+      }
+      return !v;
+    });
+  };
 
   const rooms = useMemo(() => detectRooms(building), [building]);
   const diff = useMemo(() => (isExisting ? null : projectDiff(project)), [isExisting, project]);
@@ -136,6 +174,7 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.closest('input, textarea, select')) return;
       if (e.key === 'Escape') {
+        setMenu(null);
         setWallStart(null);
         setDrag(null);
         if (tool !== 'select') setTool('select');
@@ -147,6 +186,7 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
         if (selection.kind === 'wall') removeWall(selection.id);
         if (selection.kind === 'opening') removeOpening(selection.id);
         if (selection.kind === 'furniture') removeFurniture(selection.id);
+        if (selection.kind === 'zone') removeFloorZone(selection.id);
       }
       if ((e.key === 'r' || e.key === 'R') && selection?.kind === 'furniture') {
         const f = building.furniture.find((x) => x.id === selection.id);
@@ -234,6 +274,7 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
   };
 
   const onPointerDown = (e: React.PointerEvent) => {
+    if (menu) setMenu(null);
     if (e.button === 2) return;
     (e.target as Element).setPointerCapture?.(e.pointerId);
     const raw = toWorld(e);
@@ -270,6 +311,9 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
       }
     } else if (tool === 'room') {
       setDrag({ kind: 'room', start: p, end: p });
+    } else if (tool === 'zone') {
+      const q = { x: r05(raw.x), y: r05(raw.y) };
+      setDrag({ kind: 'zone', start: q, end: q });
     } else if (tool === 'door' || tool === 'window') {
       placeOpening(raw, tool === 'door' ? 'porte' : 'fenetre');
     } else if (tool === 'furniture' && pendingProductId) {
@@ -296,6 +340,13 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
       setDrag({ ...drag, to: snapPoint(raw, { ...building, walls: building.walls.filter((w) => !samePoint(w.a, drag.from) && !samePoint(w.b, drag.from)) }) });
     } else if (drag.kind === 'room') {
       setDrag({ ...drag, end: p });
+    } else if (drag.kind === 'zone') {
+      setDrag({ ...drag, end: { x: r05(raw.x), y: r05(raw.y) } });
+    } else if (drag.kind === 'zoneMove') {
+      setDrag({ ...drag, x: r05(raw.x - drag.dx), y: r05(raw.y - drag.dy), moved: true });
+    } else if (drag.kind === 'zoneSize') {
+      const z = building.floorZones?.find((x) => x.id === drag.id);
+      if (z) setDrag({ ...drag, w: Math.max(0.1, r05(raw.x - z.x)), h: Math.max(0.1, r05(raw.y - z.y)) });
     } else if (drag.kind === 'underlay') {
       setDrag({ ...drag, dx: raw.x - drag.start.x, dy: raw.y - drag.start.y });
     } else if (drag.kind === 'viewpoint') {
@@ -329,6 +380,21 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
         b.walls = b.walls.filter((w) => wallLength(w) > 0.02);
       });
     }
+    if (drag.kind === 'zone') {
+      const { start: s, end: t } = drag;
+      if (Math.abs(t.x - s.x) >= 0.1 && Math.abs(t.y - s.y) >= 0.1) {
+        setTool('select');
+        addFloorZone({ id: newId('z'), levelId, x: Math.min(s.x, t.x), y: Math.min(s.y, t.y), w: r05(Math.abs(t.x - s.x)), h: r05(Math.abs(t.y - s.y)), productId: null });
+      }
+    }
+    if (drag.kind === 'zoneMove' && drag.moved) {
+      const { x, y } = drag;
+      editFloorZone(drag.id, (z) => Object.assign(z, { x, y }));
+    }
+    if (drag.kind === 'zoneSize') {
+      const { w, h } = drag;
+      editFloorZone(drag.id, (z) => Object.assign(z, { w, h }));
+    }
     if (drag.kind === 'room') {
       const { start: s, end: t } = drag;
       if (Math.abs(t.x - s.x) > 0.3 && Math.abs(t.y - s.y) > 0.3) {
@@ -348,6 +414,109 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
 
   const onDoubleClick = () => setWallStart(null);
 
+  // ----- Clic droit -----
+  const openMenu = (e: React.MouseEvent, title: string, items: MenuItem[]) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDrag(null);
+    setMenu({ x: e.clientX, y: e.clientY, title, items });
+  };
+  const at = (e: React.MouseEvent) => toWorld(e);
+  const zoneAt = (p: Point): FloorZone => ({ id: newId('z'), levelId, x: r05(p.x - 0.6), y: r05(p.y - 0.6), w: 1.2, h: 1.2, productId: null });
+
+  const wallMenu = (e: React.MouseEvent, w: Wall) => {
+    const p = at(e);
+    select({ kind: 'wall', id: w.id });
+    const items: MenuItem[] = [
+      { label: 'Revêtement et dimensions…', run: () => select({ kind: 'wall', id: w.id }) },
+      { label: 'Ajouter une porte ici', run: () => placeOpening(p, 'porte') },
+      { label: 'Ajouter une fenêtre ici', run: () => placeOpening(p, 'fenetre') },
+    ];
+    if (isExisting) {
+      items.push({
+        label: 'Couper le mur ici',
+        run: () => useStore.getState().editExisting((b) => splitWall(b, w.id, p)),
+      });
+      items.push({ label: w.kind === 'porteur' ? 'Changer en cloison' : 'Changer en mur porteur', run: () => useStore.getState().editExisting((b) => {
+        const x = b.walls.find((y) => y.id === w.id);
+        if (x) Object.assign(x, x.kind === 'porteur' ? { kind: 'cloison', thickness: 0.1 } : { kind: 'porteur', thickness: 0.3 });
+      }) });
+    }
+    items.push({ label: isExisting ? 'Supprimer le mur' : 'Démolir ce mur', run: () => removeWall(w.id), danger: true });
+    openMenu(e, w.kind === 'porteur' ? 'Mur porteur' : 'Cloison', items);
+  };
+  const openingMenu = (e: React.MouseEvent, o: Opening) => {
+    select({ kind: 'opening', id: o.id });
+    openMenu(e, o.kind === 'porte' ? 'Porte' : 'Fenêtre', [
+      { label: isExisting ? 'Modèle et dimensions…' : 'Remplacer par un autre modèle…', run: () => select({ kind: 'opening', id: o.id }) },
+      { label: isExisting ? 'Supprimer' : 'Supprimer et reboucher', run: () => removeOpening(o.id), danger: true },
+    ]);
+  };
+  const furnitureMenu = (e: React.MouseEvent, id: string) => {
+    const f = building.furniture.find((x) => x.id === id);
+    if (!f) return;
+    select({ kind: 'furniture', id });
+    openMenu(e, productById(catalog, f.productId)?.name ?? 'Meuble', [
+      { label: 'Pivoter de 90°', run: () => moveFurniture(f.id, f.x, f.y, (f.rotation + 90) % 360) },
+      { label: 'Dupliquer', run: () => select({ kind: 'furniture', id: addFurniture(f.productId, f.x + 0.3, f.y + 0.3, f.rotation) }) },
+      { label: 'Remplacer par…', run: () => select({ kind: 'furniture', id }) },
+      { label: 'Retirer', run: () => removeFurniture(f.id), danger: true },
+    ]);
+  };
+  const roomMenu = (e: React.MouseEvent, roomId: string, name: string) => {
+    const p = at(e);
+    select({ kind: 'room', id: roomId });
+    openMenu(e, name, [
+      { label: 'Changer le sol de la pièce…', run: () => select({ kind: 'room', id: roomId }) },
+      { label: 'Poser un autre sol sur une partie ici', run: () => addFloorZone(zoneAt(p)) },
+      { label: 'Tracer une zone de sol…', run: () => setTool('zone') },
+      { label: 'Revêtir tous les murs…', run: () => select({ kind: 'room', id: roomId }) },
+    ]);
+  };
+  const zoneMenu = (e: React.MouseEvent, z: FloorZone) => {
+    select({ kind: 'zone', id: z.id });
+    openMenu(e, 'Zone de sol', [
+      { label: 'Changer le revêtement…', run: () => select({ kind: 'zone', id: z.id }) },
+      { label: 'Supprimer la zone', run: () => removeFloorZone(z.id), danger: true },
+    ]);
+  };
+  const viewpointMenu = (e: React.MouseEvent, v: Viewpoint) => {
+    select({ kind: 'viewpoint', id: v.id });
+    openMenu(e, v.caption || 'Point de vue', [
+      { label: 'Photo et réglages…', run: () => select({ kind: 'viewpoint', id: v.id }) },
+      { label: 'Supprimer le point de vue', run: () => removeViewpoint(v.id), danger: true },
+    ]);
+  };
+  /** Pendant le tracé d'un mur, le clic droit sur un élément termine aussi le mur. */
+  const ctx = (fn: (e: React.MouseEvent) => void) => (e: React.MouseEvent) => {
+    if (tool === 'wall' && wallStart) return;
+    fn(e);
+  };
+  const backgroundMenu = (e: React.MouseEvent) => {
+    if (tool === 'wall' && wallStart) {
+      // Pendant le tracé d'un mur, le clic droit termine le mur (comme avant).
+      e.preventDefault();
+      setWallStart(null);
+      return;
+    }
+    const p = snapPoint(at(e), building);
+    openMenu(e, 'Plan', [
+      { label: 'Commencer un mur ici', run: () => {
+        setTool('wall');
+        setTimeout(() => setWallStart(p), 0);
+      } },
+      { label: 'Tracer une pièce', run: () => setTool('room') },
+      { label: 'Tracer une zone de sol', run: () => setTool('zone') },
+      { label: 'Point de vue photo ici', run: () => {
+        const v: Viewpoint = { id: newId('v'), levelId, x: r05(p.x), y: r05(p.y), direction: 0, fov: 66, eye: 1.5, assetId: null, caption: '' };
+        useStore.getState().updateProject((pr) => void pr.viewpoints.push(v));
+        select({ kind: 'viewpoint', id: v.id });
+      } },
+      { label: showDims ? 'Masquer les cotes des murs' : 'Afficher les cotes des murs', run: toggleDims },
+      { label: 'Recadrer sur la maison', run: () => fit(building) },
+    ]);
+  };
+
   // ----- Rendu -----
   const furniture = building.furniture.map((f) =>
     drag?.kind === 'furniture' && drag.id === f.id ? { ...f, x: drag.x, y: drag.y } : f,
@@ -365,7 +534,15 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
   const selectedWall = selection?.kind === 'wall' ? walls.find((w) => w.id === selection.id) : undefined;
 
   const cursorClass = tool === 'select' ? (drag?.kind === 'pan' || drag?.kind === 'underlay' ? 'grabbing' : ui.moveUnderlay && underlay ? 'move' : 'default') : 'crosshair';
-  const floorProducts = [...new Set(rooms.map((r) => r.label.floorProductId).filter(Boolean))].map((id) => productById(catalog, id)).filter((p): p is Product => !!p);
+  const zones = (building.floorZones ?? []).map((z) =>
+    drag?.kind === 'zoneMove' && drag.id === z.id ? { ...z, x: drag.x, y: drag.y } : drag?.kind === 'zoneSize' && drag.id === z.id ? { ...z, w: drag.w, h: drag.h } : z,
+  );
+  const center = (() => {
+    const xs = walls.flatMap((w) => [w.a.x, w.b.x]);
+    const ys = walls.flatMap((w) => [w.a.y, w.b.y]);
+    return xs.length ? { x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2 } : { x: 0, y: 0 };
+  })();
+  const floorProducts = [...new Set([...rooms.map((r) => r.label.floorProductId), ...zones.map((z) => z.productId)].filter(Boolean))].map((id) => productById(catalog, id)).filter((p): p is Product => !!p);
   const viewpoints = project.viewpoints
     .filter((v) => v.levelId === levelId)
     .map((v) => (drag?.kind === 'viewpoint' && drag.id === v.id ? { ...v, x: drag.x, y: drag.y, direction: drag.direction } : v));
@@ -384,7 +561,33 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
       <button className="icon-btn" onClick={() => zoom(0.8)} aria-label="Zoomer">+</button>
       <button className="icon-btn" onClick={() => zoom(1.25)} aria-label="Dézoomer">−</button>
       <button className="icon-btn" onClick={() => fit(building)} aria-label="Recadrer" title="Recadrer sur la maison">⤢</button>
+      {isExisting && (
+        <button className={`icon-btn ${showDims ? 'is-on' : ''}`} onClick={toggleDims} aria-pressed={showDims} title={showDims ? 'Masquer les cotes des murs' : 'Afficher les cotes des murs'}>
+          ↔
+        </button>
+      )}
     </div>
+    {menu && (
+      <>
+        <div className="ctx-backdrop" onPointerDown={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null); }} />
+        <div className="ctx-menu" role="menu" style={{ left: Math.min(menu.x, window.innerWidth - 270), top: Math.min(menu.y, window.innerHeight - 40 - menu.items.length * 36) }}>
+          <div className="ctx-menu__title">{menu.title}</div>
+          {menu.items.map((it, i) => (
+            <button
+              key={i}
+              role="menuitem"
+              className={it.danger ? 'is-danger' : ''}
+              onClick={() => {
+                setMenu(null);
+                it.run();
+              }}
+            >
+              {it.label}
+            </button>
+          ))}
+        </div>
+      </>
+    )}
     <svg
       ref={svgRef}
       className="plan"
@@ -396,10 +599,7 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
       onPointerUp={onPointerUp}
       onPointerLeave={() => setCursor(null)}
       onDoubleClick={onDoubleClick}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        setWallStart(null);
-      }}
+      onContextMenu={backgroundMenu}
     >
       <defs>
         <pattern id="grid" width="1" height="1" patternUnits="userSpaceOnUse">
@@ -407,6 +607,10 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
         </pattern>
         <pattern id="hatch" width="0.15" height="0.15" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
           <line x1="0" y1="0" x2="0" y2="0.15" stroke="var(--danger)" strokeWidth="0.03" />
+        </pattern>
+        <pattern id="zone-empty" width="0.2" height="0.2" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <rect width="0.2" height="0.2" fill="var(--paper)" fillOpacity={0.7} />
+          <line x1="0" y1="0" x2="0" y2="0.2" stroke="var(--accent)" strokeOpacity={0.5} strokeWidth="0.03" />
         </pattern>
         {floorProducts.map((p) => (
           <MaterialPattern key={p.id} product={p} />
@@ -455,7 +659,59 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
               select({ kind: 'room', id: r.label.id });
               setDrag({ kind: 'pan', start: toWorld(e), view, screen: { x: e.clientX, y: e.clientY } });
             }}
+            onContextMenu={ctx((e) => roomMenu(e, r.label.id, r.label.name))}
           />
+        );
+      })}
+
+      {/* Zones de sol (sol posé sur une partie de pièce) */}
+      {zones.map((z) => {
+        const prod = productById(catalog, z.productId);
+        const sel = isSel('zone', z.id);
+        const movable = tool === 'select' && canEditZone(z.id);
+        return (
+          <g key={z.id}>
+            <rect
+              x={z.x}
+              y={z.y}
+              width={z.w}
+              height={z.h}
+              fill={prod ? (prod.pattern ? `url(#mat-${prod.id})` : prod.color) : 'url(#zone-empty)'}
+              fillOpacity={prod ? 0.9 : 1}
+              stroke={sel ? 'var(--accent)' : 'var(--ink-soft)'}
+              strokeWidth={sel ? fs * 0.3 : fs * 0.12}
+              strokeDasharray={`${fs * 0.5} ${fs * 0.3}`}
+              style={{ cursor: movable ? 'move' : tool === 'select' ? 'pointer' : undefined }}
+              onPointerDown={(e) => {
+                if (tool !== 'select' || e.button !== 0) return;
+                e.stopPropagation();
+                select({ kind: 'zone', id: z.id });
+                if (!canEditZone(z.id)) return;
+                (e.target as Element).setPointerCapture?.(e.pointerId);
+                const raw = toWorld(e);
+                setDrag({ kind: 'zoneMove', id: z.id, dx: raw.x - z.x, dy: raw.y - z.y, x: z.x, y: z.y, moved: false });
+              }}
+              onContextMenu={ctx((e) => zoneMenu(e, z))}
+            />
+            <text x={z.x + z.w / 2} y={z.y + z.h / 2 + fs * 0.35} fontSize={fs * 0.85} textAnchor="middle" className="plan__zone-label" pointerEvents="none">
+              {prod ? `${prod.name.split(' ').slice(0, 2).join(' ')} · ${(z.w * z.h).toLocaleString('fr-BE', { maximumFractionDigits: 1 })} m²` : 'Choisir un sol'}
+            </text>
+            {sel && canEditZone(z.id) && (
+              <rect
+                x={z.x + z.w - fs * 0.45}
+                y={z.y + z.h - fs * 0.45}
+                width={fs * 0.9}
+                height={fs * 0.9}
+                className="plan__handle"
+                style={{ cursor: 'nwse-resize' }}
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  (e.target as Element).setPointerCapture?.(e.pointerId);
+                  setDrag({ kind: 'zoneSize', id: z.id, w: z.w, h: z.h });
+                }}
+              />
+            )}
+          </g>
         );
       })}
 
@@ -472,10 +728,11 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
           <g
             key={w.id}
             onPointerDown={(e) => {
-              if (tool !== 'select') return;
+              if (tool !== 'select' || e.button !== 0) return;
               e.stopPropagation();
               select({ kind: 'wall', id: w.id });
             }}
+            onContextMenu={ctx((e) => wallMenu(e, w))}
           >
             <line x1={w.a.x} y1={w.a.y} x2={w.b.x} y2={w.b.y} stroke={isSel('wall', w.id) ? 'var(--accent)' : color} strokeWidth={Math.max(w.thickness, 0.06)} strokeLinecap="square" />
             {/* Zone de clic élargie pour les cloisons fines */}
@@ -483,6 +740,41 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
           </g>
         );
       })}
+
+      {/* Revêtements des murs (peinture, papier peint, faïence) : une bande de couleur sur chaque face */}
+      {walls.map((w) =>
+        (['gauche', 'droite'] as WallSide[]).map((side) => {
+          const prod = productById(catalog, w.finish[side]);
+          if (!prod) return null;
+          const n = wallNormal(w, side);
+          const off = Math.max(w.thickness, 0.06) / 2 + fs * 0.22;
+          const L = wallLength(w);
+          if (L < 0.1) return null;
+          const k = Math.min(0.06, L / 4) / L;
+          const a = lerp(w.a, w.b, k);
+          const b = lerp(w.a, w.b, 1 - k);
+          const line = { x1: a.x + n.x * off, y1: a.y + n.y * off, x2: b.x + n.x * off, y2: b.y + n.y * off };
+          return (
+            <g key={`f-${w.id}-${side}`} pointerEvents="none">
+              <line {...line} stroke="var(--ink-soft)" strokeOpacity={0.45} strokeWidth={fs * 0.42} strokeLinecap="round" />
+              <line {...line} stroke={prod.color} strokeWidth={fs * 0.3} strokeLinecap="round" />
+            </g>
+          );
+        }),
+      )}
+
+      {/* Cotes de tous les murs (plan de l'existant) */}
+      {isExisting && showDims &&
+        walls
+          .filter((w) => w.id !== selectedWall?.id && wallLength(w) >= 0.3)
+          .map((w) => {
+            const n = wallNormal(w);
+            const mid = lerp(w.a, w.b, 0.5);
+            // Cote à l'extérieur de la maison pour les murs de façade, côté gauche sinon
+            const out = (mid.x + n.x - center.x) ** 2 + (mid.y + n.y - center.y) ** 2 > (mid.x - n.x - center.x) ** 2 + (mid.y - n.y - center.y) ** 2 ? 1 : -1;
+            const off = out * (Math.max(w.thickness, 0.06) / 2 + fs * 0.9);
+            return <Dimension key={`dim-${w.id}`} a={w.a} b={w.b} offset={off} fs={fs * 0.85} muted />;
+          })}
 
       {/* Ouvertures */}
       {building.openings.map((o) => {
@@ -496,10 +788,11 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
             selected={isSel('opening', o.id)}
             isNew={!!diff?.newOpeningIds.has(o.id)}
             onSelect={(e) => {
-              if (tool !== 'select') return;
+              if (tool !== 'select' || e.button !== 0) return;
               e.stopPropagation();
               select({ kind: 'opening', id: o.id });
             }}
+            onMenu={ctx((e) => openingMenu(e, o))}
           />
         );
       })}
@@ -513,8 +806,9 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
           <g
             key={f.id}
             transform={`translate(${f.x} ${f.y}) rotate(${f.rotation})`}
+            onContextMenu={ctx((e) => furnitureMenu(e, f.id))}
             onPointerDown={(e) => {
-              if (tool !== 'select') return;
+              if (tool !== 'select' || e.button !== 0) return;
               e.stopPropagation();
               (e.target as Element).setPointerCapture?.(e.pointerId);
               select({ kind: 'furniture', id: f.id });
@@ -584,8 +878,9 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
           v={v}
           fs={fs}
           selected={isSel('viewpoint', v.id)}
+          onMenu={ctx((e) => viewpointMenu(e, v))}
           onDown={(e, mode) => {
-            if (tool !== 'select') return;
+            if (tool !== 'select' || e.button !== 0) return;
             e.stopPropagation();
             (e.target as Element).setPointerCapture?.(e.pointerId);
             select({ kind: 'viewpoint', id: v.id });
@@ -628,6 +923,23 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
           <Dimension a={{ x: drag.end.x, y: drag.start.y }} b={drag.end} offset={-fs * 1.5} fs={fs} />
         </g>
       )}
+      {drag?.kind === 'zone' && (
+        <g pointerEvents="none">
+          <rect
+            x={Math.min(drag.start.x, drag.end.x)}
+            y={Math.min(drag.start.y, drag.end.y)}
+            width={Math.abs(drag.end.x - drag.start.x)}
+            height={Math.abs(drag.end.y - drag.start.y)}
+            fill="var(--accent)"
+            fillOpacity={0.12}
+            stroke="var(--accent)"
+            strokeWidth={fs * 0.15}
+            strokeDasharray={`${fs * 0.5} ${fs * 0.3}`}
+          />
+          <Dimension a={drag.start} b={{ x: drag.end.x, y: drag.start.y }} offset={-fs * 1.5} fs={fs} />
+          <Dimension a={{ x: drag.end.x, y: drag.start.y }} b={drag.end} offset={-fs * 1.5} fs={fs} />
+        </g>
+      )}
       {cursor && tool !== 'select' && tool !== 'calibrate' && (
         <circle cx={cursor.x} cy={cursor.y} r={fs * 0.3} fill="var(--accent)" pointerEvents="none" />
       )}
@@ -636,7 +948,7 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
   );
 }
 
-function Dimension({ a, b, offset, fs }: { a: Point; b: Point; offset: number; fs: number }) {
+function Dimension({ a, b, offset, fs, muted }: { a: Point; b: Point; offset: number; fs: number; muted?: boolean }) {
   const L = dist(a, b);
   if (L < 0.05) return null;
   const n = wallNormal({ a, b } as Wall);
@@ -646,8 +958,13 @@ function Dimension({ a, b, offset, fs }: { a: Point; b: Point; offset: number; f
   let ang = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
   if (ang > 90 || ang < -90) ang += 180;
   return (
-    <g className="plan__dim" pointerEvents="none">
+    <g className={muted ? 'plan__dim plan__dim--muted' : 'plan__dim'} pointerEvents="none">
       <line x1={pa.x} y1={pa.y} x2={pb.x} y2={pb.y} strokeWidth={fs * 0.08} />
+      {/* Petits traits aux extrémités */}
+      {[pa, pb].map((q, i) => {
+        const nn = wallNormal({ a, b } as Wall);
+        return <line key={i} x1={q.x - nn.x * fs * 0.35} y1={q.y - nn.y * fs * 0.35} x2={q.x + nn.x * fs * 0.35} y2={q.y + nn.y * fs * 0.35} strokeWidth={fs * 0.08} />;
+      })}
       <text x={m.x} y={m.y - fs * 0.35} fontSize={fs} textAnchor="middle" transform={`rotate(${ang} ${m.x} ${m.y})`}>
         {fmtM(L)}
       </text>
@@ -655,7 +972,7 @@ function Dimension({ a, b, offset, fs }: { a: Point; b: Point; offset: number; f
   );
 }
 
-function OpeningShape({ o, w, selected, isNew, onSelect }: { o: Opening; w: Wall; selected: boolean; isNew: boolean; onSelect: (e: React.PointerEvent) => void }) {
+function OpeningShape({ o, w, selected, isNew, onSelect, onMenu }: { o: Opening; w: Wall; selected: boolean; isNew: boolean; onSelect: (e: React.PointerEvent) => void; onMenu: (e: React.MouseEvent) => void }) {
   const L = wallLength(w);
   if (L === 0) return null;
   const t1 = (o.offset - o.width / 2) / L;
@@ -669,7 +986,7 @@ function OpeningShape({ o, w, selected, isNew, onSelect }: { o: Opening; w: Wall
   if (o.kind === 'fenetre') {
     const off = th / 4;
     return (
-      <g onPointerDown={onSelect} style={{ cursor: 'pointer' }}>
+      <g onPointerDown={onSelect} onContextMenu={onMenu} style={{ cursor: 'pointer' }}>
         <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke="var(--paper)" strokeWidth={th + 0.01} />
         <line x1={p1.x + n.x * off} y1={p1.y + n.y * off} x2={p2.x + n.x * off} y2={p2.y + n.y * off} stroke={stroke} strokeWidth={sw} />
         <line x1={p1.x - n.x * off} y1={p1.y - n.y * off} x2={p2.x - n.x * off} y2={p2.y - n.y * off} stroke={stroke} strokeWidth={sw} />
@@ -681,7 +998,7 @@ function OpeningShape({ o, w, selected, isNew, onSelect }: { o: Opening; w: Wall
   // Porte : vantail + arc d'ouverture
   const leaf = { x: p1.x + n.x * o.width, y: p1.y + n.y * o.width };
   return (
-    <g onPointerDown={onSelect} style={{ cursor: 'pointer' }}>
+    <g onPointerDown={onSelect} onContextMenu={onMenu} style={{ cursor: 'pointer' }}>
       <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke="var(--paper)" strokeWidth={th + 0.01} />
       <line x1={p1.x} y1={p1.y} x2={leaf.x} y2={leaf.y} stroke={stroke} strokeWidth={sw * 1.5} />
       <path d={`M${leaf.x} ${leaf.y} A${o.width} ${o.width} 0 0 ${crossSign(w) ? 1 : 0} ${p2.x} ${p2.y}`} fill="none" stroke={stroke} strokeWidth={sw * 0.6} strokeDasharray="0.05 0.04" />
@@ -723,7 +1040,7 @@ function StairSymbol({ w, d, fs }: { w: number; d: number; fs: number }) {
 }
 
 /** Point de vue : appareil photo et cône de vision, orientable par la poignée. */
-function ViewpointMark({ v, fs, selected, onDown }: { v: Viewpoint; fs: number; selected: boolean; onDown: (e: React.PointerEvent, mode: 'move' | 'turn') => void }) {
+function ViewpointMark({ v, fs, selected, onDown, onMenu }: { v: Viewpoint; fs: number; selected: boolean; onDown: (e: React.PointerEvent, mode: 'move' | 'turn') => void; onMenu: (e: React.MouseEvent) => void }) {
   const a = (v.direction * Math.PI) / 180;
   const half = (v.fov * Math.PI) / 360;
   const L = 1.6;
@@ -732,7 +1049,7 @@ function ViewpointMark({ v, fs, selected, onDown }: { v: Viewpoint; fs: number; 
   const handle = { x: v.x + Math.cos(a) * L, y: v.y + Math.sin(a) * L };
   const color = selected ? 'var(--accent)' : '#d97706';
   return (
-    <g data-vp={v.id}>
+    <g data-vp={v.id} onContextMenu={onMenu}>
       <path d={`M${v.x} ${v.y} L${p1.x} ${p1.y} A${L} ${L} 0 0 1 ${p2.x} ${p2.y} Z`} fill={color} fillOpacity={0.14} stroke={color} strokeWidth={fs * 0.08} pointerEvents="none" />
       <circle cx={v.x} cy={v.y} r={fs * 0.75} fill={color} stroke="#fff" strokeWidth={fs * 0.12} style={{ cursor: 'move' }} onPointerDown={(e) => onDown(e, 'move')} />
       <rect x={v.x - fs * 0.32} y={v.y - fs * 0.22} width={fs * 0.64} height={fs * 0.44} rx={fs * 0.06} fill="#fff" pointerEvents="none" />

@@ -36,6 +36,7 @@ export function onLevel(b: Building, levelId: string): Building {
     openings: b.openings.filter((o) => ids.has(o.wallId)),
     rooms: b.rooms.filter((r) => r.levelId === levelId),
     furniture: b.furniture.filter((f) => f.levelId === levelId),
+    floorZones: (b.floorZones ?? []).filter((z) => z.levelId === levelId),
     roof: b.roof,
   };
 }
@@ -55,6 +56,7 @@ export function migrateProject(raw: unknown): Project | null {
   b.openings ??= [];
   b.rooms ??= [];
   b.furniture ??= [];
+  b.floorZones ??= [];
   b.roof ??= null;
   for (const op of p.operations ?? []) {
     if (op.type === 'addWall') op.wall.levelId ??= first;

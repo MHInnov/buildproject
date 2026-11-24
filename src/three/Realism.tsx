@@ -51,7 +51,7 @@ export function HdrEnvironment({ preset, night }: { preset: HdrPreset; night: bo
     };
   }, [gl, scene, preset]);
   useEffect(() => {
-    scene.environmentIntensity = night ? 0.05 : 0.65;
+    scene.environmentIntensity = night ? 0.05 : 0.85;
     scene.background = skyTexture(night);
   }, [night, preset, scene]);
   return null;

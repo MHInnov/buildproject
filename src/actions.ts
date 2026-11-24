@@ -1,6 +1,6 @@
 import { detectRooms, newId, wallSideFacingRoom } from './model/geometry';
 import { applyOperations, pushOperation as pushOp } from './model/operations';
-import type { Condition, FurnitureItem, Opening, Room, RoomLabel, Viewpoint, WallSide } from './model/types';
+import type { Condition, FloorZone, FurnitureItem, Opening, Room, RoomLabel, Viewpoint, WallSide } from './model/types';
 import { useStore } from './store';
 
 /**
@@ -183,5 +183,46 @@ export function updateViewpoint(id: string, fn: (v: Viewpoint) => void) {
 
 export function removeViewpoint(id: string) {
   st().updateProject((p) => void (p.viewpoints = p.viewpoints.filter((v) => v.id !== id)));
+  st().select(null);
+}
+
+/** Zone de sol (sol posé sur une partie de pièce). */
+export function addFloorZone(zone: FloorZone) {
+  if (isExisting()) st().editExisting((b) => void (b.floorZones ??= []).push(zone));
+  else st().addOperation({ type: 'addFloorZone', zone });
+  st().select({ kind: 'zone', id: zone.id });
+}
+
+export function setFloorZoneProduct(id: string, productId: string) {
+  if (isExisting()) {
+    st().editExisting((b) => {
+      const z = b.floorZones?.find((x) => x.id === id);
+      if (z) z.productId = productId;
+    });
+  } else st().addOperation({ type: 'setFloorZone', zoneId: id, productId });
+}
+
+/** Une zone peut être déplacée ou redimensionnée dans l'existant, ou si le projet l'a créée. */
+export function canEditZone(id: string): boolean {
+  if (isExisting()) return true;
+  return st().project.operations.some((o) => o.type === 'addFloorZone' && o.zone.id === id);
+}
+
+export function editFloorZone(id: string, fn: (z: FloorZone) => void) {
+  if (isExisting()) {
+    st().editExisting((b) => {
+      const z = b.floorZones?.find((x) => x.id === id);
+      if (z) fn(z);
+    });
+    return;
+  }
+  st().updateProject((p) => {
+    for (const o of p.operations) if (o.type === 'addFloorZone' && o.zone.id === id) fn(o.zone);
+  });
+}
+
+export function removeFloorZone(id: string) {
+  if (isExisting()) st().editExisting((b) => void (b.floorZones = (b.floorZones ?? []).filter((z) => z.id !== id)));
+  else st().addOperation({ type: 'removeFloorZone', zoneId: id });
   st().select(null);
 }

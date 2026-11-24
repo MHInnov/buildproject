@@ -36,6 +36,8 @@ export interface Pattern {
   h?: number;
   joint?: string;
   accent?: string;
+  /** Photo à utiliser en 3D quand l'aspect seul ne suffit pas (ex. 'terracotta', 'marble'), voir three/photoMaterials.ts. */
+  photo?: string;
 }
 export type Tone = 'clair' | 'moyen' | 'fonce';
 

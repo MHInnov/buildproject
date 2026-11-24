@@ -7,7 +7,7 @@ import { applyOperations, pushOperation } from './model/operations';
 import type { Building, Operation, Project } from './model/types';
 
 export type Step = 'existant' | 'projet' | 'visite' | 'artisans' | 'resume';
-export type Tool = 'select' | 'wall' | 'room' | 'door' | 'window' | 'furniture' | 'viewpoint' | 'calibrate';
+export type Tool = 'select' | 'wall' | 'room' | 'zone' | 'door' | 'window' | 'furniture' | 'viewpoint' | 'calibrate';
 
 export type Selection =
   | { kind: 'wall'; id: string }
@@ -17,6 +17,7 @@ export type Selection =
   | { kind: 'opening'; id: string }
   | { kind: 'room'; id: string }
   | { kind: 'furniture'; id: string }
+  | { kind: 'zone'; id: string }
   | null;
 
 interface State {

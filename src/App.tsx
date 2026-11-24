@@ -110,8 +110,9 @@ function PlanStep() {
   const [wallKind, setWallKind] = useState<WallKind>('porteur');
   const isExisting = step === 'existant';
   const tools: { id: Tool; label: string; hint: string }[] = [
-    { id: 'select', label: 'Sélection', hint: 'Cliquer pour choisir, glisser pour déplacer le plan ou un meuble' },
+    { id: 'select', label: 'Sélection', hint: 'Cliquer pour choisir, glisser pour déplacer le plan ou un meuble, clic droit pour les actions' },
     { id: 'room', label: 'Pièce', hint: 'Glisser pour tracer une pièce rectangulaire' },
+    { id: 'zone', label: 'Zone de sol', hint: 'Glisser pour poser un autre sol sur une partie de pièce (coin cuisine, entrée…)' },
     { id: 'wall', label: 'Mur', hint: 'Cliquer point par point ; double-clic ou Échap pour terminer ; Maj pour un angle libre' },
     { id: 'door', label: 'Porte', hint: 'Cliquer sur un mur' },
     { id: 'window', label: 'Fenêtre', hint: 'Cliquer sur un mur' },

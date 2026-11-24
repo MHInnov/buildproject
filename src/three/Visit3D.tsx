@@ -263,7 +263,7 @@ function PersoRig({ world, levelId, onHint }: { world: WalkWorld; levelId: strin
   const speedRef = useRef(0);
   const worldRef = useRef(world);
   worldRef.current = world;
-  const st = useRef({ pos: new THREE.Vector3(), heading: 0, yaw: 0, pitch: 0.32, dist: 3.2, phase: 0, near: null as Interactive | null, lastHint: 0, hint: null as string | null });
+  const st = useRef({ pos: new THREE.Vector3(), heading: 0, yaw: Math.PI, look: 0, dragging: false, pitch: 0.3, dist: 2.8, phase: 0, near: null as Interactive | null, lastHint: 0, hint: null as string | null });
   const items = useMemo(() => interactives(world.b), [world]);
   const itemsRef = useRef(items);
   itemsRef.current = items;
@@ -271,18 +271,31 @@ function PersoRig({ world, levelId, onHint }: { world: WalkWorld; levelId: strin
   useEffect(() => {
     const s = freeStart(world, levelId);
     st.current.pos.set(s.at.x, s.elevation, s.at.y);
+    // Le personnage regarde vers le fond de la pièce, la caméra se place dans son dos.
+    const far = s.room?.polygon.reduce((m, p) => (Math.hypot(p.x - s.at.x, p.y - s.at.y) > Math.hypot(m.x - s.at.x, m.y - s.at.y) ? p : m), s.at);
+    if (far && (far.x !== s.at.x || far.y !== s.at.y)) st.current.heading = Math.atan2(far.x - s.at.x, far.y - s.at.y);
+    st.current.yaw = st.current.heading + Math.PI;
+    st.current.look = 0;
     (camera as THREE.PerspectiveCamera).fov = 60;
     (camera as THREE.PerspectiveCamera).updateProjectionMatrix();
     const el = gl.domElement;
     let drag: { x: number; y: number } | null = null;
-    const down = (e: PointerEvent) => (drag = { x: e.clientX, y: e.clientY });
+    const down = (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      drag = { x: e.clientX, y: e.clientY };
+      st.current.dragging = true;
+    };
+    // Glisser : regarder autour du personnage ; la caméra revient ensuite dans son dos.
     const move = (e: PointerEvent) => {
       if (!drag) return;
-      st.current.yaw -= (e.clientX - drag.x) * 0.006;
+      st.current.look -= (e.clientX - drag.x) * 0.006;
       st.current.pitch = Math.min(1.2, Math.max(-0.2, st.current.pitch + (e.clientY - drag.y) * 0.004));
       drag = { x: e.clientX, y: e.clientY };
     };
-    const up = () => (drag = null);
+    const up = () => {
+      drag = null;
+      st.current.dragging = false;
+    };
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
       st.current.dist = Math.min(7, Math.max(1.2, st.current.dist * Math.exp(e.deltaY * 0.001)));
@@ -322,28 +335,27 @@ function PersoRig({ world, levelId, onHint }: { world: WalkWorld; levelId: strin
       return o?.kind === 'porte' ? !ui.toggled[id] : !!ui.toggled[id];
     };
     let moving = false;
-    if (fwd || side) {
-      const speed = (run ? 3 : 1.4) * dt;
-      // Avancer = s'éloigner de la caméra
-      const f = new THREE.Vector3(-Math.sin(s.yaw), 0, -Math.cos(s.yaw));
-      const r = new THREE.Vector3(-f.z, 0, f.x);
-      const m = f.multiplyScalar(fwd).add(r.multiplyScalar(side)).normalize().multiplyScalar(speed);
+    // Gauche / droite : le personnage tourne sur lui-même ; avancer / reculer : dans le sens où il regarde.
+    if (side) s.heading -= side * (run ? 2.6 : 2.1) * dt;
+    if (fwd) {
+      const speed = (fwd > 0 ? (run ? 3 : 1.4) : 0.9) * dt * fwd;
       const bx = s.pos.x;
       const bz = s.pos.z;
-      step(worldRef.current, s.pos, m.x, m.z, isOpen);
+      step(worldRef.current, s.pos, Math.sin(s.heading) * speed, Math.cos(s.heading) * speed, isOpen);
       // Vitesse réelle (bloqué contre un mur = sur place)
       const real = Math.hypot(s.pos.x - bx, s.pos.z - bz) / Math.max(dt, 1e-3);
       speedRef.current += (real - speedRef.current) * Math.min(1, dt * 10);
-      const target = Math.atan2(m.x, m.z);
-      let d = target - s.heading;
-      d = Math.atan2(Math.sin(d), Math.cos(d));
-      s.heading += d * Math.min(1, dt * 10);
       s.phase += dt * (run ? 11 : 7);
       moving = true;
     } else {
       s.pos.y = groundAt(worldRef.current, { x: s.pos.x, y: s.pos.z }, s.pos.y);
-      speedRef.current += (0 - speedRef.current) * Math.min(1, dt * 10);
+      speedRef.current += ((side ? 0.6 : 0) - speedRef.current) * Math.min(1, dt * 10);
     }
+    // La caméra reste dans le dos du personnage (le regard libre à la souris revient doucement).
+    if (!s.dragging) s.look *= Math.max(0, 1 - dt * (moving || side ? 4 : 1.2));
+    let dy = s.heading + Math.PI + s.look - s.yaw;
+    dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+    s.yaw += dy * Math.min(1, dt * 8);
     // Animation de marche (silhouette de repli, le temps que le personnage réaliste se charge)
     const swing = moving ? Math.sin(s.phase) * 0.55 : 0;
     const k = Math.min(1, dt * 12);
@@ -372,7 +384,8 @@ function PersoRig({ world, levelId, onHint }: { world: WalkWorld; levelId: strin
     });
     const d = hit ? Math.max(0.3, hit.distance - 0.2) : s.dist;
     camera.position.copy(head).addScaledVector(dir, d);
-    camera.lookAt(head);
+    // On vise un peu devant le personnage pour voir où il va.
+    camera.lookAt(head.x - dir.x * 0.6, head.y - 0.1, head.z - dir.z * 0.6);
     // Élément à portée (touche E)
     const now = performance.now();
     if (now - s.lastHint > 150) {
@@ -598,7 +611,7 @@ export function Visit3D() {
         onCreated={({ gl }) => {
           // Tons neutres : les couleurs des produits restent fidèles au catalogue
           gl.toneMapping = THREE.NeutralToneMapping;
-          gl.toneMappingExposure = 1.05;
+          gl.toneMappingExposure = 1.12;
         }}
         onPointerMissed={() => mode !== 'walk' && select(null)}
       >
@@ -705,7 +718,7 @@ export function Visit3D() {
       {mode === 'perso' && (
         <div className="visit__hint visit__hint--small">
           {hint ? <strong>{hint}</strong> : null}
-          <span>Marcher : ZQSD ou flèches (Maj pour courir) · Glisser : tourner la caméra · Molette : zoom · Clic : modifier un élément · Double-clic : ouvrir une porte</span>
+          <span>Avancer / reculer : Z/W, S ou ↑ ↓ · Tourner : Q/A, D ou ← → · Maj : courir · Glisser : regarder autour · Molette : zoom · Clic : modifier un élément · Double-clic : ouvrir une porte</span>
         </div>
       )}
       {mode === 'orbit' && (

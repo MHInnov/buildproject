@@ -34,6 +34,8 @@ export function projectDiff(project: Project): ProjectDiff {
   };
 }
 
+const fmtDim = (n: number) => n.toLocaleString('fr-BE', { maximumFractionDigits: 2 });
+
 /** Description lisible d'une opération pour la liste des modifications. */
 export function describeOperation(op: Operation, catalog: Catalog, roomName: (id: string) => string): string {
   const pn = (id: string | null) => productById(catalog, id)?.name ?? 'produit inconnu';
@@ -52,6 +54,12 @@ export function describeOperation(op: Operation, catalog: Catalog, roomName: (id
       return `Sol de ${roomName(op.roomId)} : ${pn(op.productId)}`;
     case 'setWallFinish':
       return `Mur : ${pn(op.productId)}`;
+    case 'addFloorZone':
+      return `Zone de sol ${fmtDim(op.zone.w)} × ${fmtDim(op.zone.h)} m : ${op.zone.productId ? pn(op.zone.productId) : 'revêtement à choisir'}`;
+    case 'setFloorZone':
+      return `Zone de sol : ${pn(op.productId)}`;
+    case 'removeFloorZone':
+      return 'Retirer une zone de sol';
     case 'addFurniture':
       return `Ajouter : ${pn(op.item.productId)}`;
     case 'removeFurniture':

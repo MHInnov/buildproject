@@ -37,6 +37,17 @@ function applyOne(b: Building, op: Operation): void {
       }
       return;
     }
+    case 'addFloorZone':
+      (b.floorZones ??= []).push(structuredClone(op.zone));
+      return;
+    case 'setFloorZone': {
+      const z = b.floorZones?.find((x) => x.id === op.zoneId);
+      if (z) z.productId = op.productId;
+      return;
+    }
+    case 'removeFloorZone':
+      b.floorZones = (b.floorZones ?? []).filter((z) => z.id !== op.zoneId);
+      return;
     case 'setWallFinish': {
       const w = b.walls.find((x) => x.id === op.wallId);
       if (w) w.finish[op.side] = op.productId;
@@ -73,6 +84,8 @@ function targetKey(op: Operation): string | null {
       return `floor:${op.roomId}`;
     case 'setWallFinish':
       return `finish:${op.wallId}:${op.side}`;
+    case 'setFloorZone':
+      return `zone:${op.zoneId}`;
     case 'replaceOpening':
       return `opening:${op.openingId}`;
     case 'moveFurniture':
@@ -116,6 +129,15 @@ export function pushOperation(ops: Operation[], op: Operation): Operation[] {
   if (op.type === 'replaceOpening') {
     const added = next.find((o): o is Extract<Operation, { type: 'addOpening' }> => o.type === 'addOpening' && o.opening.id === op.openingId);
     if (added) return next.map((o) => (o === added ? { ...added, opening: { ...added.opening, productId: op.productId } } : o));
+  }
+  if (op.type === 'setFloorZone') {
+    const added = next.find((o): o is Extract<Operation, { type: 'addFloorZone' }> => o.type === 'addFloorZone' && o.zone.id === op.zoneId);
+    if (added) return next.map((o) => (o === added ? { ...added, zone: { ...added.zone, productId: op.productId } } : o));
+  }
+  if (op.type === 'removeFloorZone') {
+    const added = next.find((o) => o.type === 'addFloorZone' && o.zone.id === op.zoneId);
+    if (added) return next.filter((o) => o !== added && !(o.type === 'setFloorZone' && o.zoneId === op.zoneId));
+    next = next.filter((o) => !(o.type === 'setFloorZone' && o.zoneId === op.zoneId));
   }
   if (op.type === 'demolishWall') {
     const added = next.find((o) => o.type === 'addWall' && (o.wall.id === op.wallId || op.wallId.startsWith(`${o.wall.id}.`)));

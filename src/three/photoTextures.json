@@ -1,0 +1,242 @@
+{
+  "oak-planks": {
+    "source": "WoodFloor051",
+    "aspect": 1.0,
+    "avg": [
+      0.32808,
+      0.19805,
+      0.112
+    ],
+    "rough": 0.3521
+  },
+  "old-planks": {
+    "source": "WoodFloor042",
+    "aspect": 0.5,
+    "avg": [
+      0.43447,
+      0.18911,
+      0.04951
+    ],
+    "rough": 0.2834
+  },
+  "herringbone": {
+    "source": "WoodFloor052",
+    "aspect": 1.0,
+    "avg": [
+      0.31964,
+      0.19197,
+      0.10791
+    ],
+    "rough": 0.3535
+  },
+  "tiles-large": {
+    "source": "Tiles107",
+    "aspect": 1.0,
+    "avg": [
+      0.94001,
+      0.9388,
+      0.93655
+    ],
+    "rough": 0.0521
+  },
+  "tiles-old": {
+    "source": "Tiles142",
+    "aspect": 1.0,
+    "avg": [
+      0.6972,
+      0.45981,
+      0.27026
+    ],
+    "rough": 0.3371
+  },
+  "terracotta": {
+    "source": "Tiles027",
+    "aspect": 1.0,
+    "avg": [
+      0.68968,
+      0.35392,
+      0.15854
+    ],
+    "rough": 0.5181
+  },
+  "cement": {
+    "source": "Tiles131",
+    "aspect": 1.0,
+    "avg": [
+      0.36333,
+      0.22553,
+      0.09759
+    ],
+    "rough": 0.5358
+  },
+  "subway": {
+    "source": "Tiles009",
+    "aspect": 1.0,
+    "avg": [
+      0.83843,
+      0.80859,
+      0.72268
+    ],
+    "rough": 0.1939
+  },
+  "zellige": {
+    "source": "Tiles023",
+    "aspect": 1.0,
+    "avg": [
+      0.05469,
+      0.10578,
+      0.07627
+    ],
+    "rough": 0.4099
+  },
+  "marble": {
+    "source": "Marble018",
+    "aspect": 1.0,
+    "avg": [
+      0.50293,
+      0.46974,
+      0.43967
+    ],
+    "rough": 0.3686
+  },
+  "brick": {
+    "source": "Bricks097",
+    "aspect": 0.5,
+    "avg": [
+      0.24575,
+      0.15795,
+      0.09775
+    ],
+    "rough": 0.5986
+  },
+  "stone": {
+    "source": "Bricks096",
+    "aspect": 0.5,
+    "avg": [
+      0.16088,
+      0.14322,
+      0.07897
+    ],
+    "rough": 0.5836
+  },
+  "plaster": {
+    "source": "Plaster001",
+    "aspect": 1.0,
+    "avg": [
+      0.67936,
+      0.65285,
+      0.62966
+    ],
+    "rough": 0.7902
+  },
+  "crepi": {
+    "source": "Plaster003",
+    "aspect": 1.0,
+    "avg": [
+      0.68004,
+      0.65592,
+      0.63358
+    ],
+    "rough": 0.8398
+  },
+  "wallpaper": {
+    "source": "Wallpaper001A",
+    "aspect": 1.0,
+    "avg": [
+      0.74289,
+      0.75007,
+      0.71363
+    ],
+    "rough": 0.6565
+  },
+  "paneling": {
+    "source": "Planks008",
+    "aspect": 1.0,
+    "avg": [
+      0.30424,
+      0.24698,
+      0.13564
+    ],
+    "rough": 0.522
+  },
+  "concrete": {
+    "source": "Concrete016",
+    "aspect": 1.0,
+    "avg": [
+      0.20848,
+      0.22687,
+      0.24195
+    ],
+    "rough": 0.6268
+  },
+  "carpet": {
+    "source": "Carpet012",
+    "aspect": 1.0,
+    "avg": [
+      0.03479,
+      0.04371,
+      0.06569
+    ],
+    "rough": 0.879
+  },
+  "rooftiles": {
+    "source": "RoofingTiles014A",
+    "aspect": 1.0,
+    "avg": [
+      0.27568,
+      0.10578,
+      0.05704
+    ],
+    "rough": 0.677
+  },
+  "slate": {
+    "source": "RoofingTiles003",
+    "aspect": 1.0,
+    "avg": [
+      0.03549,
+      0.03806,
+      0.03531
+    ],
+    "rough": 0.6829
+  },
+  "zinc": {
+    "source": "Metal009",
+    "aspect": 1.0,
+    "avg": [
+      0.28818,
+      0.29866,
+      0.31357
+    ],
+    "rough": 0.4694
+  },
+  "grass": {
+    "source": "Grass004",
+    "aspect": 1.0,
+    "avg": [
+      0.11855,
+      0.15237,
+      0.03031
+    ],
+    "rough": 0.2631
+  },
+  "fabric": {
+    "source": "Fabric030",
+    "aspect": 1.0,
+    "avg": [
+      0.10544,
+      0.10409,
+      0.10572
+    ],
+    "rough": 0.7283
+  },
+  "wood": {
+    "source": "Wood022",
+    "aspect": 1.0,
+    "avg": [
+      0.62072,
+      0.40649,
+      0.1789
+    ],
+    "rough": 0.4774
+  }
+}
