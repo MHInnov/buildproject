@@ -2,8 +2,9 @@ import type { Catalog, LaborTask, Product } from './catalog';
 import { productById, taskById } from './catalog';
 import { detectRooms, wallFaceArea, wallLength } from './geometry';
 import { applyOperations } from './operations';
+import { roofArea, roofInsulationArea } from './roof';
 import type { Building, Lot, Operation, Project, Wall } from './types';
-import { LOT_ORDER } from './types';
+import { CONDITION_LABELS, LOT_ORDER } from './types';
 
 export interface MaterialLine {
   label: string;
@@ -56,6 +57,8 @@ export interface Estimate {
   totalMin: number;
   totalMax: number;
   warnings: string[];
+  /** Éléments de l'existant en mauvais état que le projet ne traite pas encore. */
+  attention: string[];
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -123,8 +126,11 @@ export function computeEstimate(project: Project, catalog: Catalog): Estimate {
   const isExistingWall = (id: string) => existingWallIds.has(id) || [...existingWallIds].some((e) => id.startsWith(`${e}.`));
 
   let needsStabilityStudy = false;
-  const floorsByProduct = new Map<string, { area: number; plinth: number; rooms: string[] }>();
-  const finishesByProduct = new Map<string, { area: number; walls: number }>();
+  const floorsByProduct = new Map<string, { area: number; plinth: number; rooms: string[]; removal: Map<string, number> }>();
+  const finishesByProduct = new Map<string, { area: number; walls: number; removal: Map<string, number> }>();
+  const addTo = (m: Map<string, number>, k: string | undefined, q: number) => {
+    if (k) m.set(k, (m.get(k) ?? 0) + q);
+  };
   const furnitureByProduct = new Map<string, number>();
 
   operations.forEach((op: Operation, i: number) => {
@@ -242,25 +248,87 @@ export function computeEstimate(project: Project, catalog: Catalog): Estimate {
         if (!room) return;
         const doors = projected.openings.filter((o) => o.kind === 'porte' && room.wallIds.includes(o.wallId));
         const plinth = Math.max(0, room.perimeter - doors.reduce((s, d) => s + d.width, 0));
-        const acc = floorsByProduct.get(op.productId) ?? { area: 0, plinth: 0, rooms: [] };
+        const acc = floorsByProduct.get(op.productId) ?? { area: 0, plinth: 0, rooms: [] as string[], removal: new Map<string, number>() };
         acc.area += room.area;
         acc.plinth += plinth;
         acc.rooms.push(room.label.name);
+        // La dépose dépend du revêtement actuel (carrelage, moquette, plancher…).
+        const before = stateBefore(i).rooms.find((r) => r.id === op.roomId);
+        const old = productById(catalog, before?.floorProductId);
+        addTo(acc.removal, old ? old.removal : 'depose-sol', room.area);
         floorsByProduct.set(op.productId, acc);
         return;
       }
       case 'setWallFinish': {
         const w = projected.walls.find((x) => x.id === op.wallId);
         if (!w) return;
-        const acc = finishesByProduct.get(op.productId) ?? { area: 0, walls: 0 };
-        acc.area += wallFaceArea(w, projected.openings);
+        const acc = finishesByProduct.get(op.productId) ?? { area: 0, walls: 0, removal: new Map<string, number>() };
+        const area = wallFaceArea(w, projected.openings);
+        acc.area += area;
         acc.walls += 1;
+        const beforeWall = stateBefore(i).walls.find((x) => x.id === op.wallId);
+        addTo(acc.removal, productById(catalog, beforeWall?.finish[op.side])?.removal, area);
         finishesByProduct.set(op.productId, acc);
         return;
       }
-      case 'addFurniture':
+      case 'addFurniture': {
+        const p = productById(catalog, op.item.productId);
+        if (p?.category === 'escalier') {
+          // Un nouvel escalier sans escalier existant au même niveau demande d'ouvrir le plancher.
+          const hadStair = existing.furniture.some((f) => f.levelId === op.item.levelId && productById(catalog, f.productId)?.category === 'escalier');
+          const labor_ = [labor(taskById(catalog, 'pose-escalier'), 1)];
+          if (!hadStair) labor_.push(labor(taskById(catalog, 'creation-tremie'), 1));
+          lines.push(
+            finalize({
+              id: `op-${i}`,
+              lot: 'escaliers',
+              title: p.name,
+              subtitle: hadStair ? "Remplacement de l'escalier existant" : 'Nouvel escalier : trémie à créer dans le plancher',
+              materials: [{ label: p.name, quantity: 1, unit: 'pièce', unitPrice: p.price, total: p.price }],
+              labor: labor_,
+              warnings: hadStair ? [] : ['Ouvrir un plancher touche à la structure : faites vérifier par un professionnel.'],
+            }),
+          );
+          return;
+        }
         furnitureByProduct.set(op.item.productId, (furnitureByProduct.get(op.item.productId) ?? 0) + 1);
         return;
+      }
+      case 'setRoofCovering': {
+        const p = productById(catalog, op.productId);
+        const area = roofArea(projected);
+        if (!p || area <= 0) return;
+        lines.push(
+          finalize({
+            id: `op-${i}`,
+            lot: 'toiture',
+            title: `Nouvelle couverture : ${p.name.replace(/ \(m²\)$/, '')}`,
+            subtitle: `${fmt(area)} m² de toiture, débords compris`,
+            materials: [packMaterial(p, area)],
+            labor: [labor(taskById(catalog, 'depose-couverture'), area), labor(taskById(catalog, 'pose-couverture'), area)],
+            warnings: ['Un échafaudage et une autorisation peuvent être nécessaires : à confirmer avec le couvreur.'],
+          }),
+        );
+        return;
+      }
+      case 'setRoofInsulation': {
+        const p = productById(catalog, op.productId);
+        const area = roofInsulationArea(projected);
+        if (!p || area <= 0 || p.existingOnly) return;
+        const flat = projected.roof?.type === 'plat';
+        lines.push(
+          finalize({
+            id: `op-${i}`,
+            lot: 'isolation',
+            title: `Isolation de toiture : ${p.name}`,
+            subtitle: `${fmt(area)} m² ${flat ? 'de toit plat' : 'de rampants'}${p.rValue ? ` · R = ${p.rValue}` : ''}`,
+            materials: [packMaterial(p, area)],
+            labor: [labor(taskById(catalog, flat ? 'isolation-toit-plat' : 'isolation-rampants'), area)],
+            warnings: [],
+          }),
+        );
+        return;
+      }
       default:
         return;
     }
@@ -277,7 +345,7 @@ export function computeEstimate(project: Project, catalog: Catalog): Estimate {
         title: `Sol : ${p.name}`,
         subtitle: `${acc.rooms.join(', ')} · ${fmt(acc.area)} m²`,
         materials: [packMaterial(p, acc.area)],
-        labor: [labor(taskById(catalog, 'depose-sol'), acc.area), labor(pose, acc.area), labor(taskById(catalog, 'plinthes'), acc.plinth)],
+        labor: [...[...acc.removal].map(([t, q]) => labor(taskById(catalog, t), q)), labor(pose, acc.area), labor(taskById(catalog, 'plinthes'), acc.plinth)],
         warnings: [],
       }),
     );
@@ -287,16 +355,29 @@ export function computeEstimate(project: Project, catalog: Catalog): Estimate {
     const p = productById(catalog, pid);
     if (!p || acc.area <= 0) continue;
     const isPaint = p.category === 'peinture';
+    const removal = [...acc.removal].map(([t, q]) => labor(taskById(catalog, t), q));
+    let lot: Lot = 'carrelage';
+    let kind = 'Faïence';
+    let pose: LaborLine[] = [labor(taskById(catalog, 'pose-faience'), acc.area)];
+    if (isPaint) {
+      lot = 'peinture';
+      kind = 'Peinture';
+      pose = [labor(taskById(catalog, 'prep-murs'), acc.area), labor(taskById(catalog, 'peinture-murs'), acc.area)];
+    } else if (p.category === 'mur') {
+      const t = p.tags.includes('lambris') ? 'pose-lambris' : p.tags.includes('brique') ? 'pose-parement' : 'pose-papier-peint';
+      const task = taskById(catalog, t);
+      lot = task.lot;
+      kind = 'Revêtement mural';
+      pose = [labor(task, acc.area)];
+    }
     lines.push(
       finalize({
         id: `finish-${pid}`,
-        lot: isPaint ? 'peinture' : 'carrelage',
-        title: `${isPaint ? 'Peinture' : 'Faïence'} : ${p.name}`,
+        lot,
+        title: `${kind} : ${p.name}`,
         subtitle: `${acc.walls} face${acc.walls > 1 ? 's' : ''} de mur · ${fmt(acc.area)} m² ouvertures déduites`,
         materials: [isPaint ? paintMaterial(p, acc.area) : packMaterial(p, acc.area)],
-        labor: isPaint
-          ? [labor(taskById(catalog, 'prep-murs'), acc.area), labor(taskById(catalog, 'peinture-murs'), acc.area)]
-          : [labor(taskById(catalog, 'pose-faience'), acc.area)],
+        labor: [...removal, ...pose],
         warnings: [],
       }),
     );
@@ -306,11 +387,19 @@ export function computeEstimate(project: Project, catalog: Catalog): Estimate {
     const p = productById(catalog, pid);
     if (!p) continue;
     const task =
-      p.subcategory === 'cuisine' ? 'pose-cuisine' : p.subcategory === 'salle-de-bain' ? 'pose-sanitaire' : 'montage-meuble';
+      p.subcategory === 'cuisine'
+        ? 'pose-cuisine'
+        : p.id === 'wc-suspendu'
+          ? 'pose-wc-suspendu'
+          : p.subcategory === 'salle-de-bain' || p.subcategory === 'wc'
+            ? 'pose-sanitaire'
+            : p.subcategory === 'chauffage'
+              ? 'pose-radiateur'
+              : 'montage-meuble';
     lines.push(
       finalize({
         id: `furn-${pid}`,
-        lot: 'mobilier',
+        lot: taskById(catalog, task).lot,
         title: `${qty > 1 ? `${qty} × ` : ''}${p.name}`,
         materials: [{ label: p.name, quantity: qty, unit: 'pièce', unitPrice: p.price, total: round2(qty * p.price) }],
         labor: [labor(taskById(catalog, task), qty)],
@@ -345,6 +434,8 @@ export function computeEstimate(project: Project, catalog: Catalog): Estimate {
     };
   }).filter((l) => l.lines.length > 0);
 
+  const attention = attentionPoints(project, catalog);
+
   const materialTotal = round2(lots.reduce((s, l) => s + l.materialTotal, 0));
   const laborMin = round2(lots.reduce((s, l) => s + l.laborMin, 0));
   const laborMax = round2(lots.reduce((s, l) => s + l.laborMax, 0));
@@ -357,7 +448,42 @@ export function computeEstimate(project: Project, catalog: Catalog): Estimate {
     totalMin: round2(materialTotal + laborMin * (1 + vatRate)),
     totalMax: round2(materialTotal + laborMax * (1 + vatRate)),
     warnings,
+    attention,
   };
+}
+
+/** Relève les éléments existants signalés en mauvais état (ou non isolés) que le projet ne traite pas. */
+export function attentionPoints(project: Project, catalog: Catalog): string[] {
+  const { existing, operations } = project;
+  const out: string[] = [];
+  const rooms = detectRooms(existing);
+  const roomOf = (wallId: string) => rooms.find((r) => r.wallIds.includes(wallId))?.label.name;
+  const touched = (pred: (op: Operation) => boolean) => operations.some(pred);
+  const bad = (c?: string) => c === 'mauvais';
+  for (const o of existing.openings) {
+    if (!bad(o.condition)) continue;
+    if (touched((op) => (op.type === 'replaceOpening' || op.type === 'removeOpening') && op.openingId === o.id)) continue;
+    const where = roomOf(o.wallId);
+    out.push(`${o.kind === 'porte' ? 'Porte' : 'Fenêtre'}${where ? ` (${where})` : ''} : ${CONDITION_LABELS.mauvais.toLowerCase()}, ${productById(catalog, o.productId)?.name ?? 'modèle non précisé'}.`);
+  }
+  for (const r of rooms) {
+    if (!bad(r.label.floorCondition)) continue;
+    if (touched((op) => op.type === 'setFloor' && op.roomId === r.label.id)) continue;
+    out.push(`Sol de ${r.label.name} : ${CONDITION_LABELS.mauvais.toLowerCase()} (${productById(catalog, r.label.floorProductId)?.name ?? 'revêtement non précisé'}).`);
+  }
+  for (const w of existing.walls) {
+    if (!bad(w.condition)) continue;
+    if (touched((op) => (op.type === 'demolishWall' && (op.wallId === w.id || op.wallId.startsWith(`${w.id}.`))) || (op.type === 'setWallFinish' && op.wallId === w.id))) continue;
+    out.push(`Mur${roomOf(w.id) ? ` (${roomOf(w.id)})` : ''} signalé en mauvais état (humidité, fissures ?) : à faire diagnostiquer.`);
+  }
+  const roof = existing.roof;
+  if (roof) {
+    if (bad(roof.condition) && !touched((op) => op.type === 'setRoofCovering')) out.push('Toiture signalée en mauvais état : la couverture n’est pas encore prévue dans le projet.');
+    const ins = productById(catalog, roof.insulationId);
+    if ((!ins || !ins.rValue) && !touched((op) => op.type === 'setRoofInsulation'))
+      out.push('Toiture non isolée : c’est souvent le poste le plus rentable d’une rénovation (et il peut ouvrir droit à des primes).');
+  }
+  return out;
 }
 
 export const euro = (n: number) =>

@@ -32,8 +32,8 @@ function applyOne(b: Building, op: Operation): void {
       const label = b.rooms.find((r) => r.id === op.roomId);
       if (label) label.floorProductId = op.productId;
       else {
-        const at = parseAutoRoomId(op.roomId);
-        if (at) b.rooms.push({ id: op.roomId, at, name: 'Pièce', floorProductId: op.productId });
+        const auto = parseAutoRoomId(op.roomId);
+        if (auto) b.rooms.push({ id: op.roomId, levelId: auto.levelId, at: auto.at, name: 'Pièce', floorProductId: op.productId });
       }
       return;
     }
@@ -57,6 +57,12 @@ function applyOne(b: Building, op: Operation): void {
       }
       return;
     }
+    case 'setRoofCovering':
+      if (b.roof) b.roof.coveringId = op.productId;
+      return;
+    case 'setRoofInsulation':
+      if (b.roof) b.roof.insulationId = op.productId;
+      return;
   }
 }
 
@@ -71,6 +77,10 @@ function targetKey(op: Operation): string | null {
       return `opening:${op.openingId}`;
     case 'moveFurniture':
       return `move:${op.furnitureId}`;
+    case 'setRoofCovering':
+      return 'roof:covering';
+    case 'setRoofInsulation':
+      return 'roof:insulation';
     default:
       return null;
   }

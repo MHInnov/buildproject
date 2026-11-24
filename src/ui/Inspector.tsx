@@ -7,6 +7,7 @@ import {
   removeWall,
   renameRoom,
   replaceOpening,
+  setCondition,
   setRoomFloor,
   setWallFinish,
   swapFurniture,
@@ -14,9 +15,15 @@ import {
 import { productById } from '../model/catalog';
 import { euro } from '../model/estimate';
 import { detectRooms, wallLength, wallSideFacingRoom } from '../model/geometry';
+import { levelById } from '../model/levels';
+import { areaAboveHeight } from '../model/roof';
 import type { Room, Wall, WallSide } from '../model/types';
 import { useBuilding, useStore } from '../store';
+import { useUi } from '../uiState';
+import { ConditionField, HouseOverview, LevelPanel, RoofPanel } from './HousePanels';
 import { ProductPicker } from './ProductPicker';
+import { UnderlayPanel } from './UnderlayPanel';
+import { ViewpointPanel } from './ViewpointPanel';
 
 const n2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -48,6 +55,9 @@ export function Inspector() {
   const isExisting = step === 'existant';
 
   if (!selection) return <NoSelection />;
+  if (selection.kind === 'viewpoint') return <ViewpointPanel key={selection.id} id={selection.id} />;
+  if (selection.kind === 'roof') return <RoofPanel />;
+  if (selection.kind === 'level') return <LevelPanel id={selection.id} />;
 
   if (selection.kind === 'wall') {
     const w = building.walls.find((x) => x.id === selection.id);
@@ -69,21 +79,48 @@ export function Inspector() {
 function NoSelection() {
   const step = useStore((s) => s.step);
   const setTool = useStore((s) => s.setTool);
+  const select = useStore((s) => s.select);
+  const levelId = useStore((s) => s.levelId);
+  const viewpoints = useStore((s) => s.project.viewpoints);
+  const isPlan = step === 'existant' || step === 'projet';
+  const here = viewpoints.filter((v) => v.levelId === levelId);
   return (
     <div className="panel">
       <h3>{step === 'existant' ? 'Votre maison actuelle' : 'Votre projet'}</h3>
       <p className="muted">
         {step === 'existant'
-          ? 'Dessinez les murs ou tracez des pièces, ajoutez portes et fenêtres, puis cliquez sur une pièce ou un mur pour indiquer ses matériaux.'
-          : 'Cliquez sur un mur pour le démolir ou le repeindre, sur une pièce pour changer son sol, sur un meuble pour le remplacer. Chaque choix met le budget à jour.'}
+          ? 'Importez un plan ou dessinez les murs, ajoutez portes et fenêtres, puis cliquez sur une pièce, un mur ou une menuiserie pour indiquer ses matériaux et son état.'
+          : 'Cliquez sur un mur pour le démolir ou changer son revêtement, sur une pièce pour changer son sol, sur un meuble pour le remplacer. Chaque choix met le budget à jour.'}
       </p>
-      <h4>Ajouter un meuble</h4>
+      {step === 'existant' && <UnderlayPanel />}
+      {step === 'existant' && <HouseOverview />}
+      {step === 'projet' && (
+        <button className="btn" onClick={() => select({ kind: 'roof', id: 'roof' })}>
+          Toiture et isolation…
+        </button>
+      )}
+      {isPlan && (
+        <>
+          <h4>Points de vue (photos)</h4>
+          {here.length === 0 && <p className="muted small">Outil « Point de vue » : cliquez dans le plan là où la photo a été prise, puis glissez dans la direction visée.</p>}
+          <ul className="vp-list">
+            {here.map((v, i) => (
+              <li key={v.id}>
+                <button className="link" onClick={() => select({ kind: 'viewpoint', id: v.id })}>
+                  📷 {v.caption || `Point de vue ${i + 1}`}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      <h4>Ajouter un meuble, un sanitaire ou un escalier</h4>
       <ProductPicker
-        categories={['meuble']}
-        placeholder="« grand canapé pas trop foncé », « table bois »…"
+        categories={['meuble', 'escalier']}
+        placeholder="« WC suspendu », « escalier chêne », « grand canapé pas trop foncé »…"
         onPick={(p) => setTool('furniture', p.id)}
       />
-      <p className="muted small">Choisissez un meuble puis cliquez dans le plan pour le poser.</p>
+      <p className="muted small">Choisissez un élément puis cliquez dans le plan pour le poser. Un escalier monte vers le haut de son symbole.</p>
     </div>
   );
 }
@@ -136,10 +173,11 @@ function WallPanel({ w, rooms, isExisting }: { w: Wall; rooms: Room[]; isExistin
             <summary>
               Face côté {room ? room.label.name : side === 'gauche' ? 'A' : 'B'} : <strong>{current?.name ?? 'non définie'}</strong>
             </summary>
-            <ProductPicker compact categories={['peinture', 'faience']} currentId={w.finish[side]} onPick={(p) => setWallFinish(w.id, side, p.id)} />
+            <ProductPicker compact categories={['peinture', 'mur', 'faience']} currentId={w.finish[side]} onPick={(p) => setWallFinish(w.id, side, p.id)} />
           </details>
         );
       })}
+      {isExisting && <ConditionField value={w.condition} onChange={(c) => setCondition({ kind: 'wall', id: w.id }, c)} label="État (fissures, humidité…)" />}
       <div className="actions">
         <button className="btn btn--danger" onClick={() => removeWall(w.id)}>
           {isExisting ? 'Supprimer le mur' : w.kind === 'porteur' ? 'Démolir ce mur porteur' : 'Démolir cette cloison'}
@@ -152,7 +190,10 @@ function WallPanel({ w, rooms, isExisting }: { w: Wall; rooms: Room[]; isExistin
 
 function RoomPanel({ r, isExisting }: { r: Room; isExisting: boolean }) {
   const catalog = useStore((s) => s.catalog);
+  const building = useBuilding();
   const floor = productById(catalog, r.label.floorProductId);
+  const level = levelById(building, r.label.levelId);
+  const under = useMemo(() => areaAboveHeight(building, r), [building, r]);
   return (
     <div className="panel">
       {isExisting ? (
@@ -162,12 +203,19 @@ function RoomPanel({ r, isExisting }: { r: Room; isExisting: boolean }) {
       )}
       <p className="muted">
         {r.area.toLocaleString('fr-BE', { maximumFractionDigits: 1 })} m² au sol · périmètre {r.perimeter.toLocaleString('fr-BE', { maximumFractionDigits: 1 })} m
+        {level ? ` · ${level.name}, ${level.height.toLocaleString('fr-BE')} m sous plafond` : ''}
       </p>
+      {under != null && (
+        <p className="muted small">
+          Sous toiture : {under.toLocaleString('fr-BE', { maximumFractionDigits: 1 })} m² avec plus de 1,80 m de hauteur libre.
+        </p>
+      )}
       <h4>Sol {floor ? `: ${floor.name}` : ''}</h4>
+      {isExisting && <ConditionField value={r.label.floorCondition} onChange={(c) => setCondition({ kind: 'room', id: r.label.id, room: r }, c)} label="État du sol" />}
       <ProductPicker categories={['sol']} currentId={r.label.floorProductId} onPick={(p) => setRoomFloor(r, p.id)} placeholder="« bois clair », « carrelage gris grand format »…" />
       <details className="sub">
         <summary>Revêtir tous les murs de la pièce</summary>
-        <ProductPicker compact categories={['peinture', 'faience']} onPick={(p) => finishRoomWalls(r, p.id)} />
+        <ProductPicker compact categories={['peinture', 'mur', 'faience']} onPick={(p) => finishRoomWalls(r, p.id)} />
       </details>
     </div>
   );
@@ -186,16 +234,29 @@ function OpeningPanel({ id, isExisting }: { id: string; isExisting: boolean }) {
       if (x) fn(x);
     });
   const maxOffset = wall ? wallLength(wall) - o.width / 2 : 99;
+  const step = useStore((s) => s.step);
+  const toggled = useUi((s) => !!s.toggled[id]);
+  const toggle = useUi((s) => s.toggle);
+  // Dans la visite, les portes sont ouvertes par défaut et les fenêtres fermées.
+  const open = o.kind === 'porte' ? !toggled : toggled;
   return (
     <div className="panel">
       <h3>{o.kind === 'porte' ? 'Porte' : 'Fenêtre'}</h3>
       <p className="muted">{product ? `${product.name} · ${euro(product.price)}` : 'Produit non défini'}</p>
+      {step === 'visite' && (
+        <div className="actions">
+          <button className="btn btn--primary" onClick={() => toggle(id)}>
+            {open ? 'Fermer' : 'Ouvrir'}
+          </button>
+        </div>
+      )}
       <div className="fields">
         <NumberField label="Largeur (m)" value={o.width} disabled={!isExisting} onChange={(v) => edit((x) => void (x.width = v))} />
         <NumberField label="Hauteur (m)" value={o.height} disabled={!isExisting} onChange={(v) => edit((x) => void (x.height = v))} />
         <NumberField label="Allège (m)" value={o.sill} disabled={!isExisting} onChange={(v) => edit((x) => void (x.sill = v))} />
         <NumberField label="Position (m)" value={o.offset} disabled={!isExisting} onChange={(v) => edit((x) => void (x.offset = Math.min(maxOffset, Math.max(o.width / 2, v))))} />
       </div>
+      {isExisting && <ConditionField value={o.condition} onChange={(c) => setCondition({ kind: 'opening', id: o.id }, c)} />}
       <h4>{isExisting ? 'Modèle actuel' : 'Remplacer par'}</h4>
       <ProductPicker categories={[o.kind === 'porte' ? 'porte' : 'fenetre']} currentId={o.productId} onPick={(p) => replaceOpening(o.id, p.id)} />
       <div className="actions">
@@ -227,7 +288,7 @@ function FurniturePanel({ id }: { id: string }) {
         </button>
       </div>
       <h4>Remplacer par</h4>
-      <ProductPicker categories={['meuble']} subcategory={p?.subcategory} currentId={f.productId} onPick={(np) => swapFurniture(f, np.id)} />
+      <ProductPicker categories={p?.category === 'escalier' ? ['escalier'] : ['meuble']} subcategory={p?.subcategory} currentId={f.productId} onPick={(np) => swapFurniture(f, np.id)} />
     </div>
   );
 }

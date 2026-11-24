@@ -7,8 +7,73 @@ export interface Point {
 export type WallKind = 'porteur' | 'cloison';
 export type WallSide = 'gauche' | 'droite';
 
+/** État constaté d'un élément existant (rénovation). */
+export type Condition = 'bon' | 'moyen' | 'mauvais';
+
+export const CONDITION_LABELS: Record<Condition, string> = {
+  bon: 'Bon état',
+  moyen: 'À rafraîchir',
+  mauvais: 'À remplacer',
+};
+
+/** Plan importé affiché sous le dessin d'un niveau, pour le décalquer. */
+export interface Underlay {
+  /** Identifiant de l'image dans le stockage des fichiers (voir assets.ts). */
+  assetId: string;
+  /** Position du coin haut gauche de l'image, en mètres. */
+  x: number;
+  y: number;
+  /** Échelle : mètres par pixel de l'image. */
+  scale: number;
+  /** Dimensions de l'image en pixels. */
+  width: number;
+  height: number;
+  opacity: number;
+  visible: boolean;
+  /** Échelle mesurée par l'utilisateur (sinon estimée). */
+  calibrated?: boolean;
+}
+
+/** Un niveau de la maison (cave, rez-de-chaussée, étage, combles). */
+export interface Level {
+  id: string;
+  name: string;
+  /** Altitude du sol fini, en mètres (0 = rez-de-chaussée). */
+  elevation: number;
+  /** Hauteur sous plafond, en mètres (pour les combles : hauteur des murs bas). */
+  height: number;
+  /** Épaisseur du plancher au-dessus, en mètres. */
+  slab: number;
+  underlay?: Underlay;
+}
+
+export type RoofType = 'deux-pans' | 'quatre-pans' | 'monopente' | 'plat';
+
+export const ROOF_LABELS: Record<RoofType, string> = {
+  'deux-pans': 'Deux pans',
+  'quatre-pans': 'Quatre pans',
+  monopente: 'Monopente',
+  plat: 'Toit plat',
+};
+
+export interface Roof {
+  type: RoofType;
+  /** Niveau sur lequel repose la toiture (haut de ses murs). */
+  levelId: string;
+  /** Pente en degrés. */
+  pitch: number;
+  /** Débord de toiture, en mètres. */
+  overhang: number;
+  /** Faîtage parallèle à l'axe x (horizontal sur le plan) ou y. */
+  ridge: 'x' | 'y';
+  coveringId: string | null;
+  insulationId: string | null;
+  condition?: Condition;
+}
+
 export interface Wall {
   id: string;
+  levelId: string;
   a: Point;
   b: Point;
   /** Épaisseur en mètres. */
@@ -18,6 +83,7 @@ export interface Wall {
   kind: WallKind;
   /** Revêtement de chaque face (id produit catalogue), null = enduit brut. */
   finish: Record<WallSide, string | null>;
+  condition?: Condition;
 }
 
 export type OpeningKind = 'porte' | 'fenetre';
@@ -33,6 +99,7 @@ export interface Opening {
   /** Hauteur d'allège (bas de l'ouverture) en mètres. */
   sill: number;
   productId: string | null;
+  condition?: Condition;
 }
 
 /**
@@ -42,13 +109,16 @@ export interface Opening {
  */
 export interface RoomLabel {
   id: string;
+  levelId: string;
   at: Point;
   name: string;
   floorProductId: string | null;
+  floorCondition?: Condition;
 }
 
 export interface FurnitureItem {
   id: string;
+  levelId: string;
   productId: string;
   x: number;
   y: number;
@@ -57,10 +127,32 @@ export interface FurnitureItem {
 }
 
 export interface Building {
+  /** Niveaux, du plus bas au plus haut. */
+  levels: Level[];
   walls: Wall[];
   openings: Opening[];
   rooms: RoomLabel[];
   furniture: FurnitureItem[];
+  roof: Roof | null;
+}
+
+/**
+ * Point de vue : une photo prise depuis un endroit précis de la maison.
+ * Elle sert à relever les matériaux et à placer portes, fenêtres et meubles au bon endroit.
+ */
+export interface Viewpoint {
+  id: string;
+  levelId: string;
+  x: number;
+  y: number;
+  /** Direction de la prise de vue en degrés (0 = vers la droite du plan, 90 = vers le bas). */
+  direction: number;
+  /** Angle de vue horizontal en degrés (environ 65° pour un smartphone). */
+  fov: number;
+  /** Hauteur de l'appareil, en mètres. */
+  eye: number;
+  assetId: string | null;
+  caption: string;
 }
 
 /** Pièce calculée : polygone fermé + informations. */
@@ -85,10 +177,12 @@ export type Operation =
   | { type: 'setWallFinish'; wallId: string; side: WallSide; productId: string }
   | { type: 'addFurniture'; item: FurnitureItem }
   | { type: 'removeFurniture'; furnitureId: string }
-  | { type: 'moveFurniture'; furnitureId: string; x: number; y: number; rotation: number };
+  | { type: 'moveFurniture'; furnitureId: string; x: number; y: number; rotation: number }
+  | { type: 'setRoofCovering'; productId: string }
+  | { type: 'setRoofInsulation'; productId: string };
 
 export interface Project {
-  version: 1;
+  version: 2;
   name: string;
   /** Code postal, utile pour les artisans et la TVA. */
   postalCode: string;
@@ -96,6 +190,7 @@ export interface Project {
   olderThan10Years: boolean;
   existing: Building;
   operations: Operation[];
+  viewpoints: Viewpoint[];
   artisans: Artisan[];
   /** Artisan retenu par poste : lot -> id artisan. */
   assignments: Partial<Record<Lot, string>>;
@@ -119,6 +214,10 @@ export type Lot =
   | 'sols'
   | 'peinture'
   | 'carrelage'
+  | 'toiture'
+  | 'isolation'
+  | 'escaliers'
+  | 'sanitaire'
   | 'mobilier';
 
 export const LOT_LABELS: Record<Lot, string> = {
@@ -128,15 +227,23 @@ export const LOT_LABELS: Record<Lot, string> = {
   sols: 'Revêtements de sol',
   peinture: 'Peinture',
   carrelage: 'Carrelage et faïence',
+  toiture: 'Toiture',
+  isolation: 'Isolation',
+  escaliers: 'Escaliers',
+  sanitaire: 'Sanitaires et plomberie',
   mobilier: 'Mobilier et équipement',
 };
 
 export const LOT_ORDER: Lot[] = [
   'demolition',
   'gros-oeuvre',
+  'toiture',
+  'isolation',
   'menuiserie',
+  'escaliers',
   'sols',
   'carrelage',
   'peinture',
+  'sanitaire',
   'mobilier',
 ];

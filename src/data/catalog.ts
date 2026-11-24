@@ -8,37 +8,92 @@ import type { Catalog, Product } from '../model/catalog';
 const D = '2026-11-01';
 
 const floors: Product[] = [
-  { id: 'sol-strat-chene-clair', category: 'sol', name: 'Stratifié chêne clair 8 mm', brand: 'Générique', saleUnit: 'paquet', packSize: 2.2, price: 39, priceDate: D, color: '#d9bf94', tone: 'clair', tags: ['bois', 'stratifié', 'scandinave', 'chaleureux'], waste: 0.08 },
-  { id: 'sol-strat-chene-naturel', category: 'sol', name: 'Stratifié chêne naturel 8 mm', brand: 'Générique', saleUnit: 'paquet', packSize: 2.2, price: 35, priceDate: D, color: '#b88a55', tone: 'moyen', tags: ['bois', 'stratifié', 'classique', 'chaleureux'], waste: 0.08 },
-  { id: 'sol-strat-chene-fume', category: 'sol', name: 'Stratifié chêne fumé 9,5 mm', brand: 'Générique', saleUnit: 'paquet', packSize: 2.0, price: 47, priceDate: D, color: '#6e4b2f', tone: 'fonce', tags: ['bois', 'stratifié', 'élégant'], waste: 0.08 },
-  { id: 'sol-strat-gris', category: 'sol', name: 'Stratifié chêne gris 8 mm', brand: 'Générique', saleUnit: 'paquet', packSize: 2.2, price: 33, priceDate: D, color: '#a39d94', tone: 'moyen', tags: ['bois', 'stratifié', 'gris', 'moderne'], waste: 0.08 },
-  { id: 'sol-parquet-chene', category: 'sol', name: 'Parquet contrecollé chêne huilé', brand: 'Générique', saleUnit: 'paquet', packSize: 1.8, price: 99, priceDate: D, color: '#c49a63', tone: 'moyen', tags: ['bois', 'parquet', 'naturel', 'haut de gamme'], waste: 0.1 },
-  { id: 'sol-vinyle-beton', category: 'sol', name: 'Vinyle clipsable effet béton', brand: 'Générique', saleUnit: 'paquet', packSize: 2.5, price: 62, priceDate: D, color: '#8f8f8c', tone: 'moyen', tags: ['vinyle', 'béton', 'gris', 'moderne', 'étanche'], waste: 0.07 },
-  { id: 'sol-vinyle-bois-clair', category: 'sol', name: 'Vinyle clipsable chêne blanchi', brand: 'Générique', saleUnit: 'paquet', packSize: 2.5, price: 58, priceDate: D, color: '#e6dccb', tone: 'clair', tags: ['vinyle', 'bois', 'étanche', 'scandinave'], waste: 0.07 },
-  { id: 'sol-carrelage-gris-60', category: 'sol', name: 'Carrelage grès cérame gris 60x60', brand: 'Générique', saleUnit: 'paquet', packSize: 1.44, price: 42, priceDate: D, color: '#7d7f82', tone: 'moyen', tags: ['carrelage', 'gris', 'moderne', 'grand format'], waste: 0.1 },
-  { id: 'sol-carrelage-blanc-60', category: 'sol', name: 'Carrelage grès cérame blanc mat 60x60', brand: 'Générique', saleUnit: 'paquet', packSize: 1.44, price: 45, priceDate: D, color: '#eeece7', tone: 'clair', tags: ['carrelage', 'blanc', 'lumineux', 'grand format'], waste: 0.1 },
-  { id: 'sol-carrelage-ciment', category: 'sol', name: 'Carreaux ciment motif 20x20', brand: 'Générique', saleUnit: 'paquet', packSize: 1.0, price: 55, priceDate: D, color: '#9aa6a8', tone: 'moyen', tags: ['carrelage', 'motif', 'rétro', 'petit format'], waste: 0.12 },
+  { id: 'sol-strat-chene-clair', category: 'sol', name: 'Stratifié chêne clair 8 mm', brand: 'Générique', saleUnit: 'paquet', packSize: 2.2, price: 39, priceDate: D, color: '#d9bf94', tone: 'clair', tags: ['bois', 'stratifié', 'scandinave', 'chaleureux'], waste: 0.08, pattern: { kind: 'planks', w: 0.19, h: 1.29 }, roughness: 0.6 },
+  { id: 'sol-strat-chene-naturel', category: 'sol', name: 'Stratifié chêne naturel 8 mm', brand: 'Générique', saleUnit: 'paquet', packSize: 2.2, price: 35, priceDate: D, color: '#b88a55', tone: 'moyen', tags: ['bois', 'stratifié', 'classique', 'chaleureux'], waste: 0.08, pattern: { kind: 'planks', w: 0.19, h: 1.29 }, roughness: 0.6 },
+  { id: 'sol-strat-chene-fume', category: 'sol', name: 'Stratifié chêne fumé 9,5 mm', brand: 'Générique', saleUnit: 'paquet', packSize: 2.0, price: 47, priceDate: D, color: '#6e4b2f', tone: 'fonce', tags: ['bois', 'stratifié', 'élégant'], waste: 0.08, pattern: { kind: 'planks', w: 0.19, h: 1.29 }, roughness: 0.55 },
+  { id: 'sol-strat-gris', category: 'sol', name: 'Stratifié chêne gris 8 mm', brand: 'Générique', saleUnit: 'paquet', packSize: 2.2, price: 33, priceDate: D, color: '#a39d94', tone: 'moyen', tags: ['bois', 'stratifié', 'gris', 'moderne'], waste: 0.08, pattern: { kind: 'planks', w: 0.19, h: 1.29 }, roughness: 0.6 },
+  { id: 'sol-parquet-chene', category: 'sol', name: 'Parquet contrecollé chêne huilé', brand: 'Générique', saleUnit: 'paquet', packSize: 1.8, price: 99, priceDate: D, color: '#c49a63', tone: 'moyen', tags: ['bois', 'parquet', 'naturel', 'haut de gamme'], waste: 0.1, pattern: { kind: 'parquet', w: 0.09, h: 0.6 }, roughness: 0.5 },
+  { id: 'sol-vinyle-beton', category: 'sol', name: 'Vinyle clipsable effet béton', brand: 'Générique', saleUnit: 'paquet', packSize: 2.5, price: 62, priceDate: D, color: '#8f8f8c', tone: 'moyen', tags: ['vinyle', 'béton', 'gris', 'moderne', 'étanche'], waste: 0.07, pattern: { kind: 'concrete', w: 0.6, h: 1.2 }, roughness: 0.7 },
+  { id: 'sol-vinyle-bois-clair', category: 'sol', name: 'Vinyle clipsable chêne blanchi', brand: 'Générique', saleUnit: 'paquet', packSize: 2.5, price: 58, priceDate: D, color: '#e6dccb', tone: 'clair', tags: ['vinyle', 'bois', 'étanche', 'scandinave'], waste: 0.07, pattern: { kind: 'planks', w: 0.18, h: 1.22 }, roughness: 0.65 },
+  { id: 'sol-carrelage-gris-60', category: 'sol', name: 'Carrelage grès cérame gris 60x60', brand: 'Générique', saleUnit: 'paquet', packSize: 1.44, price: 42, priceDate: D, color: '#7d7f82', tone: 'moyen', tags: ['carrelage', 'gris', 'moderne', 'grand format'], waste: 0.1, pattern: { kind: 'tiles', w: 0.6, h: 0.6, joint: '#6b6d70' }, roughness: 0.35 },
+  { id: 'sol-carrelage-blanc-60', category: 'sol', name: 'Carrelage grès cérame blanc mat 60x60', brand: 'Générique', saleUnit: 'paquet', packSize: 1.44, price: 45, priceDate: D, color: '#eeece7', tone: 'clair', tags: ['carrelage', 'blanc', 'lumineux', 'grand format'], waste: 0.1, pattern: { kind: 'tiles', w: 0.6, h: 0.6, joint: '#d8d5cf' }, roughness: 0.4 },
+  { id: 'sol-carrelage-ciment', category: 'sol', name: 'Carreaux ciment motif 20x20', brand: 'Générique', saleUnit: 'paquet', packSize: 1.0, price: 55, priceDate: D, color: '#9aa6a8', tone: 'moyen', tags: ['carrelage', 'motif', 'rétro', 'petit format'], waste: 0.12, pattern: { kind: 'tiles', w: 0.2, h: 0.2, joint: '#c9cfd0', accent: '#4d6470' }, roughness: 0.5 },
 ];
 
 const paints: Product[] = [
-  { id: 'peint-blanc-mat', category: 'peinture', name: 'Peinture murale blanc mat', brand: 'Générique', saleUnit: 'pot', packSize: 10, price: 69, priceDate: D, color: '#f6f5f1', tone: 'clair', tags: ['blanc', 'lumineux', 'neutre'], coverage: 10, coats: 2 },
-  { id: 'peint-blanc-casse', category: 'peinture', name: 'Peinture murale blanc cassé', brand: 'Générique', saleUnit: 'pot', packSize: 2.5, price: 32, priceDate: D, color: '#eee8da', tone: 'clair', tags: ['blanc', 'chaleureux', 'neutre'], coverage: 10, coats: 2 },
-  { id: 'peint-greige', category: 'peinture', name: 'Peinture murale greige', brand: 'Générique', saleUnit: 'pot', packSize: 2.5, price: 36, priceDate: D, color: '#cfc5b6', tone: 'clair', tags: ['beige', 'gris', 'doux', 'neutre'], coverage: 10, coats: 2 },
-  { id: 'peint-vert-sauge', category: 'peinture', name: 'Peinture murale vert sauge', brand: 'Générique', saleUnit: 'pot', packSize: 2.5, price: 38, priceDate: D, color: '#a6b39b', tone: 'moyen', tags: ['vert', 'nature', 'doux'], coverage: 10, coats: 2 },
-  { id: 'peint-terracotta', category: 'peinture', name: 'Peinture murale terracotta', brand: 'Générique', saleUnit: 'pot', packSize: 2.5, price: 38, priceDate: D, color: '#c2704f', tone: 'moyen', tags: ['orange', 'chaleureux', 'couleur'], coverage: 10, coats: 2 },
-  { id: 'peint-bleu-nuit', category: 'peinture', name: 'Peinture murale bleu nuit', brand: 'Générique', saleUnit: 'pot', packSize: 2.5, price: 39, priceDate: D, color: '#27354a', tone: 'fonce', tags: ['bleu', 'élégant', 'couleur'], coverage: 9, coats: 2 },
-  { id: 'peint-gris-anthracite', category: 'peinture', name: 'Peinture murale gris anthracite', brand: 'Générique', saleUnit: 'pot', packSize: 2.5, price: 39, priceDate: D, color: '#45484c', tone: 'fonce', tags: ['gris', 'moderne', 'contraste'], coverage: 9, coats: 2 },
+  { id: 'peint-blanc-mat', category: 'peinture', name: 'Peinture murale blanc mat', brand: 'Générique', saleUnit: 'pot', packSize: 10, price: 69, priceDate: D, color: '#f6f5f1', tone: 'clair', tags: ['blanc', 'lumineux', 'neutre'], coverage: 10, coats: 2, pattern: { kind: 'plaster' }, roughness: 0.9 },
+  { id: 'peint-blanc-casse', category: 'peinture', name: 'Peinture murale blanc cassé', brand: 'Générique', saleUnit: 'pot', packSize: 2.5, price: 32, priceDate: D, color: '#eee8da', tone: 'clair', tags: ['blanc', 'chaleureux', 'neutre'], coverage: 10, coats: 2, pattern: { kind: 'plaster' }, roughness: 0.9 },
+  { id: 'peint-greige', category: 'peinture', name: 'Peinture murale greige', brand: 'Générique', saleUnit: 'pot', packSize: 2.5, price: 36, priceDate: D, color: '#cfc5b6', tone: 'clair', tags: ['beige', 'gris', 'doux', 'neutre'], coverage: 10, coats: 2, pattern: { kind: 'plaster' }, roughness: 0.9 },
+  { id: 'peint-vert-sauge', category: 'peinture', name: 'Peinture murale vert sauge', brand: 'Générique', saleUnit: 'pot', packSize: 2.5, price: 38, priceDate: D, color: '#a6b39b', tone: 'moyen', tags: ['vert', 'nature', 'doux'], coverage: 10, coats: 2, pattern: { kind: 'plaster' }, roughness: 0.9 },
+  { id: 'peint-terracotta', category: 'peinture', name: 'Peinture murale terracotta', brand: 'Générique', saleUnit: 'pot', packSize: 2.5, price: 38, priceDate: D, color: '#c2704f', tone: 'moyen', tags: ['orange', 'chaleureux', 'couleur'], coverage: 10, coats: 2, pattern: { kind: 'plaster' }, roughness: 0.9 },
+  { id: 'peint-bleu-nuit', category: 'peinture', name: 'Peinture murale bleu nuit', brand: 'Générique', saleUnit: 'pot', packSize: 2.5, price: 39, priceDate: D, color: '#27354a', tone: 'fonce', tags: ['bleu', 'élégant', 'couleur'], coverage: 9, coats: 2, pattern: { kind: 'plaster' }, roughness: 0.9 },
+  { id: 'peint-gris-anthracite', category: 'peinture', name: 'Peinture murale gris anthracite', brand: 'Générique', saleUnit: 'pot', packSize: 2.5, price: 39, priceDate: D, color: '#45484c', tone: 'fonce', tags: ['gris', 'moderne', 'contraste'], coverage: 9, coats: 2, pattern: { kind: 'plaster' }, roughness: 0.9 },
 ];
 
 const wallTiles: Product[] = [
-  { id: 'faience-blanc-metro', category: 'faience', name: 'Faïence métro blanc 7,5x15', brand: 'Générique', saleUnit: 'paquet', packSize: 1.0, price: 24, priceDate: D, color: '#f4f4f2', tone: 'clair', tags: ['blanc', 'métro', 'classique', 'salle de bain', 'cuisine'], waste: 0.1 },
-  { id: 'faience-vert-zellige', category: 'faience', name: 'Faïence effet zellige vert 10x10', brand: 'Générique', saleUnit: 'paquet', packSize: 0.5, price: 39, priceDate: D, color: '#4f7a68', tone: 'moyen', tags: ['vert', 'artisanal', 'couleur', 'cuisine'], waste: 0.12 },
-  { id: 'faience-marbre', category: 'faience', name: 'Faïence effet marbre 30x60', brand: 'Générique', saleUnit: 'paquet', packSize: 1.26, price: 45, priceDate: D, color: '#e5e3df', tone: 'clair', tags: ['marbre', 'blanc', 'élégant', 'salle de bain', 'grand format'], waste: 0.1 },
+  { id: 'faience-blanc-metro', category: 'faience', name: 'Faïence métro blanc 7,5x15', brand: 'Générique', saleUnit: 'paquet', packSize: 1.0, price: 24, priceDate: D, color: '#f4f4f2', tone: 'clair', tags: ['blanc', 'métro', 'classique', 'salle de bain', 'cuisine'], waste: 0.1, pattern: { kind: 'bricks', w: 0.15, h: 0.075, joint: '#d9d9d6' }, roughness: 0.15 },
+  { id: 'faience-vert-zellige', category: 'faience', name: 'Faïence effet zellige vert 10x10', brand: 'Générique', saleUnit: 'paquet', packSize: 0.5, price: 39, priceDate: D, color: '#4f7a68', tone: 'moyen', tags: ['vert', 'artisanal', 'couleur', 'cuisine'], waste: 0.12, pattern: { kind: 'tiles', w: 0.1, h: 0.1, joint: '#e7e4dc' }, roughness: 0.15 },
+  { id: 'faience-marbre', category: 'faience', name: 'Faïence effet marbre 30x60', brand: 'Générique', saleUnit: 'paquet', packSize: 1.26, price: 45, priceDate: D, color: '#e5e3df', tone: 'clair', tags: ['marbre', 'blanc', 'élégant', 'salle de bain', 'grand format'], waste: 0.1, pattern: { kind: 'tiles', w: 0.3, h: 0.6, joint: '#cfccc6', accent: '#b9b6b0' }, roughness: 0.2 },
+];
+
+/** Murs : revêtements autres que la peinture et la faïence. */
+const wallCoverings: Product[] = [
+  { id: 'mur-papier-peint-intisse', category: 'mur', name: 'Papier peint intissé à peindre', brand: 'Générique', saleUnit: 'paquet', packSize: 5.3, price: 24, priceDate: D, color: '#f1eee7', tone: 'clair', tags: ['papier peint', 'blanc', 'rénovation'], waste: 0.12, pattern: { kind: 'wallpaper', accent: '#e4e0d6' }, roughness: 0.9 },
+  { id: 'mur-papier-peint-motif', category: 'mur', name: 'Papier peint motif végétal', brand: 'Générique', saleUnit: 'paquet', packSize: 5.3, price: 39, priceDate: D, color: '#dfe5d9', tone: 'clair', tags: ['papier peint', 'vert', 'motif', 'nature'], waste: 0.15, pattern: { kind: 'wallpaper', accent: '#7f9774' }, roughness: 0.9 },
+  { id: 'mur-lambris-blanc', category: 'mur', name: 'Lambris bois peint blanc', brand: 'Générique', saleUnit: 'paquet', packSize: 2.0, price: 42, priceDate: D, color: '#f0eee8', tone: 'clair', tags: ['lambris', 'bois', 'blanc', 'campagne'], waste: 0.1, pattern: { kind: 'paneling', w: 0.12 }, roughness: 0.7 },
+  { id: 'mur-plaquette-brique', category: 'mur', name: 'Plaquettes de parement brique', brand: 'Générique', saleUnit: 'paquet', packSize: 0.5, price: 34, priceDate: D, color: '#a65e45', tone: 'moyen', tags: ['brique', 'industriel', 'rouge'], waste: 0.1, pattern: { kind: 'bricks', w: 0.21, h: 0.065, joint: '#cfc6b8' }, roughness: 0.95 },
+];
+
+/**
+ * Matériaux qu'on rencontre dans une maison à rénover (relevé de l'existant).
+ * Ils ne se vendent pas : ils servent à décrire l'état actuel et à chiffrer la bonne dépose.
+ */
+const existingMaterials: Product[] = [
+  { id: 'ex-sol-carrelage-ancien', category: 'sol', name: 'Ancien carrelage 20x20 (existant)', brand: 'Existant', saleUnit: 'piece', price: 0, priceDate: D, color: '#b9a48c', tone: 'moyen', tags: ['carrelage', 'ancien', 'beige'], existingOnly: true, removal: 'depose-carrelage', pattern: { kind: 'tiles', w: 0.2, h: 0.2, joint: '#8f8272' }, roughness: 0.45 },
+  { id: 'ex-sol-tomettes', category: 'sol', name: 'Tomettes en terre cuite (existant)', brand: 'Existant', saleUnit: 'piece', price: 0, priceDate: D, color: '#b5603f', tone: 'moyen', tags: ['carrelage', 'terre cuite', 'ancien', 'rouge'], existingOnly: true, removal: 'depose-carrelage', pattern: { kind: 'tiles', w: 0.16, h: 0.16, joint: '#8a4c34' }, roughness: 0.8 },
+  { id: 'ex-sol-plancher', category: 'sol', name: 'Plancher en sapin ancien (existant)', brand: 'Existant', saleUnit: 'piece', price: 0, priceDate: D, color: '#b38b5d', tone: 'moyen', tags: ['bois', 'plancher', 'ancien'], existingOnly: true, removal: 'depose-sol', pattern: { kind: 'planks', w: 0.14, h: 3.0 }, roughness: 0.75 },
+  { id: 'ex-sol-moquette', category: 'sol', name: 'Moquette (existant)', brand: 'Existant', saleUnit: 'piece', price: 0, priceDate: D, color: '#8c8273', tone: 'moyen', tags: ['moquette', 'textile', 'ancien'], existingOnly: true, removal: 'depose-moquette', pattern: { kind: 'carpet' }, roughness: 1 },
+  { id: 'ex-sol-lino', category: 'sol', name: 'Linoléum / vinyle en rouleau (existant)', brand: 'Existant', saleUnit: 'piece', price: 0, priceDate: D, color: '#a9a38f', tone: 'moyen', tags: ['lino', 'vinyle', 'ancien'], existingOnly: true, removal: 'depose-moquette', pattern: { kind: 'concrete', w: 0.5, h: 0.5 }, roughness: 0.5 },
+  { id: 'ex-sol-chape', category: 'sol', name: 'Chape béton brute (existant)', brand: 'Existant', saleUnit: 'piece', price: 0, priceDate: D, color: '#9d9a94', tone: 'moyen', tags: ['béton', 'brut'], existingOnly: true, pattern: { kind: 'concrete', w: 1, h: 1 }, roughness: 0.9 },
+  { id: 'ex-mur-papier-peint', category: 'mur', name: 'Papier peint ancien (existant)', brand: 'Existant', saleUnit: 'piece', price: 0, priceDate: D, color: '#e3d6bb', tone: 'clair', tags: ['papier peint', 'ancien', 'motif'], existingOnly: true, removal: 'decollage-papier-peint', pattern: { kind: 'wallpaper', accent: '#b69b6e' }, roughness: 0.9 },
+  { id: 'ex-mur-crepi', category: 'mur', name: 'Crépi ou enduit décoratif (existant)', brand: 'Existant', saleUnit: 'piece', price: 0, priceDate: D, color: '#ece5d6', tone: 'clair', tags: ['crépi', 'enduit', 'relief'], existingOnly: true, removal: 'ratissage', pattern: { kind: 'plaster' }, roughness: 1 },
+  { id: 'ex-mur-lambris', category: 'mur', name: 'Lambris bois verni (existant)', brand: 'Existant', saleUnit: 'piece', price: 0, priceDate: D, color: '#b07c48', tone: 'moyen', tags: ['lambris', 'bois', 'ancien'], existingOnly: true, removal: 'depose-lambris', pattern: { kind: 'paneling', w: 0.1 }, roughness: 0.55 },
+  { id: 'ex-mur-brique', category: 'mur', name: 'Brique apparente (existant)', brand: 'Existant', saleUnit: 'piece', price: 0, priceDate: D, color: '#9c5a42', tone: 'moyen', tags: ['brique', 'apparente'], existingOnly: true, removal: 'enduit-plafonnage', pattern: { kind: 'bricks', w: 0.21, h: 0.065, joint: '#c9bfae' }, roughness: 0.95 },
+  { id: 'ex-mur-pierre', category: 'mur', name: 'Pierre apparente (existant)', brand: 'Existant', saleUnit: 'piece', price: 0, priceDate: D, color: '#a89c88', tone: 'moyen', tags: ['pierre', 'apparente'], existingOnly: true, removal: 'enduit-plafonnage', pattern: { kind: 'stone' }, roughness: 1 },
+  { id: 'ex-mur-faience', category: 'faience', name: 'Ancienne faïence 15x15 (existant)', brand: 'Existant', saleUnit: 'piece', price: 0, priceDate: D, color: '#dfe3dc', tone: 'clair', tags: ['faïence', 'ancien'], existingOnly: true, removal: 'depose-faience', pattern: { kind: 'tiles', w: 0.15, h: 0.15, joint: '#bfc3bc' }, roughness: 0.2 },
+  { id: 'ex-porte-bois', category: 'porte', name: 'Porte ancienne en bois mouluré (existant)', brand: 'Existant', saleUnit: 'piece', price: 0, priceDate: D, color: '#9a6b40', tone: 'moyen', tags: ['bois', 'ancien'], existingOnly: true, size: { w: 0.8, d: 0.04, h: 2.0 }, pattern: { kind: 'planks', w: 0.8, h: 2 } },
+  { id: 'ex-porte-isoplane', category: 'porte', name: 'Porte isoplane (existant)', brand: 'Existant', saleUnit: 'piece', price: 0, priceDate: D, color: '#d9c7a6', tone: 'clair', tags: ['standard', 'ancien'], existingOnly: true, size: { w: 0.83, d: 0.04, h: 2.01 } },
+  { id: 'ex-fenetre-bois-simple', category: 'fenetre', name: 'Châssis bois simple vitrage (existant)', brand: 'Existant', saleUnit: 'piece', price: 0, priceDate: D, color: '#e9e4d8', tone: 'clair', tags: ['bois', 'simple vitrage', 'ancien', 'peu isolant'], existingOnly: true, size: { w: 1.2, d: 0.06, h: 1.35 } },
+  { id: 'ex-fenetre-alu-ancien', category: 'fenetre', name: 'Châssis alu ancien double vitrage (existant)', brand: 'Existant', saleUnit: 'piece', price: 0, priceDate: D, color: '#b8b9b5', tone: 'moyen', tags: ['aluminium', 'ancien'], existingOnly: true, size: { w: 1.2, d: 0.06, h: 1.35 } },
+  { id: 'ex-toit-tuiles', category: 'toiture', name: 'Tuiles terre cuite anciennes (existant)', brand: 'Existant', saleUnit: 'piece', price: 0, priceDate: D, color: '#9c4f36', tone: 'moyen', tags: ['tuiles', 'ancien'], existingOnly: true, pattern: { kind: 'rooftiles', w: 0.22, h: 0.3 }, roughness: 0.85 },
+  { id: 'ex-toit-ardoises', category: 'toiture', name: 'Ardoises naturelles anciennes (existant)', brand: 'Existant', saleUnit: 'piece', price: 0, priceDate: D, color: '#4a4f57', tone: 'fonce', tags: ['ardoise', 'ancien'], existingOnly: true, pattern: { kind: 'slate', w: 0.25, h: 0.2 }, roughness: 0.6 },
+  { id: 'ex-isolation-aucune', category: 'isolation', name: 'Pas d\'isolation (existant)', brand: 'Existant', saleUnit: 'piece', price: 0, priceDate: D, color: '#cccccc', tone: 'moyen', tags: ['aucune'], existingOnly: true, rValue: 0 },
+];
+
+const roofs: Product[] = [
+  { id: 'toit-tuiles-terre-cuite', category: 'toiture', name: 'Tuiles terre cuite rouge (m²)', brand: 'Générique', saleUnit: 'paquet', packSize: 1, price: 32, priceDate: D, color: '#a8553a', tone: 'moyen', tags: ['tuiles', 'rouge', 'classique'], waste: 0.08, pattern: { kind: 'rooftiles', w: 0.22, h: 0.3 }, roughness: 0.8 },
+  { id: 'toit-tuiles-anthracite', category: 'toiture', name: 'Tuiles béton anthracite (m²)', brand: 'Générique', saleUnit: 'paquet', packSize: 1, price: 24, priceDate: D, color: '#3e4146', tone: 'fonce', tags: ['tuiles', 'anthracite', 'moderne'], waste: 0.08, pattern: { kind: 'rooftiles', w: 0.3, h: 0.33 }, roughness: 0.7 },
+  { id: 'toit-ardoise-naturelle', category: 'toiture', name: 'Ardoise naturelle (m²)', brand: 'Générique', saleUnit: 'paquet', packSize: 1, price: 55, priceDate: D, color: '#4b525b', tone: 'fonce', tags: ['ardoise', 'naturel', 'haut de gamme'], waste: 0.1, pattern: { kind: 'slate', w: 0.25, h: 0.2 }, roughness: 0.55 },
+  { id: 'toit-zinc', category: 'toiture', name: 'Zinc à joints debout (m²)', brand: 'Générique', saleUnit: 'paquet', packSize: 1, price: 68, priceDate: D, color: '#8e959b', tone: 'moyen', tags: ['zinc', 'moderne', 'métal'], waste: 0.08, pattern: { kind: 'zinc', w: 0.5 }, roughness: 0.35 },
+  { id: 'toit-epdm', category: 'toiture', name: 'Membrane EPDM toit plat (m²)', brand: 'Générique', saleUnit: 'paquet', packSize: 1, price: 18, priceDate: D, color: '#2b2c2e', tone: 'fonce', tags: ['plat', 'epdm', 'étanchéité'], waste: 0.1, pattern: { kind: 'concrete', w: 2, h: 2 }, roughness: 0.9 },
+];
+
+const insulations: Product[] = [
+  { id: 'iso-laine-verre-200', category: 'isolation', name: 'Laine de verre 200 mm (R 5)', brand: 'Générique', saleUnit: 'paquet', packSize: 5, price: 42, priceDate: D, color: '#f2d36b', tone: 'clair', tags: ['laine', 'économique', 'combles'], waste: 0.05, rValue: 5 },
+  { id: 'iso-laine-roche-220', category: 'isolation', name: 'Laine de roche 220 mm (R 6)', brand: 'Générique', saleUnit: 'paquet', packSize: 4, price: 58, priceDate: D, color: '#c9b48a', tone: 'moyen', tags: ['laine', 'acoustique', 'incombustible'], waste: 0.05, rValue: 6 },
+  { id: 'iso-fibre-bois-200', category: 'isolation', name: 'Fibre de bois 200 mm (R 5)', brand: 'Générique', saleUnit: 'paquet', packSize: 3, price: 96, priceDate: D, color: '#b08a5a', tone: 'moyen', tags: ['écologique', 'bois', 'confort d\'été'], waste: 0.05, rValue: 5 },
+];
+
+const stairs: Product[] = [
+  { id: 'escalier-droit-sapin', category: 'escalier', subcategory: 'escalier', name: 'Escalier droit sapin 80 cm', brand: 'Générique', saleUnit: 'piece', price: 690, priceDate: D, color: '#d2b07d', tone: 'clair', tags: ['escalier', 'bois', 'droit', 'économique'], size: { w: 0.8, d: 3.6, h: 2.8 } },
+  { id: 'escalier-droit-chene', category: 'escalier', subcategory: 'escalier', name: 'Escalier droit chêne 90 cm', brand: 'Générique', saleUnit: 'piece', price: 2490, priceDate: D, color: '#b88a55', tone: 'moyen', tags: ['escalier', 'bois', 'droit', 'chaleureux'], size: { w: 0.9, d: 3.8, h: 2.8 } },
+  { id: 'escalier-metal-noir', category: 'escalier', subcategory: 'escalier', name: 'Escalier droit métal noir et marches bois', brand: 'Générique', saleUnit: 'piece', price: 3200, priceDate: D, color: '#2a2a2a', tone: 'fonce', tags: ['escalier', 'métal', 'industriel', 'design'], size: { w: 0.85, d: 3.6, h: 2.8 } },
+  { id: 'echelle-meunier', category: 'escalier', subcategory: 'escalier', name: 'Échelle de meunier 60 cm (accès combles)', brand: 'Générique', saleUnit: 'piece', price: 290, priceDate: D, color: '#d9bf94', tone: 'clair', tags: ['escalier', 'combles', 'petit', 'compact'], size: { w: 0.6, d: 1.8, h: 2.8 } },
 ];
 
 const doors: Product[] = [
   { id: 'porte-int-blanche', category: 'porte', name: 'Porte intérieure blanche lisse 83 cm', brand: 'Générique', saleUnit: 'piece', price: 189, priceDate: D, color: '#f3f3f0', tone: 'clair', tags: ['blanc', 'lisse', 'moderne'], size: { w: 0.83, d: 0.04, h: 2.01 } },
-  { id: 'porte-int-chene', category: 'porte', name: 'Porte intérieure plaquée chêne 83 cm', brand: 'Générique', saleUnit: 'piece', price: 279, priceDate: D, color: '#b88a55', tone: 'moyen', tags: ['bois', 'chaleureux'], size: { w: 0.83, d: 0.04, h: 2.01 } },
+  { id: 'porte-int-chene', category: 'porte', name: 'Porte intérieure plaquée chêne 83 cm', brand: 'Générique', saleUnit: 'piece', price: 279, priceDate: D, color: '#b88a55', tone: 'moyen', tags: ['bois', 'chaleureux'], size: { w: 0.83, d: 0.04, h: 2.01 }, pattern: { kind: 'planks', w: 0.83, h: 2.1 } },
   { id: 'porte-int-noire-vitree', category: 'porte', name: 'Porte vitrée cadre noir 83 cm', brand: 'Générique', saleUnit: 'piece', price: 449, priceDate: D, color: '#222222', tone: 'fonce', tags: ['vitré', 'noir', 'industriel', 'lumineux'], size: { w: 0.83, d: 0.04, h: 2.01 } },
 ];
 
@@ -46,7 +101,7 @@ const windows: Product[] = [
   { id: 'chassis-pvc-blanc', category: 'fenetre', name: 'Châssis PVC blanc double vitrage', brand: 'Générique', saleUnit: 'piece', price: 520, priceDate: D, color: '#f5f5f5', tone: 'clair', tags: ['pvc', 'blanc', 'isolant'], size: { w: 1.2, d: 0.07, h: 1.35 } },
   { id: 'chassis-pvc-anthracite', category: 'fenetre', name: 'Châssis PVC anthracite triple vitrage', brand: 'Générique', saleUnit: 'piece', price: 790, priceDate: D, color: '#3b3f44', tone: 'fonce', tags: ['pvc', 'anthracite', 'moderne', 'très isolant'], size: { w: 1.2, d: 0.08, h: 1.35 } },
   { id: 'chassis-alu-noir', category: 'fenetre', name: 'Châssis aluminium noir double vitrage', brand: 'Générique', saleUnit: 'piece', price: 980, priceDate: D, color: '#1d1d1f', tone: 'fonce', tags: ['aluminium', 'noir', 'fin', 'industriel'], size: { w: 1.2, d: 0.07, h: 1.35 } },
-  { id: 'chassis-bois', category: 'fenetre', name: 'Châssis bois meranti double vitrage', brand: 'Générique', saleUnit: 'piece', price: 890, priceDate: D, color: '#8a5a36', tone: 'moyen', tags: ['bois', 'chaleureux', 'naturel'], size: { w: 1.2, d: 0.08, h: 1.35 } },
+  { id: 'chassis-bois', category: 'fenetre', name: 'Châssis bois meranti double vitrage', brand: 'Générique', saleUnit: 'piece', price: 890, priceDate: D, color: '#8a5a36', tone: 'moyen', tags: ['bois', 'chaleureux', 'naturel'], size: { w: 1.2, d: 0.08, h: 1.35 }, pattern: { kind: 'planks', w: 0.1, h: 2 } },
   { id: 'baie-alu-noir', category: 'fenetre', name: 'Baie coulissante aluminium noir 240 cm', brand: 'Générique', saleUnit: 'piece', price: 2450, priceDate: D, color: '#1d1d1f', tone: 'fonce', tags: ['aluminium', 'noir', 'grand', 'lumineux', 'coulissant'], size: { w: 2.4, d: 0.1, h: 2.15 } },
 ];
 
@@ -69,11 +124,17 @@ const furniture: Product[] = [
   { id: 'meuble-tv-chene', category: 'meuble', subcategory: 'rangement', name: 'Meuble TV chêne 180 cm', brand: 'Générique', saleUnit: 'piece', price: 349, priceDate: D, color: '#c49a63', tone: 'moyen', tags: ['rangement', 'bois', 'tv'], size: { w: 1.8, d: 0.45, h: 0.5 } },
   { id: 'bibliotheque-noire', category: 'meuble', subcategory: 'rangement', name: 'Bibliothèque métal noir', brand: 'Générique', saleUnit: 'piece', price: 249, priceDate: D, color: '#262626', tone: 'fonce', tags: ['rangement', 'industriel', 'noir'], size: { w: 1.0, d: 0.35, h: 1.9 } },
   { id: 'meuble-vasque', category: 'meuble', subcategory: 'salle-de-bain', name: 'Meuble vasque 80 cm blanc', brand: 'Générique', saleUnit: 'piece', price: 459, priceDate: D, color: '#f4f4f2', tone: 'clair', tags: ['salle de bain', 'blanc', 'vasque'], size: { w: 0.8, d: 0.46, h: 0.85 } },
+  { id: 'baignoire-170', category: 'meuble', subcategory: 'salle-de-bain', name: 'Baignoire acrylique 170x75', brand: 'Générique', saleUnit: 'piece', price: 349, priceDate: D, color: '#fafafa', tone: 'clair', tags: ['salle de bain', 'baignoire', 'bain'], size: { w: 1.7, d: 0.75, h: 0.58 } },
+  { id: 'wc-suspendu', category: 'meuble', subcategory: 'wc', name: 'WC suspendu avec bâti-support', brand: 'Générique', saleUnit: 'piece', price: 429, priceDate: D, color: '#fbfbfb', tone: 'clair', tags: ['wc', 'toilettes', 'suspendu', 'moderne'], size: { w: 0.36, d: 0.53, h: 0.4 } },
+  { id: 'wc-sol', category: 'meuble', subcategory: 'wc', name: 'WC à poser avec réservoir', brand: 'Générique', saleUnit: 'piece', price: 199, priceDate: D, color: '#fbfbfb', tone: 'clair', tags: ['wc', 'toilettes', 'économique'], size: { w: 0.38, d: 0.66, h: 0.78 } },
+  { id: 'lave-mains', category: 'meuble', subcategory: 'wc', name: 'Lave-mains d\'angle', brand: 'Générique', saleUnit: 'piece', price: 119, priceDate: D, color: '#f6f6f4', tone: 'clair', tags: ['wc', 'toilettes', 'lave-mains', 'petit'], size: { w: 0.4, d: 0.25, h: 0.85 } },
+  { id: 'radiateur-acier', category: 'meuble', subcategory: 'chauffage', name: 'Radiateur acier blanc 100 cm', brand: 'Générique', saleUnit: 'piece', price: 189, priceDate: D, color: '#f3f3f1', tone: 'clair', tags: ['radiateur', 'chauffage'], size: { w: 1.0, d: 0.1, h: 0.6 } },
+  { id: 'seche-serviettes', category: 'meuble', subcategory: 'salle-de-bain', name: 'Sèche-serviettes électrique', brand: 'Générique', saleUnit: 'piece', price: 249, priceDate: D, color: '#f3f3f1', tone: 'clair', tags: ['salle de bain', 'chauffage', 'radiateur'], size: { w: 0.5, d: 0.08, h: 1.2 } },
   { id: 'douche-italienne', category: 'meuble', subcategory: 'salle-de-bain', name: 'Douche à l\'italienne 90x140 (receveur + paroi)', brand: 'Générique', saleUnit: 'piece', price: 890, priceDate: D, color: '#dfe5e8', tone: 'clair', tags: ['salle de bain', 'douche', 'moderne'], size: { w: 1.4, d: 0.9, h: 2.0 } },
 ];
 
 export const DEMO_CATALOG: Catalog = {
-  products: [...floors, ...paints, ...wallTiles, ...doors, ...windows, ...furniture],
+  products: [...floors, ...paints, ...wallCoverings, ...wallTiles, ...doors, ...windows, ...furniture, ...stairs, ...roofs, ...insulations, ...existingMaterials],
   /** Fourchettes HTVA fictives, à valider avec des artisans. */
   tasks: [
     { id: 'demol-cloison', lot: 'demolition', label: 'Démolition de cloison non porteuse', unit: 'm²', min: 25, max: 45 },
@@ -99,6 +160,24 @@ export const DEMO_CATALOG: Catalog = {
     { id: 'rebouchage-baie', lot: 'gros-oeuvre', label: 'Rebouchage d\'une ouverture', unit: 'm²', min: 80, max: 150 },
     { id: 'montage-meuble', lot: 'mobilier', label: 'Livraison et montage de mobilier', unit: 'pièce', min: 30, max: 90 },
     { id: 'pose-cuisine', lot: 'mobilier', label: 'Pose de cuisine (raccordements eau et électricité)', unit: 'pièce', min: 900, max: 1800 },
-    { id: 'pose-sanitaire', lot: 'mobilier', label: 'Pose d\'équipement sanitaire (plomberie incluse)', unit: 'pièce', min: 300, max: 750 },
+    { id: 'pose-sanitaire', lot: 'sanitaire', label: 'Pose d\'équipement sanitaire (plomberie incluse)', unit: 'pièce', min: 300, max: 750 },
+    { id: 'pose-wc-suspendu', lot: 'sanitaire', label: 'Pose de WC suspendu (bâti, coffrage, raccordements)', unit: 'pièce', min: 450, max: 900 },
+    { id: 'pose-radiateur', lot: 'sanitaire', label: 'Pose et raccordement de radiateur', unit: 'pièce', min: 180, max: 380 },
+    { id: 'depose-carrelage', lot: 'demolition', label: 'Dépose de carrelage collé ou scellé', unit: 'm²', min: 18, max: 35 },
+    { id: 'depose-moquette', lot: 'sols', label: 'Dépose de moquette ou lino et grattage', unit: 'm²', min: 5, max: 10 },
+    { id: 'depose-faience', lot: 'demolition', label: 'Dépose de faïence murale', unit: 'm²', min: 18, max: 32 },
+    { id: 'decollage-papier-peint', lot: 'peinture', label: 'Décollage du papier peint', unit: 'm²', min: 6, max: 12 },
+    { id: 'ratissage', lot: 'peinture', label: 'Ratissage d\'un enduit à relief', unit: 'm²', min: 18, max: 30 },
+    { id: 'depose-lambris', lot: 'demolition', label: 'Dépose de lambris et rebouchage', unit: 'm²', min: 10, max: 20 },
+    { id: 'enduit-plafonnage', lot: 'gros-oeuvre', label: 'Plafonnage (enduit plâtre) sur maçonnerie', unit: 'm²', min: 22, max: 38 },
+    { id: 'pose-papier-peint', lot: 'peinture', label: 'Pose de papier peint', unit: 'm²', min: 12, max: 22 },
+    { id: 'pose-lambris', lot: 'menuiserie', label: 'Pose de lambris sur tasseaux', unit: 'm²', min: 25, max: 45 },
+    { id: 'pose-parement', lot: 'gros-oeuvre', label: 'Pose de plaquettes de parement', unit: 'm²', min: 45, max: 75 },
+    { id: 'pose-escalier', lot: 'escaliers', label: 'Pose d\'escalier (dépose de l\'ancien incluse)', unit: 'pièce', min: 450, max: 1100 },
+    { id: 'creation-tremie', lot: 'gros-oeuvre', label: 'Création de trémie dans le plancher (chevêtre inclus)', unit: 'pièce', min: 900, max: 2200 },
+    { id: 'depose-couverture', lot: 'toiture', label: 'Dépose de l\'ancienne couverture et évacuation', unit: 'm²', min: 12, max: 22 },
+    { id: 'pose-couverture', lot: 'toiture', label: 'Pose de couverture (lattage, contre-lattage, sous-toiture)', unit: 'm²', min: 45, max: 85 },
+    { id: 'isolation-rampants', lot: 'isolation', label: 'Isolation des rampants par l\'intérieur (pare-vapeur inclus)', unit: 'm²', min: 28, max: 50 },
+    { id: 'isolation-toit-plat', lot: 'isolation', label: 'Isolation de toit plat par l\'extérieur', unit: 'm²', min: 45, max: 80 },
   ],
 };

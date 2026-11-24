@@ -58,5 +58,9 @@ export function describeOperation(op: Operation, catalog: Catalog, roomName: (id
       return 'Retirer un meuble';
     case 'moveFurniture':
       return 'Déplacer un meuble';
+    case 'setRoofCovering':
+      return `Toiture : ${pn(op.productId)}`;
+    case 'setRoofInsulation':
+      return `Isolation de toiture : ${pn(op.productId)}`;
   }
 }

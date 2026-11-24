@@ -3,6 +3,7 @@ import type { Category, Product } from '../model/catalog';
 import { euro } from '../model/estimate';
 import { searchCatalog } from '../model/search';
 import { useStore } from '../store';
+import { patternUrl } from '../textures/patterns';
 
 interface Props {
   categories: Category[];
@@ -18,7 +19,13 @@ const unitLabel = (p: Product) =>
 
 /** Liste de produits filtrable en langage naturel (« grand, pas trop foncé, moins de 500 € »). */
 export function ProductPicker({ categories, subcategory, currentId, onPick, placeholder, compact }: Props) {
-  const catalog = useStore((s) => s.catalog);
+  const fullCatalog = useStore((s) => s.catalog);
+  const step = useStore((s) => s.step);
+  // Les matériaux « existants » (papier peint ancien, simple vitrage…) ne servent qu'au relevé.
+  const catalog = useMemo(
+    () => (step === 'existant' ? fullCatalog : { ...fullCatalog, products: fullCatalog.products.filter((p) => !p.existingOnly) }),
+    [fullCatalog, step],
+  );
   const [query, setQuery] = useState('');
 
   const { results, filters } = useMemo(() => {
@@ -65,14 +72,14 @@ export function ProductPicker({ categories, subcategory, currentId, onPick, plac
               onClick={() => onPick(p)}
               title={p.tags.join(', ')}
             >
-              <span className="swatch" style={{ background: p.color }} />
+              <span className="swatch" style={{ backgroundColor: p.color, backgroundImage: p.pattern ? `url(${patternUrl(p.pattern, p.color, 48)})` : undefined }} />
               <span className="picker__name">
                 {p.name}
                 <small>{p.brand}</small>
               </span>
               <span className="picker__price">
-                {euro(p.price)}
-                <small>{unitLabel(p)}</small>
+                {p.existingOnly ? <small>existant</small> : euro(p.price)}
+                {!p.existingOnly && <small>{unitLabel(p)}</small>}
               </span>
             </button>
           </li>

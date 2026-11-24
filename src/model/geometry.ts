@@ -91,12 +91,12 @@ export function interiorPoint(poly: Point[]): Point {
 
 const key = (p: Point) => `${Math.round(p.x * 100)},${Math.round(p.y * 100)}`;
 
-/** Identifiant stable d'une pièce sans étiquette, dérivé de sa position. */
-export const autoRoomId = (p: Point) => `auto:${Math.round(p.x * 100)}:${Math.round(p.y * 100)}`;
+/** Identifiant stable d'une pièce sans étiquette, dérivé de son niveau et de sa position. */
+export const autoRoomId = (levelId: string, p: Point) => `auto:${levelId}:${Math.round(p.x * 100)}:${Math.round(p.y * 100)}`;
 
-export function parseAutoRoomId(id: string): Point | null {
-  const m = /^auto:(-?\d+):(-?\d+)$/.exec(id);
-  return m ? { x: Number(m[1]) / 100, y: Number(m[2]) / 100 } : null;
+export function parseAutoRoomId(id: string): { levelId: string; at: Point } | null {
+  const m = /^auto:(?:(.+):)?(-?\d+):(-?\d+)$/.exec(id);
+  return m ? { levelId: m[1] ?? 'rdc', at: { x: Number(m[2]) / 100, y: Number(m[3]) / 100 } } : null;
 }
 
 interface HalfEdge {
@@ -112,9 +112,15 @@ interface HalfEdge {
  * Les murs doivent se rejoindre par leurs extrémités (le plan découpe les murs aux jonctions en T).
  */
 export function detectRooms(building: Building): Room[] {
+  const levelIds = [...new Set(building.walls.map((w) => w.levelId))];
+  return levelIds.flatMap((lid) => detectLevelRooms(building, lid));
+}
+
+function detectLevelRooms(building: Building, levelId: string): Room[] {
+  const levelWalls = building.walls.filter((w) => w.levelId === levelId);
   const nodes = new Map<string, Point>();
   const out = new Map<string, HalfEdge[]>();
-  for (const w of building.walls) {
+  for (const w of levelWalls) {
     if (wallLength(w) < EPS) continue;
     const ka = key(w.a);
     const kb = key(w.b);
@@ -153,7 +159,7 @@ export function detectRooms(building: Building): Room[] {
     }
   }
 
-  const wallsById = new Map(building.walls.map((w) => [w.id, w]));
+  const wallsById = new Map(levelWalls.map((w) => [w.id, w]));
   const rooms: Room[] = [];
   const usedLabels = new Set<string>();
   for (const f of faces) {
@@ -161,9 +167,9 @@ export function detectRooms(building: Building): Room[] {
     const a = signedArea(poly);
     // Avec ce parcours, les faces intérieures ont une aire signée positive (repère y vers le bas).
     if (a <= 0.05) continue;
-    const label = building.rooms.find((r) => !usedLabels.has(r.id) && pointInPolygon(r.at, poly));
+    const label = building.rooms.find((r) => r.levelId === levelId && !usedLabels.has(r.id) && pointInPolygon(r.at, poly));
     const at = interiorPoint(poly);
-    const finalLabel: RoomLabel = label ?? { id: autoRoomId(at), at, name: 'Pièce', floorProductId: null };
+    const finalLabel: RoomLabel = label ?? { id: autoRoomId(levelId, at), levelId, at, name: 'Pièce', floorProductId: null };
     if (label) usedLabels.add(label.id);
     const uniqueWalls = [...new Set(f.wallIds)];
     // Surface intérieure approchée : on retire la demi-épaisseur des murs le long du périmètre.
@@ -242,9 +248,9 @@ export function splitWall(b: Building, wallId: string, p: Point): void {
 
 /** Ajoute un mur en créant les jonctions en T avec les murs existants. */
 export function insertWall(b: Building, wall: Wall): void {
-  // 1. Les extrémités du nouveau mur qui tombent au milieu d'un mur existant le coupent.
+  // 1. Les extrémités du nouveau mur qui tombent au milieu d'un mur existant (même niveau) le coupent.
   for (const p of [wall.a, wall.b]) {
-    for (const w of [...b.walls]) {
+    for (const w of b.walls.filter((x) => x.levelId === wall.levelId)) {
       const pr = projectOnSegment(p, w.a, w.b);
       if (pr.d < EPS * 2 && !samePoint(p, w.a) && !samePoint(p, w.b)) splitWall(b, w.id, p);
     }
@@ -252,6 +258,7 @@ export function insertWall(b: Building, wall: Wall): void {
   // 2. Les extrémités de murs existants qui tombent au milieu du nouveau mur le coupent.
   const cuts: number[] = [];
   for (const w of b.walls) {
+    if (w.levelId !== wall.levelId) continue;
     for (const p of [w.a, w.b]) {
       const pr = projectOnSegment(p, wall.a, wall.b);
       if (pr.d < EPS * 2 && pr.t > 0.001 && pr.t < 0.999) cuts.push(pr.t);
