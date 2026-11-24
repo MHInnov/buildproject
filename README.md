@@ -25,6 +25,14 @@ Le projet est enregistré automatiquement dans le navigateur. Le menu ☰ permet
 
 Il suffit de Docker (Docker Desktop sur Mac ou Windows). L'image contient un petit serveur nginx qui sert l'application, sans Node.js ni base de données.
 
+**Le plus simple : l'image publiée sur le registre GitHub** (rien à construire) :
+
+```bash
+docker run --rm -p 8080:80 ghcr.io/mhinnov/buildproject:mvp-renovation
+```
+
+Le workflow `.github/workflows/docker.yml` la publie à chaque push, pour Intel/AMD et ARM (Mac Apple Silicon). Étiquettes : le nom de la branche (`/` remplacé par `-`, ex. `mvp-renovation`), `latest` pour la branche principale, le commit court (`sha-xxxxxxx`) et les tags `v*`. Une fois le MVP fusionné dans `main`, utiliser `ghcr.io/mhinnov/buildproject:latest`.
+
 **Sans cloner le dépôt** (Docker récupère le code sur GitHub et construit l'image, environ 2 minutes la première fois) :
 
 ```bash
@@ -48,16 +56,6 @@ docker run --rm -p 8080:80 construprojet:latest
 Ouvrir ensuite http://localhost:8080. Si le port 8080 est déjà pris, remplacer `8080:80` par `8090:80` (et ouvrir http://localhost:8090).
 
 Les projets dessinés restent dans le navigateur (stockage local), pas dans le conteneur : on peut arrêter et relancer l'image sans rien perdre. Le menu ☰ permet de les exporter en JSON.
-
-### Image publiée (quand GitHub Actions est actif)
-
-Le workflow `.github/workflows/docker.yml` construit et publie l'image sur le registre GitHub à chaque push :
-
-```bash
-docker run --rm -p 8080:80 ghcr.io/mhinnov/buildproject:latest
-```
-
-Étiquettes publiées : `latest` (branche principale), le nom de la branche (ex. `mvp-renovation`), le commit court (`sha-xxxxxxx`) et les tags `v*`. Après la première publication, passer le paquet en visibilité publique dans GitHub (Packages > buildproject > Package settings) pour qu'il soit téléchargeable sans connexion.
 
 ## Raccourcis du plan
 
