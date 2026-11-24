@@ -21,15 +21,43 @@ npm run build    # version de production dans dist/
 
 Le projet est enregistré automatiquement dans le navigateur. Le menu ☰ permet d'exporter ou d'importer un projet en JSON, de repartir d'un plan vide ou de recharger la maison de démonstration.
 
-## Image Docker
+## Tester avec Docker
 
-À chaque push, GitHub Actions construit une image Docker (nginx qui sert l'application) et la publie sur le registre GitHub :
+Il suffit de Docker (Docker Desktop sur Mac ou Windows). L'image contient un petit serveur nginx qui sert l'application, sans Node.js ni base de données.
+
+**Sans cloner le dépôt** (Docker récupère le code sur GitHub et construit l'image, environ 2 minutes la première fois) :
 
 ```bash
-docker run --rm -p 8080:80 ghcr.io/mhinnov/buildproject:latest   # puis http://localhost:8080
+docker build -t construprojet https://github.com/mhinnov/buildproject.git#mvp-renovation
+docker run --rm -p 8080:80 construprojet
 ```
 
-Étiquettes publiées : `latest` (branche principale), le nom de la branche (ex. `mvp-renovation`), le commit court (`sha-xxxxxxx`) et les tags `v*`.
+**Depuis un clone du dépôt**, avec Docker Compose :
+
+```bash
+docker compose up --build        # Ctrl+C pour arrêter
+```
+
+**Avec une image déjà construite** (fichier `construprojet-image-amd64.tar.gz`, processeurs Intel/AMD ; sur Mac Apple Silicon elle tourne via l'émulation de Docker Desktop) :
+
+```bash
+docker load -i construprojet-image-amd64.tar.gz
+docker run --rm -p 8080:80 construprojet:latest
+```
+
+Ouvrir ensuite http://localhost:8080. Si le port 8080 est déjà pris, remplacer `8080:80` par `8090:80` (et ouvrir http://localhost:8090).
+
+Les projets dessinés restent dans le navigateur (stockage local), pas dans le conteneur : on peut arrêter et relancer l'image sans rien perdre. Le menu ☰ permet de les exporter en JSON.
+
+### Image publiée (quand GitHub Actions est actif)
+
+Le workflow `.github/workflows/docker.yml` construit et publie l'image sur le registre GitHub à chaque push :
+
+```bash
+docker run --rm -p 8080:80 ghcr.io/mhinnov/buildproject:latest
+```
+
+Étiquettes publiées : `latest` (branche principale), le nom de la branche (ex. `mvp-renovation`), le commit court (`sha-xxxxxxx`) et les tags `v*`. Après la première publication, passer le paquet en visibilité publique dans GitHub (Packages > buildproject > Package settings) pour qu'il soit téléchargeable sans connexion.
 
 ## Raccourcis du plan
 
