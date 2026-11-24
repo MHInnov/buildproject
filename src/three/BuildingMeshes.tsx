@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import type { Catalog, Product } from '../model/catalog';
 import { productById } from '../model/catalog';
 import { detectRooms, lerp, wallLength, wallNormal, wallSideFacingRoom } from '../model/geometry';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { floorToFloor, levelAbove, levelBelow, levelById } from '../model/levels';
 import type { Building, FurnitureItem, Level, Opening, Point, Room, Wall, WallSide } from '../model/types';
 import type { Selection } from '../store';
@@ -209,7 +210,7 @@ function shapeOf(poly: Point[], holes: Point[][] = []): THREE.Shape {
 
 function Floor({ room, elevation, thickness, holes, surface, selected, onClick }: { room: Room; elevation: number; thickness: number; holes: Point[][]; surface: Surface; selected: boolean; onClick: ClickHandler }) {
   // Trémies entièrement contenues dans la pièce
-  const inside = holes.filter((h) => h.every((p) => pointInside(p, room.polygon)));
+  const inside = [...holes.filter((h) => h.every((p) => pointInside(p, room.polygon))), ...(room.holes ?? [])];
   const geom = useMemo(() => {
     const shape = shapeOf(room.polygon, inside);
     return thickness > 0 ? new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: false }) : new THREE.ShapeGeometry(shape);
@@ -241,7 +242,7 @@ function pointInside(p: Point, poly: Point[]): boolean {
 }
 
 function Ceiling({ room, height }: { room: Room; height: number }) {
-  const geom = useMemo(() => new THREE.ShapeGeometry(shapeOf(room.polygon)), [room]);
+  const geom = useMemo(() => new THREE.ShapeGeometry(shapeOf(room.polygon, room.holes)), [room]);
   return <mesh geometry={geom} rotation-x={Math.PI / 2} position-y={height} material={surfaceMaterial(CEILING, false, { side: THREE.FrontSide })} receiveShadow />;
 }
 
@@ -352,6 +353,22 @@ function WallMesh({ wall, elevation, openings, catalog, facing, selected, select
           />
         );
       })}
+      {/* Plinthes au pied des faces tournées vers une pièce (pas dans les baies de porte) */}
+      {[...(facing ?? [])].flatMap((side) =>
+        pieces
+          .filter(({ p }) => p.y0 <= 0.001)
+          .map(({ p }, i) => {
+            const x0 = Math.max(p.x0, th / 2);
+            const x1 = Math.min(p.x1, L - th / 2);
+            if (x1 - x0 < 0.05) return null;
+            const z = (side === 'gauche' ? 1 : -1) * (th / 2 + 0.006);
+            return (
+              <mesh key={`pl-${side}-${i}`} position={[(x0 + x1) / 2, 0.04, z]} material={BASEBOARD} receiveShadow>
+                <boxGeometry args={[x1 - x0, 0.08, 0.012]} />
+              </mesh>
+            );
+          }),
+      )}
       {openings.map((o) => {
         const isOpen = o.kind === 'porte' ? !toggled[o.id] : !!toggled[o.id];
         const handle = onOpeningClick(o.id);
@@ -507,6 +524,37 @@ function Box({ size, pos, color, selected, roughness, material }: { size: [numbe
   );
 }
 
+const BASEBOARD = new THREE.MeshStandardMaterial({ color: '#f6f5f1', roughness: 0.45 });
+
+const rboxCache = new Map<string, THREE.BufferGeometry>();
+/** Volume aux arêtes arrondies (coussins, plateaux, façades) : bien plus naturel qu'un cube. */
+function RBox({ size, pos, radius = 0.03, material, rot }: { size: [number, number, number]; pos: [number, number, number]; radius?: number; material: THREE.Material; rot?: [number, number, number] }) {
+  const r = Math.min(radius, size[0] / 2 - 0.001, size[1] / 2 - 0.001, size[2] / 2 - 0.001);
+  const key = `${size.map((v) => v.toFixed(3)).join('x')}:${r.toFixed(3)}`;
+  let geo = rboxCache.get(key);
+  if (!geo) {
+    geo = new RoundedBoxGeometry(size[0], size[1], size[2], 3, Math.max(0.001, r));
+    rboxCache.set(key, geo);
+  }
+  return <mesh geometry={geo} position={pos} rotation={rot} material={material} castShadow receiveShadow />;
+}
+
+const fabric = (color: string, selected: boolean) => surfaceMaterial({ color, pattern: { kind: 'carpet' }, roughness: 1 }, selected);
+const woodMat = (color: string, selected: boolean, w = 0.25) => surfaceMaterial({ color, pattern: { kind: 'planks', w, h: 2 }, roughness: 0.55 }, selected);
+const metal = (color: string, selected: boolean) => plain(color, 0.35, selected, 0.6);
+
+function Legs({ w, d, h, inset = 0.06, r = 0.02, material, tapered }: { w: number; d: number; h: number; inset?: number; r?: number; material: THREE.Material; tapered?: boolean }) {
+  return (
+    <>
+      {[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz], i) => (
+        <mesh key={i} position={[sx * (w / 2 - inset), h / 2, sz * (d / 2 - inset)]} material={material} castShadow>
+          <cylinderGeometry args={[r, tapered ? r * 0.6 : r, h, 10]} />
+        </mesh>
+      ))}
+    </>
+  );
+}
+
 function shade(color: string, k: number): string {
   const c = new THREE.Color(color);
   c.multiplyScalar(k);
@@ -558,63 +606,148 @@ function FurnitureMesh({ item, product: p, level, selected, onClick }: { item: F
     parts = <Stair w={w} d={d} rise={floorToFloor(level)} color={c} selected={selected} />;
   } else
     switch (p.subcategory) {
-      case 'canape':
+      case 'canape': {
+        const f = fabric(c, selected);
+        const f2 = fabric(shade(c, 0.92), selected);
+        const n = Math.max(1, Math.round((w - 0.36) / 0.7));
+        const cw = (w - 0.36) / n;
+        const legs = metal('#2b2b2b', selected);
         parts = (
           <>
-            <Box size={[w, 0.42, d]} pos={[0, 0.21, 0]} color={c} selected={selected} roughness={0.95} />
-            <Box size={[w, 0.4, 0.2]} pos={[0, 0.6, -d / 2 + 0.1]} color={dark} selected={selected} roughness={0.95} />
-            <Box size={[0.18, 0.25, d]} pos={[-w / 2 + 0.09, 0.54, 0]} color={dark} selected={selected} roughness={0.95} />
-            <Box size={[0.18, 0.25, d]} pos={[w / 2 - 0.09, 0.54, 0]} color={dark} selected={selected} roughness={0.95} />
-          </>
-        );
-        break;
-      case 'table':
-      case 'bureau': {
-        const round = p.tags.includes('ronde');
-        const wood = surfaceMaterial({ color: c, pattern: p.tags.includes('bois') ? { kind: 'planks', w: 0.3, h: 2 } : undefined, roughness: 0.5 }, selected);
-        parts = (
-          <>
-            {round ? (
-              <mesh position={[0, h - 0.02, 0]} material={wood} castShadow>
-                <cylinderGeometry args={[w / 2, w / 2, 0.04, 40]} />
-              </mesh>
-            ) : (
-              <Box size={[w, 0.04, d]} pos={[0, h - 0.02, 0]} material={wood} />
-            )}
-            {round ? (
-              <Box size={[0.08, h - 0.04, 0.08]} pos={[0, (h - 0.04) / 2, 0]} color={dark} selected={selected} />
-            ) : (
-              [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz], i) => (
-                <Box key={i} size={[0.05, h - 0.04, 0.05]} pos={[sx * (w / 2 - 0.06), (h - 0.04) / 2, sz * (d / 2 - 0.06)]} color={dark} selected={selected} />
-              ))
-            )}
+            {/* Socle, accoudoirs et dossier */}
+            <RBox size={[w, 0.24, d]} pos={[0, 0.2, 0]} radius={0.04} material={f2} />
+            <RBox size={[0.18, 0.36, d]} pos={[-w / 2 + 0.09, 0.4, 0]} radius={0.07} material={f} />
+            <RBox size={[0.18, 0.36, d]} pos={[w / 2 - 0.09, 0.4, 0]} radius={0.07} material={f} />
+            <RBox size={[w - 0.04, 0.45, 0.18]} pos={[0, 0.5, -d / 2 + 0.09]} radius={0.06} material={f} />
+            {/* Coussins d'assise et de dossier */}
+            {Array.from({ length: n }, (_, i) => {
+              const x = -w / 2 + 0.18 + cw * (i + 0.5);
+              return (
+                <group key={i}>
+                  <RBox size={[cw - 0.015, 0.14, d - 0.24]} pos={[x, 0.39, 0.06]} radius={0.05} material={f} />
+                  <RBox size={[cw - 0.03, 0.4, 0.16]} pos={[x, 0.63, -d / 2 + 0.24]} radius={0.07} material={f} rot={[-0.12, 0, 0]} />
+                </group>
+              );
+            })}
+            <Legs w={w - 0.1} d={d - 0.1} h={0.08} r={0.018} material={legs} />
           </>
         );
         break;
       }
-      case 'chaise':
+      case 'table':
+      case 'bureau': {
+        const round = p.tags.includes('ronde');
+        const top = p.tags.includes('bois') ? woodMat(c, selected, 0.3) : plain(c, 0.35, selected);
+        const legMat = p.tags.includes('bois') ? woodMat(dark, selected, 0.1) : metal(dark, selected);
+        parts = round ? (
+          <>
+            <mesh position={[0, h - 0.02, 0]} material={top} castShadow receiveShadow>
+              <cylinderGeometry args={[w / 2, w / 2 - 0.01, 0.035, 48]} />
+            </mesh>
+            <mesh position={[0, (h - 0.04) / 2 + 0.02, 0]} material={legMat} castShadow>
+              <cylinderGeometry args={[0.04, 0.05, h - 0.06, 16]} />
+            </mesh>
+            <mesh position={[0, 0.015, 0]} material={legMat} castShadow receiveShadow>
+              <cylinderGeometry args={[w * 0.22, w * 0.24, 0.03, 32]} />
+            </mesh>
+          </>
+        ) : (
+          <>
+            <RBox size={[w, 0.035, d]} pos={[0, h - 0.0175, 0]} radius={0.012} material={top} />
+            <Legs w={w} d={d} h={h - 0.035} inset={0.07} r={0.022} material={legMat} tapered />
+            {p.subcategory === 'bureau' && <RBox size={[0.4, 0.14, d - 0.1]} pos={[w / 2 - 0.25, h - 0.11, 0]} radius={0.01} material={plain(shade(c, 0.97), 0.4, selected)} />}
+          </>
+        );
+        break;
+      }
+      case 'chaise': {
+        const m = p.tags.includes('métal') ? metal(c, selected) : woodMat(c, selected, 0.12);
         parts = (
           <>
-            <Box size={[w, 0.04, d]} pos={[0, 0.45, 0]} color={c} selected={selected} />
-            <Box size={[w, 0.4, 0.04]} pos={[0, 0.66, -d / 2 + 0.02]} color={c} selected={selected} />
-            {[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz], i) => (
-              <Box key={i} size={[0.03, 0.45, 0.03]} pos={[sx * (w / 2 - 0.03), 0.225, sz * (d / 2 - 0.03)]} color={dark} selected={selected} />
+            <RBox size={[w, 0.035, d]} pos={[0, 0.45, 0]} radius={0.012} material={m} />
+            <RBox size={[w - 0.04, 0.22, 0.025]} pos={[0, 0.72, -d / 2 + 0.03]} radius={0.01} material={m} rot={[-0.08, 0, 0]} />
+            <Legs w={w} d={d} h={0.435} inset={0.035} r={0.016} material={m} tapered />
+            {[-1, 1].map((sx) => (
+              <mesh key={sx} position={[sx * (w / 2 - 0.035), 0.66, -d / 2 + 0.035]} material={m} castShadow>
+                <cylinderGeometry args={[0.014, 0.016, 0.46, 8]} />
+              </mesh>
             ))}
           </>
         );
         break;
-      case 'lit':
+      }
+      case 'lit': {
+        const frame = p.tags.includes('bois') ? woodMat(c, selected, 0.2) : fabric(c, selected);
+        const linen = fabric('#f3f1ec', selected);
+        const duvet = fabric('#d9dfe3', selected);
         parts = (
           <>
-            <Box size={[w, 0.3, d]} pos={[0, 0.15, 0]} color={c} selected={selected} />
-            <Box size={[w - 0.08, 0.22, d - 0.12]} pos={[0, 0.41, 0.04]} color="#f4f2ee" selected={selected} roughness={0.95} />
-            <Box size={[w - 0.06, 0.06, d * 0.6]} pos={[0, 0.54, d * 0.18]} color="#c9d3da" selected={selected} roughness={0.95} />
-            <Box size={[w, h, 0.08]} pos={[0, h / 2, -d / 2 + 0.04]} color={dark} selected={selected} />
-            <Box size={[w * 0.35, 0.12, 0.35]} pos={[-w * 0.22, 0.58, -d / 2 + 0.3]} color="#ffffff" selected={selected} />
-            <Box size={[w * 0.35, 0.12, 0.35]} pos={[w * 0.22, 0.58, -d / 2 + 0.3]} color="#ffffff" selected={selected} />
+            <RBox size={[w, 0.26, d]} pos={[0, 0.17, 0]} radius={0.03} material={frame} />
+            <RBox size={[w - 0.06, 0.2, d - 0.1]} pos={[0, 0.39, 0.03]} radius={0.06} material={linen} />
+            <RBox size={[w - 0.02, 0.09, d * 0.62]} pos={[0, 0.5, d * 0.17]} radius={0.04} material={duvet} />
+            <RBox size={[w + 0.02, h, 0.08]} pos={[0, h / 2, -d / 2 + 0.04]} radius={0.03} material={frame} />
+            {[-1, 1].map((sx) => (
+              <RBox key={sx} size={[w * 0.4, 0.13, 0.36]} pos={[sx * w * 0.23, 0.55, -d / 2 + 0.3]} radius={0.06} material={linen} rot={[-0.25, 0, 0]} />
+            ))}
+            <Legs w={w} d={d} h={0.05} r={0.02} material={metal('#2a2a2a', selected)} />
           </>
         );
         break;
+      }
+      case 'armoire': {
+        const body = p.tags.includes('bois') || c !== '#f2f2ef' ? woodMat(c, selected, 0.3) : plain(c, 0.45, selected);
+        const n = Math.max(2, Math.round(w / 0.5));
+        parts = (
+          <>
+            <RBox size={[w, h - 0.06, d]} pos={[0, (h - 0.06) / 2 + 0.06, 0]} radius={0.008} material={body} />
+            <Box size={[w - 0.04, 0.06, d - 0.04]} pos={[0, 0.03, -0.01]} color={shade(c, 0.6)} selected={selected} />
+            {Array.from({ length: n }, (_, i) => {
+              const x = -w / 2 + (w / n) * (i + 0.5);
+              return (
+                <group key={i}>
+                  <Box size={[0.003, h - 0.1, 0.004]} pos={[-w / 2 + (w / n) * i, h / 2 + 0.03, d / 2 + 0.001]} color={shade(c, 0.55)} />
+                  <mesh position={[x + (i % 2 ? -1 : 1) * (w / n / 2 - 0.05), h * 0.55, d / 2 + 0.02]} material={chrome}>
+                    <boxGeometry args={[0.012, 0.22, 0.02]} />
+                  </mesh>
+                </group>
+              );
+            })}
+          </>
+        );
+        break;
+      }
+      case 'rangement': {
+        const shelf = p.tags.includes('métal') || c === '#262626' ? metal(c, selected) : woodMat(c, selected, 0.3);
+        const open = h > 1.2;
+        const books = ['#8b3a3a', '#2f4f6f', '#c9a227', '#4e6b4a', '#d8d2c4', '#6b4f7a'];
+        parts = open ? (
+          <>
+            {[-1, 1].map((sx) => (
+              <Box key={sx} size={[0.025, h, d]} pos={[sx * (w / 2 - 0.0125), h / 2, 0]} material={shelf} />
+            ))}
+            {Array.from({ length: 5 }, (_, i) => (
+              <Box key={i} size={[w, 0.022, d]} pos={[0, 0.03 + (i * (h - 0.05)) / 4, 0]} material={shelf} />
+            ))}
+            {Array.from({ length: 4 }, (_, i) =>
+              Array.from({ length: Math.floor((w - 0.1) / 0.045) }, (_, j) => {
+                const bh = 0.2 + ((i * 7 + j * 13) % 5) * 0.02;
+                return j % 9 === 8 ? null : (
+                  <Box key={`${i}-${j}`} size={[0.035, bh, d * 0.75]} pos={[-w / 2 + 0.06 + j * 0.045, 0.04 + (i * (h - 0.05)) / 4 + bh / 2, 0]} color={books[(i * 3 + j) % books.length]} roughness={0.85} />
+                );
+              }),
+            )}
+          </>
+        ) : (
+          <>
+            <RBox size={[w, h - 0.08, d]} pos={[0, (h - 0.08) / 2 + 0.08, 0]} radius={0.01} material={shelf} />
+            {Array.from({ length: 3 }, (_, i) => (
+              <Box key={i} size={[0.003, h - 0.14, 0.004]} pos={[-w / 2 + ((i + 1) * w) / 4, h / 2 + 0.04, d / 2 + 0.001]} color={shade(c, 0.55)} />
+            ))}
+            <Legs w={w} d={d} h={0.08} r={0.015} material={metal('#222222', selected)} />
+          </>
+        );
+        break;
+      }
       case 'cuisine':
         parts = (
           <>

@@ -45,6 +45,21 @@ describe('détection des pièces', () => {
     expect(areas).toEqual([8, 16]);
   });
 
+  it('une pièce dessinée au milieu d\'une autre est retirée de celle-ci', () => {
+    const b = empty();
+    for (const x of [w('a', 0, 0, 10, 0), w('b', 10, 0, 10, 8), w('c', 10, 8, 0, 8), w('d', 0, 8, 0, 0)]) insertWall(b, x);
+    for (const x of [w('e', 2, 2, 5, 2), w('f', 5, 2, 5, 5), w('g', 5, 5, 2, 5), w('h', 2, 5, 2, 2)]) insertWall(b, x);
+    b.rooms.push({ id: 'ilot', levelId: 'rdc', at: { x: 3.5, y: 3.5 }, name: 'Bureau', floorProductId: null });
+    const rooms = detectRooms(b);
+    const ilot = rooms.find((r) => r.label.id === 'ilot')!;
+    const autour = rooms.find((r) => r.label.id !== 'ilot')!;
+    expect(ilot.area).toBeCloseTo(9);
+    expect(autour.area).toBeCloseTo(80 - 9);
+    expect(autour.holes).toHaveLength(1);
+    // L'étiquette de la grande pièce n'est pas posée dans l'îlot
+    expect(autour.label.at.x < 2 || autour.label.at.x > 5 || autour.label.at.y < 2 || autour.label.at.y > 5).toBe(true);
+  });
+
   it('la maison de démo a 4 pièces étiquetées', () => {
     const rooms = detectRooms(demoBuilding());
     expect(rooms.filter((r) => r.label.levelId === 'rdc').map((r) => r.label.name).sort()).toEqual(['Chambre', 'Cuisine', 'Salle de bain', 'Séjour']);

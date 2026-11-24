@@ -218,6 +218,21 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
   }
 
   // ----- Événements -----
+  // Point de vue sélectionné : un clic n'importe où sur le plan (même sur une pièce ou un meuble) l'y place,
+  // un glisser donne la direction de la photo. Échap pour terminer.
+  const onPointerDownCapture = (e: React.PointerEvent) => {
+    if (tool !== 'select' || e.button !== 0 || selection?.kind !== 'viewpoint') return;
+    if ((e.target as Element).closest?.('[data-vp]')) return;
+    const v = project.viewpoints.find((x) => x.id === selection.id);
+    if (!v) return;
+    e.stopPropagation();
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    const raw = toWorld(e);
+    const at = { x: Math.round(raw.x * 20) / 20, y: Math.round(raw.y * 20) / 20 };
+    if (v.levelId !== levelId) updateViewpoint(v.id, (x) => void (x.levelId = levelId));
+    setDrag({ kind: 'viewpoint', id: v.id, mode: 'turn', x: at.x, y: at.y, direction: v.direction, moved: true });
+  };
+
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.button === 2) return;
     (e.target as Element).setPointerCapture?.(e.pointerId);
@@ -375,6 +390,7 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
       className="plan"
       style={{ cursor: cursorClass }}
       viewBox={`${view.x} ${view.y} ${view.w} ${viewH}`}
+      onPointerDownCapture={onPointerDownCapture}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -425,9 +441,10 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
       {rooms.map((r) => {
         const floor = productById(catalog, r.label.floorProductId);
         return (
-          <polygon
+          <path
             key={r.label.id}
-            points={r.polygon.map((p) => `${p.x},${p.y}`).join(' ')}
+            d={[r.polygon, ...(r.holes ?? [])].map((ring) => `M${ring.map((p) => `${p.x},${p.y}`).join('L')}Z`).join('')}
+            fillRule="evenodd"
             fill={floor ? (floor.pattern ? `url(#mat-${floor.id})` : floor.color) : 'var(--room)'}
             fillOpacity={floor ? 0.75 : 0.6}
             stroke={isSel('room', r.label.id) ? 'var(--accent)' : 'none'}
@@ -715,7 +732,7 @@ function ViewpointMark({ v, fs, selected, onDown }: { v: Viewpoint; fs: number; 
   const handle = { x: v.x + Math.cos(a) * L, y: v.y + Math.sin(a) * L };
   const color = selected ? 'var(--accent)' : '#d97706';
   return (
-    <g>
+    <g data-vp={v.id}>
       <path d={`M${v.x} ${v.y} L${p1.x} ${p1.y} A${L} ${L} 0 0 1 ${p2.x} ${p2.y} Z`} fill={color} fillOpacity={0.14} stroke={color} strokeWidth={fs * 0.08} pointerEvents="none" />
       <circle cx={v.x} cy={v.y} r={fs * 0.75} fill={color} stroke="#fff" strokeWidth={fs * 0.12} style={{ cursor: 'move' }} onPointerDown={(e) => onDown(e, 'move')} />
       <rect x={v.x - fs * 0.32} y={v.y - fs * 0.22} width={fs * 0.64} height={fs * 0.44} rx={fs * 0.06} fill="#fff" pointerEvents="none" />

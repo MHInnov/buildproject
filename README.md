@@ -4,7 +4,7 @@ Application web légère pour préparer un projet de rénovation, en 5 étapes :
 
 1. **Existant** : dessiner sa maison niveau par niveau (rez, étages, combles, sous-sol), avec murs porteurs et cloisons, portes, fenêtres, escaliers, sanitaires et toiture. On indique les matériaux en place (carrelage ancien, papier peint, simple vitrage, tuiles…) et leur état (bon, moyen, mauvais). On peut aussi **importer un plan** (image ou PDF), le mettre à l'échelle et le laisser retracer les murs, et ajouter des **points de vue** (photos prises d'un endroit précis) pour reporter sols, murs, portes, fenêtres et meubles au bon endroit.
 2. **Projet** : démolir, construire, remplacer des châssis, changer les sols et les murs, ajouter ou retirer des meubles. Le budget se met à jour à chaque action, avec métré.
-3. **Visite 3D** : vue d'ensemble (avec coupe par niveau et toit amovible), visite avec un personnage de 1,75 m suivi de dos pour juger l'échelle, ou promenade à hauteur d'yeux. On ouvre les portes et les fenêtres, on allume avec les interrupteurs, on passe du jour à la nuit ; murs, portes fermées et meubles bloquent le passage, les escaliers mènent à l'étage. Un clic sur un élément permet de le modifier. Un point de vue photo peut être superposé à la maquette pour comparer.
+3. **Visite 3D** : vue d'ensemble (avec coupe par niveau et toit amovible), visite avec un personnage réaliste et animé (1,70 m) suivi de dos pour juger l'échelle, ou promenade à hauteur d'yeux, au niveau de son choix. On ouvre les portes et les fenêtres, on allume avec les interrupteurs, on passe du jour à la nuit ; murs, portes fermées et meubles bloquent le passage, les escaliers mènent à l'étage. Un clic sur un élément permet de le modifier. Un point de vue photo peut être superposé à la maquette pour comparer.
 4. **Artisans** : carnet d'artisans et choix d'un artisan par poste.
 5. **Résumé** : budget poste par poste (matériaux + fourchette de main d'œuvre), mode détail avec le métré et les tâches de chaque corps de métier, impression PDF.
 
@@ -107,5 +107,11 @@ Tout tourne dans le navigateur (« local-first ») : pas de serveur nécessaire 
 - Le retraçage automatique fonctionne bien sur des plans nets (murs pleins ou hachurés foncés) ; un plan photographié de travers ou très annoté demandera des retouches.
 - Les points de vue servent à placer et reconnaître les éléments, pas à mesurer les pièces : les cotes viennent du plan ou du relevé.
 - Textures procédurales (générées dans le navigateur, sans images à télécharger) pour garder l'application légère.
+- Rendu « Qualité haute » (occlusion ambiante, antialiasing) prévu pour un ordinateur récent ; « Qualité standard » pour les machines modestes.
+
+## Crédits des ressources 3D
+
+- Personnage : « Michelle » (Adobe Mixamo, repris des exemples three.js), animations « X Bot » (Mixamo) reciblées sur son squelette. Les conditions de Mixamo autorisent l'usage dans un projet, y compris commercial, mais pas la redistribution du fichier seul : à remplacer par un modèle maison avant une diffusion large.
+- Éclairage d'ambiance : HDRI « apartment » de Poly Haven (CC0), via `@pmndrs/assets`.
 - Pas encore d'annuaire automatique d'artisans (phase 3) : le lien « Chercher à proximité » ouvre une recherche Google Maps.
 - La règle de TVA à 6 % (logement de plus de 10 ans) est simplifiée et à vérifier au cas par cas.

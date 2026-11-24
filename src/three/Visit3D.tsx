@@ -3,17 +3,18 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { useAsset } from '../assets';
 import type { Catalog } from '../model/catalog';
-import { detectRooms, lerp, pointInPolygon, wallLength } from '../model/geometry';
+import { detectRooms, lerp, inRoom, wallLength } from '../model/geometry';
 import { levelById } from '../model/levels';
 import type { Building, Viewpoint } from '../model/types';
 import { useBuilding, useStore, type Selection } from '../store';
 import { useUi } from '../uiState';
 import { BuildingMeshes, switchSpots } from './BuildingMeshes';
-import { GRASS, surfaceMaterial, skyTexture } from './materials';
+import { GRASS, surfaceMaterial } from './materials';
+import { Avatar, preloadAvatar } from './Avatar';
 import { blocked, groundAt, walkWorld, type WalkWorld } from './physics';
+import { HdrEnvironment, PostEffects } from './Realism';
 
 type Mode = 'orbit' | 'perso' | 'walk' | 'photo';
 const EYE = 1.62;
@@ -27,26 +28,6 @@ function bounds(b: Building) {
   const minY = Math.min(...ys);
   const maxY = Math.max(...ys);
   return { cx: (minX + maxX) / 2, cy: (minY + maxY) / 2, size: Math.max(maxX - minX, maxY - minY, 4) };
-}
-
-/** Éclairage d'ambiance réaliste : reflets d'un intérieur neutre (calculé une fois, sans image à charger). */
-function Environment({ night }: { night: boolean }) {
-  const { gl, scene } = useThree();
-  useEffect(() => {
-    const pmrem = new THREE.PMREMGenerator(gl);
-    const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    scene.environment = env;
-    return () => {
-      env.dispose();
-      pmrem.dispose();
-    };
-  }, [gl, scene]);
-  useEffect(() => {
-    scene.environmentIntensity = night ? 0.06 : 0.55;
-    scene.background = skyTexture(night);
-    scene.backgroundIntensity = night ? 1 : 1;
-  }, [night, scene]);
-  return null;
 }
 
 function Sun({ building, night }: { building: Building; night: boolean }) {
@@ -115,25 +96,31 @@ function OrbitRig({ building }: { building: Building }) {
   return null;
 }
 
-function startPoint(building: Building) {
+/** Niveau de départ par défaut : le rez-de-chaussée (le plus haut des niveaux à 0 m ou en dessous). */
+function groundLevelId(b: Building): string {
+  const sorted = [...b.levels].sort((x, y) => x.elevation - y.elevation);
+  return [...sorted].reverse().find((l) => l.elevation <= 0.01)?.id ?? sorted[0]?.id ?? 'rdc';
+}
+
+function startPoint(building: Building, levelId: string) {
   const rooms = detectRooms(building)
-    .filter((r) => (levelById(building, r.label.levelId)?.elevation ?? 0) === Math.max(...building.levels.filter((l) => l.elevation <= 0).map((l) => l.elevation), Math.min(...building.levels.map((l) => l.elevation))))
+    .filter((r) => r.label.levelId === levelId)
     .sort((a, b) => b.area - a.area);
   const r = rooms[0];
   const at = r?.label.at ?? { x: bounds(building).cx, y: bounds(building).cy };
-  return { at, room: r, elevation: r ? (levelById(building, r.label.levelId)?.elevation ?? 0) : 0 };
+  return { at, room: r, elevation: levelById(building, levelId)?.elevation ?? 0 };
 }
 
 /** Point de départ libre : au centre de la plus grande pièce, ou à côté s'il y a un meuble. */
-function freeStart(world: WalkWorld) {
-  const s = startPoint(world.b);
+function freeStart(world: WalkWorld, levelId: string) {
+  const s = startPoint(world.b, levelId);
   const open = () => true;
   for (let rad = 0; rad < 4; rad += 0.25) {
     const n = rad === 0 ? 1 : Math.ceil(rad * 12);
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2;
       const p = { x: s.at.x + Math.cos(a) * rad, y: s.at.y + Math.sin(a) * rad };
-      if (s.room && !pointInPolygon(p, s.room.polygon)) continue;
+      if (s.room && !inRoom(p, s.room)) continue;
       if (!blocked(world, p, s.elevation, open)) return { ...s, at: p };
     }
   }
@@ -264,7 +251,7 @@ function Character({ groupRef, legL, legR, armL, armR }: { groupRef: React.RefOb
 }
 
 /** Visite avec personnage : la caméra le suit de dos, on garde le pointeur pour cliquer sur les éléments. */
-function PersoRig({ world, onHint }: { world: WalkWorld; onHint: (h: string | null) => void }) {
+function PersoRig({ world, levelId, onHint }: { world: WalkWorld; levelId: string; onHint: (h: string | null) => void }) {
   const { camera, gl, scene } = useThree();
   const keys = useKeys();
   const body = useRef<THREE.Group>(null);
@@ -272,6 +259,8 @@ function PersoRig({ world, onHint }: { world: WalkWorld; onHint: (h: string | nu
   const legR = useRef<THREE.Group>(null);
   const armL = useRef<THREE.Group>(null);
   const armR = useRef<THREE.Group>(null);
+  const inner = useRef<THREE.Group>(null);
+  const speedRef = useRef(0);
   const worldRef = useRef(world);
   worldRef.current = world;
   const st = useRef({ pos: new THREE.Vector3(), heading: 0, yaw: 0, pitch: 0.32, dist: 3.2, phase: 0, near: null as Interactive | null, lastHint: 0, hint: null as string | null });
@@ -280,7 +269,7 @@ function PersoRig({ world, onHint }: { world: WalkWorld; onHint: (h: string | nu
   itemsRef.current = items;
 
   useEffect(() => {
-    const s = freeStart(world);
+    const s = freeStart(world, levelId);
     st.current.pos.set(s.at.x, s.elevation, s.at.y);
     (camera as THREE.PerspectiveCamera).fov = 60;
     (camera as THREE.PerspectiveCamera).updateProjectionMatrix();
@@ -339,7 +328,12 @@ function PersoRig({ world, onHint }: { world: WalkWorld; onHint: (h: string | nu
       const f = new THREE.Vector3(-Math.sin(s.yaw), 0, -Math.cos(s.yaw));
       const r = new THREE.Vector3(-f.z, 0, f.x);
       const m = f.multiplyScalar(fwd).add(r.multiplyScalar(side)).normalize().multiplyScalar(speed);
+      const bx = s.pos.x;
+      const bz = s.pos.z;
       step(worldRef.current, s.pos, m.x, m.z, isOpen);
+      // Vitesse réelle (bloqué contre un mur = sur place)
+      const real = Math.hypot(s.pos.x - bx, s.pos.z - bz) / Math.max(dt, 1e-3);
+      speedRef.current += (real - speedRef.current) * Math.min(1, dt * 10);
       const target = Math.atan2(m.x, m.z);
       let d = target - s.heading;
       d = Math.atan2(Math.sin(d), Math.cos(d));
@@ -348,8 +342,9 @@ function PersoRig({ world, onHint }: { world: WalkWorld; onHint: (h: string | nu
       moving = true;
     } else {
       s.pos.y = groundAt(worldRef.current, { x: s.pos.x, y: s.pos.z }, s.pos.y);
+      speedRef.current += (0 - speedRef.current) * Math.min(1, dt * 10);
     }
-    // Animation de marche
+    // Animation de marche (silhouette de repli, le temps que le personnage réaliste se charge)
     const swing = moving ? Math.sin(s.phase) * 0.55 : 0;
     const k = Math.min(1, dt * 12);
     if (legL.current) legL.current.rotation.x += (swing - legL.current.rotation.x) * k;
@@ -358,7 +353,7 @@ function PersoRig({ world, onHint }: { world: WalkWorld; onHint: (h: string | nu
     if (armR.current) armR.current.rotation.x += (swing * 0.8 - armR.current.rotation.x) * k;
     if (body.current) {
       body.current.position.copy(s.pos);
-      body.current.position.y += moving ? Math.abs(Math.cos(s.phase)) * 0.03 : 0;
+      if (inner.current?.visible && moving) body.current.position.y += Math.abs(Math.cos(s.phase)) * 0.03;
       body.current.rotation.y = s.heading;
     }
     // Caméra derrière le personnage, rapprochée si un mur s'interpose
@@ -401,11 +396,15 @@ function PersoRig({ world, onHint }: { world: WalkWorld; onHint: (h: string | nu
     }
   });
 
-  return <Character groupRef={body} legL={legL} legR={legR} armL={armL} armR={armR} />;
+  return (
+    <group ref={body} userData={{ noCam: true }}>
+      <Avatar speed={speedRef} fallback={<Character groupRef={inner} legL={legL} legR={legR} armL={armL} armR={armR} />} />
+    </group>
+  );
 }
 
 /** Promenade à hauteur d'yeux (vue subjective). */
-function WalkRig({ world, onPick, onUnlock }: { world: WalkWorld; onPick: (s: NonNullable<Selection>) => void; onUnlock: () => void }) {
+function WalkRig({ world, levelId, onPick, onUnlock }: { world: WalkWorld; levelId: string; onPick: (s: NonNullable<Selection>) => void; onUnlock: () => void }) {
   const { camera, gl, scene } = useThree();
   const keys = useKeys();
   const pos = useRef(new THREE.Vector3());
@@ -413,7 +412,7 @@ function WalkRig({ world, onPick, onUnlock }: { world: WalkWorld; onPick: (s: No
   worldRef.current = world;
 
   useEffect(() => {
-    const s = freeStart(world);
+    const s = freeStart(world, levelId);
     pos.current.set(s.at.x, s.elevation, s.at.y);
     camera.position.set(s.at.x, s.elevation + EYE, s.at.y);
     camera.rotation.set(0, 0, 0);
@@ -531,7 +530,24 @@ export function Visit3D() {
   const [mode, setMode] = useState<Mode>(vp ? 'photo' : 'orbit');
   const [locked, setLocked] = useState(false);
   const [night, setNight] = useState(false);
+  const [quality, setQuality] = useState<'haute' | 'standard'>(() => {
+    try {
+      return localStorage.getItem('construprojet:qualite3d') === 'standard' ? 'standard' : 'haute';
+    } catch {
+      return 'haute';
+    }
+  });
+  const changeQuality = (q: 'haute' | 'standard') => {
+    setQuality(q);
+    try {
+      localStorage.setItem('construprojet:qualite3d', q);
+    } catch {
+      /* stockage indisponible */
+    }
+  };
   const [upTo, setUpTo] = useState<string>('all');
+  const [startLevel, setStartLevel] = useState<string | null>(null);
+  const walkLevel = startLevel && levelById(building, startLevel) ? startLevel : groundLevelId(building);
   const [roofOn, setRoofOn] = useState(true);
   const [hint, setHint] = useState<string | null>(null);
   const [photoOpacity, setPhotoOpacity] = useState(0.5);
@@ -545,6 +561,11 @@ export function Visit3D() {
   useEffect(() => {
     if (vp) setMode('photo');
   }, [vp]);
+  // Le personnage réaliste se télécharge en arrière-plan dès l'ouverture de la visite
+  useEffect(() => {
+    const t = setTimeout(() => void preloadAvatar().catch(() => undefined), 800);
+    return () => clearTimeout(t);
+  }, []);
 
   const world = useMemo(() => walkWorld(building, catalog as Catalog), [building, catalog]);
   const levels = levelChoices(building);
@@ -569,8 +590,20 @@ export function Visit3D() {
 
   return (
     <div className="visit">
-      <Canvas shadows="soft" dpr={[1, 1.75]} camera={{ fov: 60, near: 0.05, far: 400 }} gl={{ antialias: true }} onPointerMissed={() => mode !== 'walk' && select(null)}>
-        <Environment night={night} />
+      <Canvas
+        shadows="soft"
+        dpr={[1, quality === 'haute' ? 1.75 : 1.25]}
+        camera={{ fov: 60, near: 0.05, far: 400 }}
+        gl={{ antialias: true }}
+        onCreated={({ gl }) => {
+          // Tons neutres : les couleurs des produits restent fidèles au catalogue
+          gl.toneMapping = THREE.NeutralToneMapping;
+          gl.toneMappingExposure = 1.05;
+        }}
+        onPointerMissed={() => mode !== 'walk' && select(null)}
+      >
+        <HdrEnvironment preset="apartment" night={night} />
+        {quality === 'haute' && <PostEffects />}
         <hemisphereLight args={[night ? '#28314a' : '#dfeaff', night ? '#0d0f14' : '#8a7d6a', night ? 0.12 : 0.55]} />
         <Sun building={building} night={night} />
         <Ground />
@@ -585,8 +618,8 @@ export function Visit3D() {
           onPick={mode === 'walk' ? undefined : select}
         />
         {mode === 'orbit' && <OrbitRig building={building} />}
-        {mode === 'perso' && <PersoRig world={world} onHint={setHint} />}
-        {mode === 'walk' && <WalkRig world={world} onPick={select} onUnlock={() => setLocked(false)} />}
+        {mode === 'perso' && <PersoRig key={walkLevel} world={world} levelId={walkLevel} onHint={setHint} />}
+        {mode === 'walk' && <WalkRig key={walkLevel} world={world} levelId={walkLevel} onPick={select} onUnlock={() => setLocked(false)} />}
         {mode === 'photo' && vp && <PhotoRig building={building} v={vp} aspect={photoAspect} />}
       </Canvas>
 
@@ -619,6 +652,23 @@ export function Visit3D() {
             Nuit
           </button>
         </div>
+        <div className="segmented">
+          <select value={quality} onChange={(e) => changeQuality(e.target.value as 'haute' | 'standard')} aria-label="Qualité du rendu" title="Qualité haute : ombres de contact et rendu plus fin (ordinateur récent)">
+            <option value="haute">Qualité haute</option>
+            <option value="standard">Qualité standard</option>
+          </select>
+        </div>
+        {(mode === 'perso' || mode === 'walk') && levels.length > 1 && (
+          <div className="segmented">
+            <select value={walkLevel} onChange={(e) => setStartLevel(e.target.value)} aria-label="Niveau visité">
+              {levels.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         {mode === 'orbit' && (
           <div className="segmented">
             <select value={upTo} onChange={(e) => setUpTo(e.target.value)} aria-label="Niveaux affichés">

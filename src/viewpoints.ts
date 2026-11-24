@@ -1,6 +1,6 @@
 import { addFurniture, addOpening, replaceOpening, setRoomFloor, setWallFinish } from './actions';
 import type { Catalog, Product } from './model/catalog';
-import { detectRooms, dist, newId, pointInPolygon, wallLength, wallNormal } from './model/geometry';
+import { detectRooms, dist, newId, inRoom, wallLength, wallNormal } from './model/geometry';
 import { onLevel } from './model/levels';
 import { applyOperations } from './model/operations';
 import type { Building, Point, Viewpoint, Wall } from './model/types';
@@ -82,7 +82,7 @@ export function placeFromPhoto(v: Viewpoint, u: number, w: number, aspect: numbe
       p = { x: v.x + Math.cos(yaw) * d, y: v.y + Math.sin(yaw) * d };
     }
     const rooms = detectRooms(b);
-    const room = rooms.find((r) => pointInPolygon(p, r.polygon)) ?? rooms.find((r) => pointInPolygon(v, r.polygon));
+    const room = rooms.find((r) => inRoom(p, r)) ?? rooms.find((r) => inRoom(v, r));
     if (!room) return { ok: false, message: 'Aucune pièce fermée à cet endroit : tracez d’abord les murs.' };
     setRoomFloor(room, product.id);
     return { ok: true, message: `Sol de ${room.label.name} : ${product.name}` };

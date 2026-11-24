@@ -1,6 +1,6 @@
 import type { Catalog } from '../model/catalog';
 import { productById } from '../model/catalog';
-import { detectRooms, pointInPolygon, projectOnSegment, wallLength, wallSideFacingRoom } from '../model/geometry';
+import { detectRooms, inRoom, projectOnSegment, wallLength, wallSideFacingRoom } from '../model/geometry';
 import { floorToFloor, levelById } from '../model/levels';
 import type { Building, Point, Room } from '../model/types';
 
@@ -136,7 +136,7 @@ export function groundAt(world: WalkWorld, p: Point, currentY: number): number {
     if (Math.abs(h - currentY) < 0.45) candidates.push(h);
   }
   for (const r of world.rooms) {
-    if (!pointInPolygon(p, r.polygon)) continue;
+    if (!inRoom(p, r)) continue;
     // Trémie : pas de plancher au-dessus d'un escalier du niveau inférieur.
     const hole = world.stairs.some((s) => Math.abs(s.base + s.rise - r.elevation) < 0.05 && inStair(s, p, -0.05));
     if (!hole) candidates.push(r.elevation);
