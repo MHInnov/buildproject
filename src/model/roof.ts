@@ -1,6 +1,6 @@
 import type { Building, Level, Point, Roof, Room } from './types';
 import { levelById } from './levels';
-import { pointInPolygon } from './geometry';
+import { inRoom } from './geometry';
 
 export interface RoofFrame {
   /** Emprise extérieure des murs (sans débord). */
@@ -90,7 +90,7 @@ export function areaAboveHeight(b: Building, room: Room, threshold = 1.8): numbe
   for (let x = Math.min(...xs) + step / 2; x < Math.max(...xs); x += step) {
     for (let y = Math.min(...ys) + step / 2; y < Math.max(...ys); y += step) {
       const p = { x, y };
-      if (!pointInPolygon(p, room.polygon)) continue;
+      if (!inRoom(p, room)) continue;
       all++;
       if (roofHeightAt(f, roof, p) >= threshold) ok++;
     }

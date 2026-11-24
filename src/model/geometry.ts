@@ -74,19 +74,47 @@ export function pointInPolygon(p: Point, poly: Point[]): boolean {
 }
 
 /** Un point garanti à l'intérieur du polygone (centroïde, sinon recherche le long d'une ligne). */
-export function interiorPoint(poly: Point[]): Point {
+export function interiorPoint(poly: Point[], holes: Point[][] = []): Point {
   const c = centroid(poly);
-  if (pointInPolygon(c, poly)) return c;
-  const ys = poly.map((p) => p.y);
-  const y = (Math.min(...ys) + Math.max(...ys)) / 2 + 1e-4;
-  const xs: number[] = [];
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const a = poly[i];
-    const b = poly[j];
-    if (a.y > y !== b.y > y) xs.push(((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x);
+  if (!holes.length) {
+    if (pointInPolygon(c, poly)) return c;
+    const ys = poly.map((p) => p.y);
+    const y = (Math.min(...ys) + Math.max(...ys)) / 2 + 1e-4;
+    const cuts: number[] = [];
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const a = poly[i];
+      const b = poly[j];
+      if (a.y > y !== b.y > y) cuts.push(((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x);
+    }
+    cuts.sort((m, n) => m - n);
+    return cuts.length >= 2 ? { x: (cuts[0] + cuts[1]) / 2, y } : c;
   }
-  xs.sort((m, n) => m - n);
-  return xs.length >= 2 ? { x: (xs[0] + xs[1]) / 2, y } : c;
+  const ok = (p: Point) => pointInPolygon(p, poly) && !holes.some((h) => pointInPolygon(p, h));
+  const clearance = (p: Point) => Math.min(...[poly, ...holes].flatMap((ring) => ring.map((a, i) => projectOnSegment(p, a, ring[(i + 1) % ring.length]).d)));
+  if (ok(c) && clearance(c) > 0.6) return c;
+  // Point le plus dégagé d'une grille : loin des murs et hors des îlots.
+  const xs = poly.map((p) => p.x);
+  const ys = poly.map((p) => p.y);
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  let best: Point | null = null;
+  let bestD = -1;
+  const n = 24;
+  for (let i = 1; i < n; i++)
+    for (let j = 1; j < n; j++) {
+      const p = { x: x0 + ((x1 - x0) * i) / n, y: y0 + ((y1 - y0) * j) / n };
+      if (!ok(p)) continue;
+      const d = clearance(p);
+      if (d > bestD) {
+        bestD = d;
+        best = p;
+      }
+    }
+  return best ? { x: Math.round(best.x * 100) / 100, y: Math.round(best.y * 100) / 100 } : c;
+}
+
+/** Le point est-il dans la pièce (et pas dans une pièce enclavée) ? */
+export function inRoom(p: Point, room: { polygon: Point[]; holes?: Point[][] }): boolean {
+  return pointInPolygon(p, room.polygon) && !(room.holes ?? []).some((h) => pointInPolygon(p, h));
 }
 
 const key = (p: Point) => `${Math.round(p.x * 100)},${Math.round(p.y * 100)}`;
@@ -160,27 +188,52 @@ function detectLevelRooms(building: Building, levelId: string): Room[] {
   }
 
   const wallsById = new Map(levelWalls.map((w) => [w.id, w]));
-  const rooms: Room[] = [];
-  const usedLabels = new Set<string>();
-  for (const f of faces) {
-    const poly = simplify(f.poly);
-    const a = signedArea(poly);
-    // Avec ce parcours, les faces intérieures ont une aire signée positive (repère y vers le bas).
-    if (a <= 0.05) continue;
-    const label = building.rooms.find((r) => r.levelId === levelId && !usedLabels.has(r.id) && pointInPolygon(r.at, poly));
-    const at = interiorPoint(poly);
-    const finalLabel: RoomLabel = label ?? { id: autoRoomId(levelId, at), levelId, at, name: 'Pièce', floorProductId: null };
-    if (label) usedLabels.add(label.id);
-    const uniqueWalls = [...new Set(f.wallIds)];
-    // Surface intérieure approchée : on retire la demi-épaisseur des murs le long du périmètre.
+  // Aire intérieure approchée : on retire la demi-épaisseur des murs le long du périmètre.
+  const innerArea = (poly: Point[], wallIds: string[], a: number) => {
     let inner = a;
-    for (let i = 0; i < f.wallIds.length; i++) {
-      const w = wallsById.get(f.wallIds[i]);
-      if (!w) continue;
-      inner -= dist(f.poly[i], f.poly[(i + 1) % f.poly.length]) * (w.thickness / 2);
+    for (let i = 0; i < wallIds.length; i++) {
+      const w = wallsById.get(wallIds[i]);
+      if (w) inner -= dist(poly[i], poly[(i + 1) % poly.length]) * (w.thickness / 2);
     }
-    rooms.push({ label: finalLabel, polygon: poly, area: Math.max(0, inner), perimeter: perimeter(poly), wallIds: uniqueWalls });
+    return inner;
+  };
+  const cand = faces
+    .map((f) => ({ ...f, simple: simplify(f.poly), a: signedArea(f.poly) }))
+    .filter((f) => f.a > 0.05)
+    .map((f) => ({ ...f, probe: interiorPoint(f.simple) }));
+  // Une pièce dessinée à l'intérieur d'une autre sans la toucher (îlot) : elle est retirée de la pièce qui l'entoure.
+  const parent = cand.map((f, i) => {
+    let best = -1;
+    cand.forEach((g, j) => {
+      if (j !== i && g.a > f.a && pointInPolygon(f.probe, g.simple) && (best < 0 || g.a < cand[best].a)) best = j;
+    });
+    return best;
+  });
+  const holesOf = cand.map((_, j) => cand.filter((__, i) => parent[i] === j));
+  // Chaque étiquette va à la plus petite pièce qui la contient.
+  const owner = new Map<string, number>();
+  for (const r of building.rooms) {
+    if (r.levelId !== levelId) continue;
+    let best = -1;
+    cand.forEach((g, j) => {
+      if (pointInPolygon(r.at, g.simple) && (best < 0 || g.a < cand[best].a)) best = j;
+    });
+    if (best >= 0 && ![...owner.values()].includes(best)) owner.set(r.id, best);
   }
+  const rooms: Room[] = [];
+  cand.forEach((f, j) => {
+    const poly = f.simple;
+    const holes = holesOf[j].map((h) => h.simple);
+    const labelId = [...owner.entries()].find(([, k]) => k === j)?.[0];
+    const label = labelId ? building.rooms.find((r) => r.id === labelId) : undefined;
+    const at = label ? label.at : interiorPoint(poly, holes);
+    const finalLabel: RoomLabel = label ?? { id: autoRoomId(levelId, at), levelId, at, name: 'Pièce', floorProductId: null };
+    let inner = innerArea(f.poly, f.wallIds, f.a);
+    // L'îlot retire sa surface et l'épaisseur de ses murs.
+    for (const h of holesOf[j]) inner -= 2 * h.a - innerArea(h.poly, h.wallIds, h.a);
+    const uniqueWalls = [...new Set([...f.wallIds, ...holesOf[j].flatMap((h) => h.wallIds)])];
+    rooms.push({ label: finalLabel, polygon: poly, area: Math.max(0, inner), perimeter: perimeter(poly) + holes.reduce((s0, h) => s0 + perimeter(h), 0), wallIds: uniqueWalls, ...(holes.length ? { holes } : {}) });
+  });
   return rooms;
 }
 
@@ -205,7 +258,7 @@ export function wallSideFacingRoom(w: Wall, room: Room): WallSide | null {
   for (const side of ['gauche', 'droite'] as WallSide[]) {
     const n = wallNormal(w, side);
     const p = { x: mid.x + n.x * (w.thickness / 2 + 0.05), y: mid.y + n.y * (w.thickness / 2 + 0.05) };
-    if (pointInPolygon(p, room.polygon)) return side;
+    if (inRoom(p, room)) return side;
   }
   return null;
 }

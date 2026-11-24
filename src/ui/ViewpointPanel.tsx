@@ -70,9 +70,9 @@ export function ViewpointPanel({ id }: { id: string }) {
           updateViewpoint(id, (x) => void (x.assetId = assetId));
         }}
       />
+      <p className="muted small">📍 Tant que ce point de vue est sélectionné, cliquez sur le plan à l'endroit où la photo a été prise ; glissez pour indiquer la direction visée. Échap pour terminer.</p>
       {!photo ? (
         <>
-          <p className="muted small">Ajoutez la photo prise depuis cet endroit. Placez le point sur le plan et tournez la poignée dans la direction de la prise de vue.</p>
           <button className="btn btn--primary" onClick={() => input.current?.click()}>
             Ajouter la photo…
           </button>

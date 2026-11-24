@@ -164,6 +164,8 @@ export interface Room {
   /** Périmètre en m. */
   perimeter: number;
   wallIds: string[];
+  /** Pièces entièrement contenues (îlots), à exclure du sol. */
+  holes?: Point[][];
 }
 
 /** Une modification du projet par rapport à l'existant. */
