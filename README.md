@@ -28,7 +28,7 @@ Il suffit de Docker (Docker Desktop sur Mac ou Windows). L'image contient un pet
 **Le plus simple : l'image publiée sur le registre GitHub** (rien à construire) :
 
 ```bash
-docker run --rm -p 8080:80 ghcr.io/mhinnov/buildproject:mvp-renovation
+docker run --rm -p 7080:80 ghcr.io/mhinnov/buildproject:mvp-renovation
 ```
 
 Le workflow `.github/workflows/docker.yml` la publie à chaque push, pour Intel/AMD et ARM (Mac Apple Silicon). Étiquettes : le nom de la branche (`/` remplacé par `-`, ex. `mvp-renovation`), `latest` pour la branche principale, le commit court (`sha-xxxxxxx`) et les tags `v*`. Une fois le MVP fusionné dans `main`, utiliser `ghcr.io/mhinnov/buildproject:latest`.
@@ -37,7 +37,7 @@ Le workflow `.github/workflows/docker.yml` la publie à chaque push, pour Intel/
 
 ```bash
 docker build -t construprojet https://github.com/mhinnov/buildproject.git#mvp-renovation
-docker run --rm -p 8080:80 construprojet
+docker run --rm -p 7080:80 construprojet
 ```
 
 **Depuis un clone du dépôt**, avec Docker Compose :
@@ -50,10 +50,10 @@ docker compose up --build        # Ctrl+C pour arrêter
 
 ```bash
 docker load -i construprojet-image-amd64.tar.gz
-docker run --rm -p 8080:80 construprojet:latest
+docker run --rm -p 7080:80 construprojet:latest
 ```
 
-Ouvrir ensuite http://localhost:8080. Si le port 8080 est déjà pris, remplacer `8080:80` par `8090:80` (et ouvrir http://localhost:8090).
+Ouvrir ensuite http://localhost:7080. Le port 7080 est le port convenu pour ce projet.
 
 Les projets dessinés restent dans le navigateur (stockage local), pas dans le conteneur : on peut arrêter et relancer l'image sans rien perdre. Le menu ☰ permet de les exporter en JSON.
 
