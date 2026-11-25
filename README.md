@@ -68,9 +68,20 @@ Dans **Menu > Administration**, on peut activer l'option **Avec IA** (Claude, d'
 
 | Action | Geste |
 | --- | --- |
-| Marcher | Z/W, Q/A, S, D ou flèches ; Maj pour courir |
+| Avancer / reculer | Z/W, S ou ↑ ↓ ; Maj pour courir |
+| Tourner | Q/A, D ou ← → (la souris n'est pas nécessaire) |
+| Regarder en haut / en bas (hauteur d'yeux) | R, F ou Page↑ / Page↓ |
 | Ouvrir une porte, allumer | touche E à proximité, ou double-clic sur la porte, clic sur l'interrupteur |
+| Actions sur un meuble, un mur, une porte | clic droit (au centre de l'écran en vue à hauteur d'yeux) |
 | Tourner la caméra (personnage) | glisser ; molette pour rapprocher |
+
+## Points de vue photo
+
+Dans l'existant, on place un point de vue sur le plan et on y joint la photo prise sur place. En projet, ce point de vue est figé : « Voir la photo du projet » affiche la photo réelle avec les modifications appliquées (démolitions, peintures, sols, meubles), avec un curseur avant / après. Les zones que le projet ne change pas restent celles de la photo.
+
+## Catalogues fournisseurs
+
+**Menu > Administration** permet d'importer le catalogue d'une marque au format CSV (Excel) ou JSON ; un modèle CSV est téléchargeable au même endroit. Les produits importés s'ajoutent aux choix de l'application et restent dans le navigateur. IKEA et Quick-Step ne publient pas de catalogue ouvert ni d'API publique : il faut obtenir le fichier produits auprès de la marque ou d'un distributeur partenaire.
 
 ## Raccourcis du plan
 
