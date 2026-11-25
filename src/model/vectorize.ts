@@ -1343,7 +1343,10 @@ export function autoVectorize(bmp: Bitmap, opts: { scale?: number | null; debug?
     // les façades et la largeur des portes une fois le plan lu.
     const s0 = opts.scale ?? 0.3 / th.thick;
     let pick: { x: Read; scale: number; q: ReturnType<typeof rate> } | null = null;
-    for (const sc of [s0]) {
+    // Un plan réduit (photocopie, page de dossier) garde l'épaisseur de trait de l'original : ses murs
+    // paraissent plus épais qu'ils ne sont et l'échelle déduite est trop petite. On essaie donc aussi des
+    // échelles plus grandes et on garde la lecture qui ferme le mieux les pièces.
+    for (const sc of opts.scale ? [s0] : [s0, s0 * 1.15, s0 * 1.3]) {
       const x = read(sc);
       if (!x.r.walls.length) continue;
       const q = rate(x, sc);
@@ -1353,10 +1356,22 @@ export function autoVectorize(bmp: Bitmap, opts: { scale?: number | null; debug?
     if (!opts.scale) {
       const f = scaleCorrection(pick.x.r.walls, pick.x.r.openings, { w: w * pick.scale, h: h * pick.scale });
       if (Math.abs(f - 1) > 0.05) {
-        const x = read(pick.scale * f);
+        const base = pick;
+        const x = read(base.scale * f);
         if (x.r.walls.length) {
-          const q = rate(x, pick.scale * f);
-          if (q.score >= 0.7 * pick.q.score) pick = { x, scale: pick.scale * f, q };
+          const q = rate(x, base.scale * f);
+          if (q.score >= 0.7 * base.q.score) pick = { x, scale: base.scale * f, q };
+        }
+        // Portes et façades n'ont pas la même épaisseur de trait que l'original sur un plan réduit : la
+        // bonne échelle est souvent entre les deux. On garde ces lectures intermédiaires si elles sont nettement meilleures.
+        if (Math.abs(f - 1) > 0.2) {
+          for (const e of [0.5, 0.75]) {
+            const sc = base.scale * Math.pow(f, e);
+            const y = read(sc);
+            if (!y.r.walls.length) continue;
+            const q = rate(y, sc);
+            if (q.score > 1.25 * pick.q.score) pick = { x: y, scale: sc, q };
+          }
         }
       }
     }

@@ -9,6 +9,7 @@ import { removeLevel } from './model/levels';
 import { levelOutline } from './model/footprint';
 import { fitSite, readSitePlan } from './model/site';
 import { alignFacades, alignWalls, footprint, guessKind, isFloorKind, looksLikeSection, planSimilarity, readSection, storeysFromSection, type PlanKind, type SectionReading } from './model/plans';
+import { eaveForKnee } from './model/roof';
 import type { Building, Level } from './model/types';
 import { autoVectorize, type AutoVectorizeResult, type Bitmap, type TracedWall } from './model/vectorize';
 import { applyStoreys, applyTrace, groundLevel } from './traceApply';
@@ -247,6 +248,8 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
   let anchorId: string | null = null;
   /** Image et passage pixels → mètres de chaque niveau retracé (pour relire le plan ensuite). */
   const placedOn = new Map<string, Placement>();
+  /** Échelle retenue pour chaque niveau retracé, et son plan. */
+  const scaleUsed = new Map<string, { s: number; p: PlanInput }>();
   const done = new Set<string>();
   for (const p of sorted) {
     const level = levelFor(b, p.kind);
@@ -279,6 +282,26 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
       // Échelle seulement estimée : on la déduit du calage des façades sur le niveau de référence
       const fa = sure(p) ? null : alignFacades(r.walls, target);
       let al = fa && fa.fit >= 0.3 ? fa : alignWalls(r.walls, target, false);
+      // Échelle seulement estimée et plan qui se superpose mal : l'estimation a pu se tromper nettement (plan
+      // de combles fait surtout de pignons et de murs bas, page réduite). On relit le plan à d'autres échelles,
+      // dont celle du niveau de référence, et on garde celle qui se superpose le mieux.
+      if (!sure(p) && al.fit < 0.35) {
+        const ref = refLevel ? scaleUsed.get(refLevel) : undefined;
+        const tries = [s * 0.62, s * 1.6, ...(ref && sameSize(ref.p, p) ? [ref.s] : [])];
+        for (const sc of tries) {
+          const alt = autoVectorize(p.bmp, { scale: sc / p.k });
+          if (!alt?.walls.length) continue;
+          const fa2 = alignFacades(alt.walls, target);
+          const al2 = fa2 && fa2.fit >= 0.3 ? fa2 : alignWalls(alt.walls, target, false);
+          // à superposition égale, on préfère la lecture qui n'a pas besoin d'être remise à l'échelle
+          const q = (x: { fit: number; k: number }) => x.fit - 0.15 * Math.abs(Math.log(x.k));
+          if (al2.fit > 0.25 && q(al2) > Math.max(q(al), 0.2) + 0.03) {
+            r = alt;
+            s = sc;
+            al = al2;
+          }
+        }
+      }
       let rescaled = false;
       if (al.fit > 0.2 && al.k !== 1) {
         // Nouvelle échelle : on relit le plan à cette échelle (portes, épaisseurs, raccords en dépendent)
@@ -312,6 +335,7 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
       dy = -fb.y0;
     }
     const scaled = r;
+    scaleUsed.set(level.id, { s: s * k, p });
     applyTrace(b, level.id, r, dx, dy, k);
     placedOn.set(level.id, { bmp: p.bmp, scale: r.scale, k, dx, dy });
     level.underlay = { assetId: p.assetId, x: dx, y: dy, scale: s * k, width: p.width, height: p.height, opacity: 0.35, visible: true, calibrated: !!calibrated.find((u) => sameSize(u, p)) };
@@ -341,25 +365,47 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
   const fixedLevels = new Set<string>();
   const roofs: (NonNullable<SectionReading['roof']> & { eave: number | null })[] = [];
   let roofEave: number | null = null;
-  for (const c of sections) {
-    const sec = readSection(c.bmp);
+  /** Bas de la mansarde lu sur une coupe : hauteur, depuis le plancher des combles, où le toit rencontre les murs. */
+  let sectionKnee: number | null = null;
+  // Les coupes les plus simples d'abord (moins de planchers) : une coupe en demi-niveaux se lit moins bien
+  const readings = sections.map((c) => ({ c, sec: readSection(c.bmp) })).sort((m, n) => (m.sec?.slabs.length ?? 99) - (n.sec?.slabs.length ?? 99));
+  for (const { c, sec } of readings) {
     if (!sec) {
       warnings.push(`${c.name} : planchers non reconnus sur cette coupe.`);
       continue;
     }
     // La coupe traverse la maison dans sa longueur ou sa largeur (faces extérieures des murs)
     const sizes = fp ? [fp.x1 - fp.x0 + 0.3, fp.y1 - fp.y0 + 0.3] : [];
-    const fallback = plans.find((p) => sameSize(p, c));
-    const fs = c.knownScale ?? (fallback ? (scaleOf(fallback) ?? undefined) : undefined);
+    // À défaut d'échelle lue sur la coupe : celle retenue pour un plan de même format, le rez-de-chaussée d'abord
+    const fallback = plans.filter((p) => sameSize(p, c)).sort((m, n) => Number(n.kind === 'rdc') - Number(m.kind === 'rdc'))[0];
+    const used = fallback && [...scaleUsed.values()].find((u) => u.p === fallback);
+    const fs = c.knownScale ?? used?.s ?? (fallback ? (scaleOf(fallback) ?? undefined) : undefined);
     if (!sizes.length && !fs) {
       warnings.push(`${c.name} : importez aussi le plan du rez-de-chaussée pour connaître l'échelle de la coupe.`);
       continue;
     }
     // Échelle lue sur le PDF de la coupe : prioritaire sur les dimensions des plans
-    const { storeys, scale } = storeysFromSection(sec, c.knownScale ? [] : sizes, fs ? fs / c.k : undefined);
+    const read = storeysFromSection(sec, c.knownScale ? [] : sizes, fs ? fs / c.k : undefined);
+    const { scale } = read;
+    let storeys = read.storeys;
+    const notes: string[] = [];
+    // Un dernier « étage » très bas sous un toit en pente : c'est le bas de la mansarde (la pièce est en pente
+    // côté extérieur, sous le toit), pas un étage mal lu.
+    const top = storeys[storeys.length - 1];
+    if (storeys.length >= 2 && sec.roof && sec.roof.type !== 'plat' && top.height >= 0.4 && top.height < 2) {
+      sectionKnee ??= top.height;
+      notes.push(`bas de la mansarde à ${top.height.toFixed(2).replace('.', ',')} m sous la pente`);
+      storeys = storeys.slice(0, -1);
+    }
+    // Un premier niveau très bas : vide sanitaire ou demi-niveau, pas une pièce
+    while (storeys.length >= 2 && storeys[0].height < 1.8) {
+      notes.push(`vide sanitaire ou demi-niveau de ${storeys[0].height.toFixed(2).replace('.', ',')} m ignoré`);
+      storeys = storeys.slice(1);
+    }
+    if (notes.length) lines.push(`${c.name} : ${notes.join(', ')}.`);
     // Hauteurs invraisemblables : la coupe est mal lue (ou ne passe pas où l'on croit)
     if (storeys.some((x) => x.height < 2 || x.height > 4.2)) {
-      warnings.push(`${c.name} : hauteurs d'étage invraisemblables (${storeys.map((x) => x.height.toFixed(2).replace('.', ',')).join(', ')} m), non retenues.`);
+      warnings.push(`${c.name} : hauteurs d'étage non reconnues (${storeys.map((x) => x.height.toFixed(2).replace('.', ',')).join(', ')} m), non retenues : réglez-les dans l'onglet du niveau.`);
       if (sec.roof) roofs.push({ ...sec.roof, eave: null });
       continue;
     }
@@ -409,6 +455,15 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
   // Combles aménagés : le dernier niveau retracé n'a de murs que sur deux côtés opposés (les pignons)
   const atticLine = fitImportedAttic(b, placedOn, roofEave, !roofs.length);
   if (atticLine) lines.push(atticLine);
+  // Bas de mansarde lu sur une coupe alors que le plan n'a pas suffi : le dernier niveau devient un étage
+  // sous la pente, ses murs extérieurs s'arrêtant sous le toit à cette hauteur.
+  if (sectionKnee != null && b.roof && b.roof.type !== 'plat' && b.roof.eave == null) {
+    const top = [...b.levels].sort((m, n) => n.elevation - m.elevation)[0];
+    if (top.id !== groundLevel(b).id && b.roof.levelId === top.id) {
+      b.roof.eave = eaveForKnee(b, b.roof, sectionKnee);
+      lines.push(`${top.name} : étage sous la pente, murs extérieurs à ${sectionKnee.toFixed(2).replace('.', ',')} m sous le toit (lu sur la coupe).`);
+    }
+  }
 
   // Jardin : parcelle du plan d'implantation, calée sur l'emprise du rez-de-chaussée
   for (const it of items.filter((x) => x.kind === 'implantation').slice(0, 1)) {
