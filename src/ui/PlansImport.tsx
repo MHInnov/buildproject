@@ -1,10 +1,10 @@
 import { useRef, useState } from 'react';
 import { aiReadPlan } from '../ai';
 import { putAsset, shrinkImage } from '../assets';
-import { PLAN_KIND_LABELS, parseDrawingScale, pdfScale, type PlanKind } from '../model/plans';
-import type { Bitmap } from '../model/vectorize';
+import { isFloorKind, PLAN_KIND_LABELS, parseDrawingScale, pdfScale, type PlanKind, type SectionReading } from '../model/plans';
+import type { Bitmap, TracedWall } from '../model/vectorize';
 import { decode, isPdf, nextFrame, pdfPages, type PlanPage } from '../planFiles';
-import { analysePlan, importPlans, levelFor, spreadFloors, type ImportReport, type PlanInput } from '../plansImport';
+import { analysePlan, classifyPages, importPlans, levelFor, type ImportReport, type PlanInput } from '../plansImport';
 import { aiReady, useSettings } from '../settings';
 import { useStore } from '../store';
 import { applyAiReading } from '../traceApply';
@@ -25,9 +25,14 @@ interface Item {
   /** Le nom du fichier ou la page indiquait le niveau. */
   hinted: boolean;
   summary: string;
+  /** Pourquoi la page est écartée (doublon, plan en trop). */
+  note?: string;
+  walls: TracedWall[];
+  rooms: number;
+  section: SectionReading | null;
 }
 
-const KIND_ORDER: PlanKind[] = ['cave', 'rdc', 'etage1', 'etage2', 'etage3', 'combles', 'coupe', 'ignorer'];
+const KIND_ORDER: PlanKind[] = ['cave', 'rdc', 'etage1', 'etage2', 'etage3', 'combles', 'coupe', 'implantation', 'ignorer'];
 
 /**
  * Import de tout le dossier de plans d'un coup : plans de chaque niveau et coupes, en images ou PDF
@@ -77,6 +82,9 @@ export function PlansImport({ onClose }: { onClose: () => void }) {
             knownScale,
             scaleText: denom ? `1/${denom}` : null,
             hinted: !!a.hint && a.hint === a.kind,
+            walls: t?.walls ?? [],
+            rooms: t?.rooms ?? 0,
+            section: a.section,
             summary:
               a.kind === 'coupe' && a.section
                 ? `${a.section.slabs.length} planchers${a.section.roof ? `, toit ${a.section.roof.type === 'plat' ? 'plat' : `en pente (${a.section.roof.pitch}°)`}` : ''}`
@@ -86,10 +94,12 @@ export function PlansImport({ onClose }: { onClose: () => void }) {
           });
         }
       }
-      // Les plans sans indication de niveau sont pris dans l'ordre des fichiers
+      // Les plans sans indication de niveau sont pris dans l'ordre des fichiers ; doublons et plans en trop écartés
+      setBusy('Comparaison des pages…');
+      await nextFrame();
       const all = [...items, ...added];
-      const kinds = spreadFloors(all.map((x) => ({ kind: x.kind, hinted: x.hinted || items.includes(x) })));
-      setItems(all.map((x, i) => ({ ...x, kind: kinds[i] })));
+      const sorted = classifyPages(all.map((x) => ({ kind: x.kind, hinted: x.hinted || items.includes(x), name: x.label, walls: x.walls, rooms: x.rooms, section: x.section })));
+      setItems(all.map((x, i) => ({ ...x, kind: sorted[i].kind, note: sorted[i].note ?? (items.includes(x) ? x.note : undefined) })));
     } catch (e) {
       setError(`Impossible de lire ce fichier (${(e as Error).message}).`);
       if (added.length) setItems([...items, ...added]);
@@ -104,7 +114,7 @@ export function PlansImport({ onClose }: { onClose: () => void }) {
     // Une seule confirmation pour tous les niveaux qui ont déjà des murs
     const replaced = new Map<string, number>();
     const probe = structuredClone(b0);
-    for (const it of used.filter((x) => x.kind !== 'coupe')) {
+    for (const it of used.filter((x) => isFloorKind(x.kind))) {
       const l = levelFor(probe, it.kind);
       const n = b0.walls.filter((w) => w.levelId === l.id).length;
       if (n) replaced.set(l.name, n);
@@ -124,7 +134,7 @@ export function PlansImport({ onClose }: { onClose: () => void }) {
       // IA facultative : noms des pièces et ouvertures manquées
       if (useAi) {
         const b1 = useStore.getState().project.existing;
-        for (const it of used.filter((x) => x.kind !== 'coupe')) {
+        for (const it of used.filter((x) => isFloorKind(x.kind))) {
           const l = b1.levels.find((x) => x.underlay?.assetId && inputs.find((i) => i.name === it.label)?.assetId === x.underlay.assetId);
           if (!l?.underlay) continue;
           setBusy(`L'IA lit ${it.label}…`);
@@ -146,8 +156,8 @@ export function PlansImport({ onClose }: { onClose: () => void }) {
     setBusy(null);
   }
 
-  const floors = items.filter((x) => x.kind !== 'coupe' && x.kind !== 'ignorer');
-  const dup = KIND_ORDER.filter((k) => k !== 'coupe' && k !== 'ignorer' && floors.filter((x) => x.kind === k).length > 1);
+  const floors = items.filter((x) => isFloorKind(x.kind));
+  const dup = KIND_ORDER.filter((k) => isFloorKind(k) && floors.filter((x) => x.kind === k).length > 1);
 
   return (
     <div className="modal" role="dialog" aria-modal="true" aria-labelledby="plans-title" onClick={busy ? undefined : onClose}>
@@ -194,12 +204,13 @@ export function PlansImport({ onClose }: { onClose: () => void }) {
                   <span className="muted small">
                     {it.summary}
                     {it.scaleText ? ` · échelle ${it.scaleText}` : ''}
+                    {it.note && it.kind === 'ignorer' ? ` · écartée : ${it.note}` : ''}
                   </span>
                 </div>
                 <select
                   value={it.kind}
                   aria-label={`Contenu de ${it.label}`}
-                  onChange={(e) => setItems(items.map((x) => (x.id === it.id ? { ...x, kind: e.target.value as PlanKind, hinted: true } : x)))}
+                  onChange={(e) => setItems(items.map((x) => (x.id === it.id ? { ...x, kind: e.target.value as PlanKind, hinted: true, note: undefined } : x)))}
                 >
                   {KIND_ORDER.map((k) => (
                     <option key={k} value={k}>

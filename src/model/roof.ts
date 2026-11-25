@@ -1,5 +1,5 @@
 import type { Building, Level, Point, Roof, Room } from './types';
-import { levelById } from './levels';
+import { levelBelow, levelById } from './levels';
 import { inRoom } from './geometry';
 
 export interface RoofFrame {
@@ -15,19 +15,25 @@ export interface RoofFrame {
   level: Level;
 }
 
-/** Cadre de la toiture : rectangle englobant les murs du niveau qui la porte. */
+/**
+ * Cadre de la toiture : rectangle englobant les murs du niveau qui la porte et ceux du niveau juste en
+ * dessous (des combles ont leurs murs bas en retrait des façades : le toit couvre toute la maison).
+ */
 export function roofFrame(b: Building, roof: Roof | null = b.roof): RoofFrame | null {
   if (!roof) return null;
   const level = levelById(b, roof.levelId);
   if (!level) return null;
   const walls = b.walls.filter((w) => w.levelId === level.id);
   if (!walls.length) return null;
+  const below = levelBelow(b, level.id);
+  const all = roof.eave != null && below ? [...walls, ...b.walls.filter((w) => w.levelId === below.id)] : walls;
   const half = (w: (typeof walls)[number]) => w.thickness / 2;
-  const minX = Math.min(...walls.map((w) => Math.min(w.a.x, w.b.x) - half(w)));
-  const maxX = Math.max(...walls.map((w) => Math.max(w.a.x, w.b.x) + half(w)));
-  const minY = Math.min(...walls.map((w) => Math.min(w.a.y, w.b.y) - half(w)));
-  const maxY = Math.max(...walls.map((w) => Math.max(w.a.y, w.b.y) + half(w)));
-  const wallTop = Math.max(...walls.map((w) => w.height));
+  const bx = roof.bounds;
+  const minX = bx ? bx.x0 : Math.min(...all.map((w) => Math.min(w.a.x, w.b.x) - half(w)));
+  const maxX = bx ? bx.x1 : Math.max(...all.map((w) => Math.max(w.a.x, w.b.x) + half(w)));
+  const minY = bx ? bx.y0 : Math.min(...all.map((w) => Math.min(w.a.y, w.b.y) - half(w)));
+  const maxY = bx ? bx.y1 : Math.max(...all.map((w) => Math.max(w.a.y, w.b.y) + half(w)));
+  const wallTop = roof.eave ?? Math.max(...walls.map((w) => w.height));
   const t = Math.tan((roof.pitch * Math.PI) / 180);
   const spanX = maxX - minX;
   const spanY = maxY - minY;

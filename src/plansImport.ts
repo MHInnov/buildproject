@@ -3,10 +3,14 @@
  * Chaque plan est retracé avec une échelle commune, calé sur le rez-de-chaussée, puis
  * les coupes donnent les hauteurs des niveaux et la forme du toit.
  */
+import { fitImportedAttic, type Placement } from './atticImport';
 import { newId } from './model/geometry';
-import { alignFacades, alignWalls, footprint, guessKind, readSection, storeysFromSection, type PlanKind, type SectionReading } from './model/plans';
+import { removeLevel } from './model/levels';
+import { levelOutline } from './model/footprint';
+import { fitSite, readSitePlan } from './model/site';
+import { alignFacades, alignWalls, footprint, guessKind, isFloorKind, looksLikeSection, planSimilarity, readSection, storeysFromSection, type PlanKind, type SectionReading } from './model/plans';
 import type { Building, Level } from './model/types';
-import { autoVectorize, type AutoVectorizeResult, type Bitmap } from './model/vectorize';
+import { autoVectorize, type AutoVectorizeResult, type Bitmap, type TracedWall } from './model/vectorize';
 import { applyStoreys, applyTrace, groundLevel } from './traceApply';
 
 export interface PlanAnalysis {
@@ -23,6 +27,9 @@ export interface PlanAnalysis {
 export function analysePlan(bmp: Bitmap, fileName: string, pageText = ''): PlanAnalysis {
   const byName = guessKind(fileName.replace(/\.[a-z0-9]+$/i, '').replace(/[_.]+/g, ' '));
   const byText = guessKind(pageText);
+  // Plan d'implantation : la maison en noir plein au milieu d'une parcelle bordée de longs traits
+  const site = byName === 'implantation' || (!byName && byText !== 'coupe') ? readSitePlan(bmp) : null;
+  if (byName === 'implantation' || (!byName && site?.parcel)) return { trace: null, section: null, hint: byName ?? byText, kind: 'implantation' };
   const section = byName && byName !== 'coupe' ? null : readSection(bmp);
   const trace = byName === 'coupe' || byName === 'ignorer' ? null : autoVectorize(bmp);
   const rooms = trace?.rooms ?? 0;
@@ -34,25 +41,15 @@ export function analysePlan(bmp: Bitmap, fileName: string, pageText = ''): PlanA
   else if (byText === 'coupe' && section) kind = 'coupe';
   else if (byText && byText !== 'coupe' && rooms >= 2) kind = byText;
   else if (storeyLike && (pitched || rooms < 5)) kind = 'coupe';
+  // Deux longs chevrons symétriques au-dessus des planchers : une coupe, même tournée sur la page
+  else if (section?.roof?.type === 'deux-pans' && section.roof.pitch >= 20 && rooms < 5) kind = 'coupe';
   else if (rooms >= 2) kind = 'rdc'; // niveau précisé ensuite, dans l'ordre des fichiers
   else if (storeyLike) kind = 'coupe';
   else kind = 'ignorer';
   return { trace, section, hint: byName ?? byText, kind };
 }
 
-/**
- * Une coupe montre des planchers presque aussi longs que le bâtiment, espacés d'une hauteur d'étage
- * (entre 12 et 50 % de la largeur). Sur un plan, les murs horizontaux sont plus irréguliers.
- */
-export function looksLikeSection(sec: SectionReading): boolean {
-  const longest = Math.max(...sec.slabs.map((s) => s.length));
-  if (sec.slabs.some((s) => s.length < longest * 0.85)) return false;
-  for (let i = 1; i < sec.slabs.length; i++) {
-    const gap = (sec.slabs[i].top - sec.slabs[i - 1].bottom) / sec.widthPx;
-    if (gap < 0.12 || gap > 0.5) return false;
-  }
-  return true;
-}
+export { looksLikeSection };
 
 const FLOOR_ORDER: PlanKind[] = ['rdc', 'etage1', 'etage2', 'etage3'];
 
@@ -65,6 +62,67 @@ export function spreadFloors(kinds: { kind: PlanKind; hinted: boolean }[]): Plan
     taken.add(free);
     return free;
   });
+}
+
+export interface PageInfo {
+  kind: PlanKind;
+  /** Le nom du fichier, la page ou l'utilisateur ont indiqué le contenu. */
+  hinted: boolean;
+  name: string;
+  walls: TracedWall[];
+  rooms: number;
+  section: SectionReading | null;
+}
+
+/** Nombre de niveaux qu'une coupe laisse attendre : un par étage entre planchers, plus des combles sous un toit en pente. */
+export function storeysOnSection(sec: SectionReading): number {
+  return sec.slabs.length - 1 + (sec.roof && sec.roof.type !== 'plat' && sec.roof.pitch >= 20 ? 1 : 0);
+}
+
+/** Étages d'une coupe de hauteurs comparables (du simple au double au plus) : lecture vraisemblable. */
+export function evenStoreys(sec: SectionReading): boolean {
+  const up = [...sec.slabs].reverse();
+  const gaps = up.slice(0, -1).map((low, i) => low.top - up[i + 1].bottom);
+  return gaps.length < 2 || Math.max(...gaps) <= 2 * Math.min(...gaps);
+}
+
+/**
+ * Classement de l'ensemble des pages : les plans sans indication prennent les niveaux libres dans l'ordre,
+ * sauf une page qui montre le même niveau qu'une autre (le même plan dans deux documents) et les plans en
+ * trop par rapport aux niveaux que montrent les coupes. Renvoie le classement et, s'il y a lieu, pourquoi
+ * une page est écartée.
+ */
+export function classifyPages(pages: PageInfo[]): { kind: PlanKind; note?: string }[] {
+  const out: { kind: PlanKind; note?: string }[] = pages.map((p) => ({ kind: p.kind }));
+  const isPlan = isFloorKind;
+  // Doublons : comparés aux pages indiquées d'abord, puis aux précédentes
+  const order = pages.map((_, i) => i).sort((i, j) => Number(pages[j].hinted) - Number(pages[i].hinted) || i - j);
+  const kept: number[] = [];
+  for (const i of order) {
+    const p = pages[i];
+    if (!isPlan(out[i].kind) || p.walls.length < 4) {
+      if (isPlan(out[i].kind)) kept.push(i);
+      continue;
+    }
+    const twin = p.hinted ? undefined : kept.find((j) => planSimilarity(p.walls, pages[j].walls).similarity >= 0.5);
+    if (twin !== undefined) out[i] = { kind: 'ignorer', note: `même plan que ${pages[twin].name}` };
+    else kept.push(i);
+  }
+  // Niveaux attendus d'après les coupes : les plans non indiqués en trop sont écartés (les plus pauvres d'abord)
+  // (une coupe dont les étages ont des hauteurs trop inégales est mal lue : on s'en méfie)
+  const secs = pages.filter((p, i) => out[i].kind === 'coupe' && p.section).map((p) => p.section!);
+  const sure = secs.filter(evenStoreys);
+  const expected = sure.length ? Math.max(...sure.map(storeysOnSection)) : secs.length ? Math.min(...secs.map(storeysOnSection)) : 0;
+  const plans = pages.map((_, i) => i).filter((i) => isPlan(out[i].kind));
+  if (expected > 0 && plans.length > expected) {
+    const loose = plans.filter((i) => !pages[i].hinted).sort((i, j) => pages[i].rooms - pages[j].rooms);
+    for (const i of loose.slice(0, plans.length - expected)) out[i] = { kind: 'ignorer', note: `en trop : les coupes montrent ${expected} niveau${expected > 1 ? 'x' : ''}` };
+  }
+  // Un seul plan d'implantation : le premier
+  const sites = out.map((x, i) => (x.kind === 'implantation' ? i : -1)).filter((i) => i >= 0);
+  for (const i of sites.slice(1)) out[i] = { kind: 'ignorer', note: `déjà un plan d'implantation (${pages[sites[0]].name})` };
+  const kinds = spreadFloors(out.map((x, i) => ({ kind: x.kind, hinted: pages[i].hinted || !isPlan(x.kind) })));
+  return out.map((x, i) => ({ ...x, kind: kinds[i] }));
 }
 
 export interface PlanInput {
@@ -120,6 +178,8 @@ export function levelFor(b: Building, kind: PlanKind): Level {
   return ups[n - 1];
 }
 
+const polygonArea = (p: { x: number; y: number }[]) => Math.abs(p.reduce((s, a, i) => s + a.x * p[(i + 1) % p.length].y - p[(i + 1) % p.length].x * a.y, 0)) / 2;
+
 /** Empile les niveaux : le rez-de-chaussée reste à 0. */
 function restack(b: Building) {
   applyStoreys(b, []);
@@ -139,7 +199,7 @@ const median = (xs: number[]) => {
 export function importPlans(b: Building, items: PlanInput[]): ImportReport {
   const lines: string[] = [];
   const warnings: string[] = [];
-  const plans = items.filter((x) => x.kind !== 'coupe' && x.kind !== 'ignorer');
+  const plans = items.filter((x) => isFloorKind(x.kind));
   const sections = items.filter((x) => x.kind === 'coupe');
 
   // Échelle par format d'image
@@ -179,6 +239,8 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
   const sorted = [...plans].sort((m, n) => order.indexOf(m.kind) - order.indexOf(n.kind));
   let groundId: string | null = null;
   let anchorId: string | null = null;
+  /** Image et passage pixels → mètres de chaque niveau retracé (pour relire le plan ensuite). */
+  const placedOn = new Map<string, Placement>();
   const done = new Set<string>();
   for (const p of sorted) {
     const level = levelFor(b, p.kind);
@@ -214,7 +276,7 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
       let rescaled = false;
       if (al.fit > 0.2 && al.k !== 1) {
         // Nouvelle échelle : on relit le plan à cette échelle (portes, épaisseurs, raccords en dépendent)
-        const again = autoVectorize(p.bmp, { scale: (s * al.k) / p.k });
+        const again = autoVectorize(p.bmp, { scale: (s * al.k) / p.k, style: r.style });
         if (again?.walls.length) {
           const fine = alignWalls(again.walls, target, false);
           if (fine.fit >= al.fit * 0.8) {
@@ -245,6 +307,7 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
     }
     const scaled = r;
     applyTrace(b, level.id, r, dx, dy, k);
+    placedOn.set(level.id, { bmp: p.bmp, scale: r.scale, k, dx, dy });
     level.underlay = { assetId: p.assetId, x: dx, y: dy, scale: s * k, width: p.width, height: p.height, opacity: 0.35, visible: true, calibrated: !!calibrated.find((u) => sameSize(u, p)) };
     done.add(level.id);
     if (level.id === g.id) groundId = level.id;
@@ -253,6 +316,16 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
     const windows = scaled.openings.filter((o) => o.kind === 'fenetre').length;
     lines.push(`${level.name} (${p.name}) : ${scaled.walls.length} murs, ${doors} portes, ${windows} fenêtres, ${scaled.rooms} pièces${note ? `,${note}` : ''}${trusted(p) ? ', échelle lue sur le PDF' : ''}.`);
   }
+  // Un import qui comprend le rez-de-chaussée décrit toute la maison : les niveaux au-dessus du dernier plan
+  // retracé (combles d'un ancien dessin, étages de l'exemple) disparaissent.
+  if (groundId) {
+    const topImported = Math.max(...[...done].map((id) => b.levels.find((l) => l.id === id)!.elevation));
+    const extra = b.levels.filter((l) => !done.has(l.id) && l.elevation > topImported);
+    for (const l of extra) {
+      removeLevel(b, l.id);
+      lines.push(`${l.name} : retiré (aucun plan pour ce niveau).`);
+    }
+  }
   restack(b);
 
   // Coupes : hauteurs sous plafond, planchers, toit
@@ -260,7 +333,8 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
   const gw = b.walls.filter((w) => w.levelId === g.id);
   const fp = footprint(gw);
   const fixedLevels = new Set<string>();
-  let roofRead = false;
+  const roofs: (NonNullable<SectionReading['roof']> & { eave: number | null })[] = [];
+  let roofEave: number | null = null;
   for (const c of sections) {
     const sec = readSection(c.bmp);
     if (!sec) {
@@ -276,7 +350,13 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
       continue;
     }
     // Échelle lue sur le PDF de la coupe : prioritaire sur les dimensions des plans
-    const { storeys } = storeysFromSection(sec, c.knownScale ? [] : sizes, fs ? fs / c.k : undefined);
+    const { storeys, scale } = storeysFromSection(sec, c.knownScale ? [] : sizes, fs ? fs / c.k : undefined);
+    // Hauteurs invraisemblables : la coupe est mal lue (ou ne passe pas où l'on croit)
+    if (storeys.some((x) => x.height < 2 || x.height > 4.2)) {
+      warnings.push(`${c.name} : hauteurs d'étage invraisemblables (${storeys.map((x) => x.height.toFixed(2).replace('.', ',')).join(', ')} m), non retenues.`);
+      if (sec.roof) roofs.push({ ...sec.roof, eave: null });
+      continue;
+    }
     const levels = [...b.levels].sort((m, n) => m.elevation - n.elevation);
     // La coupe commence à la cave si elle a autant de niveaux que la maison, sinon au rez-de-chaussée
     const first = storeys.length >= levels.length ? levels[0] : g;
@@ -298,15 +378,44 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
       lines.push(`${c.name} : hauteurs sous plafond ${names.join(', ')}.`);
       for (const id of changed) fixedLevels.add(id);
     }
-    if (sec.roof && !roofRead) {
-      roofRead = true;
-      const top = [...b.levels].sort((m, n) => n.elevation - m.elevation)[0];
-      const ridge: 'x' | 'y' = fp && fp.x1 - fp.x0 >= fp.y1 - fp.y0 ? 'x' : 'y';
-      if (b.roof) {
-        b.roof.type = sec.roof.type;
-        b.roof.pitch = sec.roof.type === 'plat' ? 0 : sec.roof.pitch;
-      } else b.roof = { type: sec.roof.type, levelId: top.id, pitch: sec.roof.pitch, overhang: 0.3, ridge, coveringId: null, insulationId: null };
-      lines.push(`Toiture : ${sec.roof.type === 'plat' ? 'toit plat' : `${sec.roof.type === 'deux-pans' ? 'deux pans' : 'monopente'}, pente ${sec.roof.pitch}°`}.`);
+    if (sec.roof) roofs.push({ ...sec.roof, eave: sec.roof.eavePx != null ? sec.roof.eavePx * scale : null });
+  }
+
+  // Toit : la lecture la plus nette (deux pans d'abord), l'égout le plus bas des coupes qui en donnent un
+  if (roofs.length) {
+    const kind = roofs.some((x) => x.type === 'deux-pans') ? 'deux-pans' : roofs[0].type;
+    const same = roofs.filter((x) => x.type === kind);
+    const pitch = kind === 'plat' ? 0 : Math.round(median(same.map((x) => x.pitch)));
+    const eaves = same.map((x) => x.eave).filter((x): x is number => x != null);
+    const top = [...b.levels].sort((m, n) => n.elevation - m.elevation)[0];
+    const ridge: 'x' | 'y' = fp && fp.x1 - fp.x0 >= fp.y1 - fp.y0 ? 'x' : 'y';
+    if (b.roof) {
+      b.roof.type = kind;
+      b.roof.pitch = pitch;
+      b.roof.levelId = top.id;
+    } else b.roof = { type: kind, levelId: top.id, pitch, overhang: 0.3, ridge, coveringId: null, insulationId: null };
+    delete b.roof.eave;
+    delete b.roof.bounds;
+    roofEave = eaves.length ? Math.min(...eaves) : null;
+    lines.push(`Toiture : ${kind === 'plat' ? 'toit plat' : `${kind === 'deux-pans' ? 'deux pans' : 'monopente'}, pente ${pitch}°`}.`);
+  }
+
+  // Combles aménagés : le dernier niveau retracé n'a de murs que sur deux côtés opposés (les pignons)
+  const atticLine = fitImportedAttic(b, placedOn, roofEave, !roofs.length);
+  if (atticLine) lines.push(atticLine);
+
+  // Jardin : parcelle du plan d'implantation, calée sur l'emprise du rez-de-chaussée
+  for (const it of items.filter((x) => x.kind === 'implantation').slice(0, 1)) {
+    const reading = readSitePlan(it.bmp);
+    const g = groundLevel(b);
+    const fit = reading && fitSite(reading, levelOutline(b.walls.filter((w) => w.levelId === g.id)));
+    if (!reading) warnings.push(`${it.name} : maison en noir introuvable, jardin non tracé.`);
+    else if (!fit) warnings.push(`${it.name} : la maison dessinée ne correspond pas au rez-de-chaussée, jardin non tracé.`);
+    else if (!reading.parcel) warnings.push(`${it.name} : contour de la parcelle illisible, jardin non tracé.`);
+    else {
+      const parcel = reading.parcel.map(fit.toPlan).map((p) => ({ x: Math.round(p.x * 100) / 100, y: Math.round(p.y * 100) / 100 }));
+      b.site = { parcel };
+      lines.push(`${it.name} : jardin tracé, parcelle de ${Math.round(polygonArea(parcel)).toLocaleString('fr-FR')} m² autour de la maison.`);
     }
   }
   return { lines, warnings, levelId: groundId ?? (done.size ? [...done][0] : null) };

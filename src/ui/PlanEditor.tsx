@@ -3,6 +3,7 @@ import { addFloorZone, addFurniture, addOpeningAt, canEditZone, editFloorZone, m
 import { useAsset } from '../assets';
 import { productById, type Product } from '../model/catalog';
 import { levelBelow, levelById, onLevel } from '../model/levels';
+import { groundLevel } from '../traceApply';
 import { patternTile, patternUrl } from '../textures/patterns';
 import { useUi } from '../uiState';
 import { projectDiff } from '../model/diff';
@@ -622,6 +623,9 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
       </defs>
       <rect x={view.x} y={view.y} width={view.w} height={viewH} fill="url(#grid)" />
 
+      {/* Jardin (parcelle du plan d'implantation), au rez-de-chaussée */}
+      {full.site && groundLevel(full).id === levelId && <SiteOutline parcel={full.site.parcel} fs={fs} />}
+
       {/* Plan importé (calque) */}
       {ul && ul.visible && underlaySrc && (
         <image href={underlaySrc} x={ul.x} y={ul.y} width={ul.width * ul.scale} height={ul.height * ul.scale} opacity={ul.opacity} preserveAspectRatio="none" pointerEvents="none" />
@@ -1080,3 +1084,27 @@ function ViewpointMark({ v, fs, selected, onDown, onMenu }: { v: Viewpoint; fs: 
   );
 }
 
+/** Contour de la parcelle et sa surface. */
+function SiteOutline({ parcel, fs }: { parcel: Point[]; fs: number }) {
+  const area = Math.abs(parcel.reduce((s, a, i) => s + a.x * parcel[(i + 1) % parcel.length].y - parcel[(i + 1) % parcel.length].x * a.y, 0)) / 2;
+  // Étiquette au milieu du plus long côté, un peu vers l'intérieur
+  let best = 0;
+  for (let i = 1; i < parcel.length; i++) {
+    const L = (j: number) => Math.hypot(parcel[(j + 1) % parcel.length].x - parcel[j].x, parcel[(j + 1) % parcel.length].y - parcel[j].y);
+    if (L(i) > L(best)) best = i;
+  }
+  const a = parcel[best];
+  const b = parcel[(best + 1) % parcel.length];
+  const c = { x: parcel.reduce((s, p) => s + p.x, 0) / parcel.length, y: parcel.reduce((s, p) => s + p.y, 0) / parcel.length };
+  const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  const k = (fs * 2.5) / Math.max(0.01, Math.hypot(c.x - m.x, c.y - m.y));
+  const at = { x: m.x + (c.x - m.x) * k, y: m.y + (c.y - m.y) * k };
+  return (
+    <g pointerEvents="none" className="plan__site">
+      <polygon points={parcel.map((p) => `${p.x},${p.y}`).join(' ')} fill="#6f9a45" fillOpacity={0.08} stroke="#4f7a2e" strokeWidth={fs * 0.18} strokeDasharray={`${fs} ${fs * 0.5}`} />
+      <text x={at.x} y={at.y} fontSize={fs} textAnchor="middle" fill="#4f7a2e">
+        Jardin · {Math.round(area).toLocaleString('fr-FR')} m²
+      </text>
+    </g>
+  );
+}

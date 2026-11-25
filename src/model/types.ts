@@ -69,6 +69,33 @@ export interface Roof {
   coveringId: string | null;
   insulationId: string | null;
   condition?: Condition;
+  /**
+   * Hauteur de l'égout (dessus de la couverture au droit des façades), au-dessus du sol du niveau qui
+   * porte le toit. Des combles aménagés ont leurs murs bas en retrait : le toit part plus bas.
+   * Absent : le haut des murs de ce niveau.
+   */
+  eave?: number;
+  /** Fenêtres de toit (type Velux). */
+  windows?: RoofWindow[];
+  /**
+   * Emprise du toit (faces extérieures, avant débord), quand elle ne se déduit pas des murs : combles
+   * importés d'un plan, dont les pignons fixent la largeur d'égout à égout.
+   */
+  bounds?: { x0: number; y0: number; x1: number; y1: number };
+}
+
+/** Fenêtre de toit, posée dans un pan. Position et dimensions en projection sur le plan. */
+export interface RoofWindow {
+  id: string;
+  /** Centre, en mètres. */
+  x: number;
+  y: number;
+  /** Largeur le long de l'égout (m). */
+  width: number;
+  /** Longueur dans le sens de la pente, mesurée sur le plan (projection horizontale, m). */
+  length: number;
+  productId: string | null;
+  condition?: Condition;
 }
 
 export interface Wall {
@@ -157,6 +184,13 @@ export interface Building {
   /** Sols posés sur une partie de pièce (absent dans les anciens projets). */
   floorZones?: FloorZone[];
   roof: Roof | null;
+  /** Terrain autour de la maison, lu sur le plan d'implantation (absent sinon). */
+  site?: Site;
+}
+
+/** Parcelle : contour en mètres, dans le repère du plan (la maison à sa place). */
+export interface Site {
+  parcel: Point[];
 }
 
 /**

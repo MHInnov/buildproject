@@ -47,6 +47,8 @@ export interface TracedOpening {
   width: number;
   /** Comment elle a été trouvée : un trou dans le mur, ou des traits de vitrage dans un mur continu. */
   source?: 'trou' | 'vitrage';
+  /** Porte de garage : large baie de façade fermée par des traits, sans arc de porte. */
+  garage?: boolean;
 }
 
 export interface VectorizeResult {
@@ -519,7 +521,7 @@ function traceMask(source: Uint8Array, ink: Uint8Array, w: number, h: number, sc
   mergeLayers(segs, scale);
 
   // Trous entre deux tronçons alignés : portes et fenêtres.
-  const openingsPx: { seg: Seg; at: number; width: number; kind: 'porte' | 'fenetre'; source: 'trou' | 'vitrage' }[] = [];
+  const openingsPx: { seg: Seg; at: number; width: number; kind: 'porte' | 'fenetre'; source: 'trou' | 'vitrage'; garage?: boolean }[] = [];
   const maxGap = 3.2 / scale;
   const minGap = 0.45 / scale;
   let merged = true;
@@ -704,32 +706,69 @@ function traceMask(source: Uint8Array, ink: Uint8Array, w: number, h: number, sc
   // quelques dizaines de centimètres, il faut que le vide ait l'allure d'une baie (arc de porte, vitrage).
   const near = 0.6 / scale;
   const far = 3.2 / scale;
-  const bay = (S: Seg, g0: number, g1: number) => {
+  // Portes de garage : jusqu'à deux baies de 2,5 m et un pilier entre elles
+  const farWide = 6 / scale;
+  type Bay = 'porte' | 'fenetre' | 'garage';
+  const bay = (S: Seg, g0: number, g1: number): Bay | null => {
     if (g1 - g0 < minGap * 0.9) return null;
-    if (g1 - g0 <= 1.4 / scale && doorArc(dark, w, h, S.horizontal, S.c, S.th, g0, g1)) return 'porte' as const;
-    if (isGlazing(dark, w, S.horizontal, S.c, S.th, g0, g1)) return 'fenetre' as const;
+    if (g1 - g0 <= 1.4 / scale && doorArc(dark, w, h, S.horizontal, S.c, S.th, g0, g1)) return 'porte';
+    // Des traits sur toute la largeur : un châssis, ou au-delà de 2,2 m une porte de garage (sectionnelle,
+    // basculante), dessinée de la même façon
+    if (isGlazing(dark, w, S.horizontal, S.c, S.th, g0, g1)) return g1 - g0 >= 2.2 / scale ? 'garage' : 'fenetre';
     return null;
+  };
+  /** Ouvertures d'une baie, séparées par les piliers pleins qui s'y trouvent (poteau entre deux portes de garage). */
+  const addBay = (S: Seg, g0: number, g1: number, kind: Bay) => {
+    const parts: [number, number][] = [];
+    if (kind === 'garage') {
+      let a = g0;
+      let run = 0;
+      for (let k = Math.ceil(g0); k <= g1; k++) {
+        let n = 0;
+        let all = 0;
+        for (let t = Math.ceil(lo(S)); t < hi(S); t++) {
+          all++;
+          if (dark[S.horizontal ? t * w + k : k * w + t]) n++;
+        }
+        const full = k < g1 && all > 0 && n >= 0.85 * all;
+        if (full) run++;
+        else {
+          if (run >= 0.12 / scale && run <= 0.7 / scale && k - run - a >= 1.2 / scale) {
+            parts.push([a, k - run]);
+            a = k;
+          }
+          run = 0;
+        }
+      }
+      parts.push([a, g1]);
+    } else parts.push([g0, g1]);
+    for (const [p0, p1] of parts) {
+      const kd: Bay = kind === 'garage' && p1 - p0 < 1.8 / scale ? 'fenetre' : kind;
+      openingsPx.push({ seg: S, at: (p0 + p1) / 2, width: p1 - p0, kind: kd === 'fenetre' ? 'fenetre' : 'porte', source: 'trou', garage: kd === 'garage' || undefined });
+    }
   };
   for (const { seg: S, end } of freeEnds(segs)) {
     const pos = S[end];
     const dir = end === 'e' ? 1 : -1;
-    let best: { P: Seg; cost: number; d1: number; d2: number; kind1: 'porte' | 'fenetre' | null; kind2: 'porte' | 'fenetre' | null } | null = null;
+    let best: { P: Seg; cost: number; d1: number; d2: number; kind1: Bay | null; kind2: Bay | null } | null = null;
     for (const P of segs) {
       if (P === S || P.horizontal === S.horizontal) continue;
       const d1 = (P.c - pos) * dir;
-      if (d1 < -S.th || d1 > far) continue;
+      if (d1 < -S.th || d1 > farWide) continue;
       // le mur ne doit pas reculer au-delà de sa propre longueur
       if (dir > 0 ? P.c <= S.s + 2 : P.c >= S.e - 2) continue;
       const d2 = S.c < P.s ? P.s - S.c : S.c > P.e ? S.c - P.e : 0;
-      if (d2 > far) continue;
+      if (d2 > farWide) continue;
       const g0 = dir > 0 ? pos : P.c + P.th / 2;
       const g1 = dir > 0 ? P.c - P.th / 2 : pos;
       const kind1 = d1 > near ? bay(S, g0, g1) : g1 - g0 >= minGap * 0.9 ? bay(S, g0, g1) : null;
       if (d1 > near && !kind1) continue;
+      if (d1 > far && kind1 !== 'garage') continue;
       const q0 = S.c < P.s ? S.c + S.th / 2 : P.e;
       const q1 = S.c < P.s ? P.s : S.c - S.th / 2;
       const kind2 = d2 > 0 ? bay(P, q0, q1) : null;
       if (d2 > near && !kind2) continue;
+      if (d2 > far && kind2 !== 'garage') continue;
       const cost = Math.max(0, d1) + d2;
       if (!best || cost < best.cost) best = { P, cost, d1, d2, kind1, kind2 };
     }
@@ -738,12 +777,14 @@ function traceMask(source: Uint8Array, ink: Uint8Array, w: number, h: number, sc
     if (best.kind1) {
       const g0 = dir > 0 ? pos : P.c + P.th / 2;
       const g1 = dir > 0 ? P.c - P.th / 2 : pos;
-      openingsPx.push({ seg: S, at: (g0 + g1) / 2, width: g1 - g0, kind: best.kind1, source: 'trou' });
+      addBay(S, g0, g1, best.kind1);
     }
     if (best.kind2) {
       const q0 = S.c < P.s ? S.c + S.th / 2 : P.e;
       const q1 = S.c < P.s ? P.s : S.c - S.th / 2;
-      openingsPx.push({ seg: P, at: (q0 + q1) / 2, width: q1 - q0, kind: best.kind2, source: 'trou' });
+      addBay(P, q0, q1, best.kind2);
+      // Un poteau seul dans l'alignement de la façade : le mur reconstruit prend l'épaisseur de la façade
+      if (best.kind2 === 'garage' && P.th < S.th * 0.8 && P.e - P.s < 1 / scale) P.th = S.th;
     }
     S[end] = P.c;
     if (S.c < P.s) P.s = S.c;
@@ -771,7 +812,7 @@ function traceMask(source: Uint8Array, ink: Uint8Array, w: number, h: number, sc
   const openings: TracedOpening[] = openingsPx.flatMap((o) => {
     const i = segs.indexOf(o.seg);
     if (i < 0) return [];
-    return [{ wall: i, kind: o.kind, offset: Math.round((o.at - o.seg.s) * scale * 100) / 100, width: Math.round(o.width * scale * 100) / 100, source: o.source }];
+    return [{ wall: i, kind: o.kind, offset: Math.round((o.at - o.seg.s) * scale * 100) / 100, width: Math.round(o.width * scale * 100) / 100, source: o.source, ...(o.garage ? { garage: true } : {}) }];
   });
   return { walls, openings, mask, free: free.map(({ seg: S, end }) => (S.horizontal ? { x: q(S[end]), y: q(S.c) } : { x: q(S.c), y: q(S[end]) })) };
 }
@@ -1184,6 +1225,45 @@ export function scaleCorrection(walls: TracedWall[], openings: TracedOpening[], 
   return fw;
 }
 
+/**
+ * Bouts de trait hors de la maison, plantés dans une façade et libres à l'autre bout : repères de coupe,
+ * flèches, cotes en gras. Un mur qui borde une pièce ou qui est à l'intérieur reste.
+ */
+function dropOutsideStubs<T extends Omit<VectorizeResult, 'threshold'>>(r: T, sheet: Sheet): T {
+  const rooms = traceRooms(r.walls, sheet);
+  if (rooms.length < 2) return r;
+  const pts = rooms.flatMap((room) => room.polygon);
+  const bx0 = Math.min(...pts.map((p) => p.x));
+  const bx1 = Math.max(...pts.map((p) => p.x));
+  const by0 = Math.min(...pts.map((p) => p.y));
+  const by1 = Math.max(...pts.map((p) => p.y));
+  const segDist = (p: { x: number; y: number }, a: { x: number; y: number }, q: { x: number; y: number }) => {
+    const dx = q.x - a.x;
+    const dy = q.y - a.y;
+    const L = dx * dx + dy * dy || 1;
+    const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / L));
+    return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
+  };
+  const stub = (x: TracedWall) => {
+    const L = Math.hypot(x.b.x - x.a.x, x.b.y - x.a.y);
+    if (L > 3) return false;
+    // un bout libre : hors de l'emprise de toutes les pièces
+    const loose = (p: { x: number; y: number }) => p.x < bx0 - 0.3 || p.x > bx1 + 0.3 || p.y < by0 - 0.3 || p.y > by1 + 0.3;
+    if (!loose(x.a) && !loose(x.b)) return false;
+    // au milieu du mur, aucun point dans une pièce ni sur son contour
+    for (const f of [0.4, 0.5, 0.6]) {
+      const p = { x: x.a.x + (x.b.x - x.a.x) * f, y: x.a.y + (x.b.y - x.a.y) * f };
+      for (const room of rooms) {
+        if (pointInPolygon(p, room.polygon)) return false;
+        const poly = room.polygon;
+        for (let i = 0; i < poly.length; i++) if (segDist(p, poly[i], poly[(i + 1) % poly.length]) < x.thickness / 2 + 0.1) return false;
+      }
+    }
+    return true;
+  };
+  return keepWalls(r, (x) => !stub(x));
+}
+
 /** Garde les murs qui vérifient `keep`, en renumérotant les ouvertures. */
 function keepWalls<T extends Omit<VectorizeResult, 'threshold'>>(r: T, keep: (w: TracedWall) => boolean): T {
   const map = new Map<number, number>();
@@ -1205,7 +1285,7 @@ function keepWalls<T extends Omit<VectorizeResult, 'threshold'>>(r: T, keep: (w:
 /** Pour la mise au point : chaque lecture essayée, avec son score. */
 export type TraceDebug = (info: { style: WallStyle; thin: number; thick: number; scale: number; score: number; rooms: number; result: Omit<VectorizeResult, 'threshold'>; stats: Record<string, number> }) => void;
 
-export function autoVectorize(bmp: Bitmap, opts: { scale?: number | null; debug?: TraceDebug } = {}): AutoVectorizeResult | null {
+export function autoVectorize(bmp: Bitmap, opts: { scale?: number | null; debug?: TraceDebug; style?: WallStyle } = {}): AutoVectorizeResult | null {
   const { width: w, height: h } = bmp;
   const lum = luminance(bmp);
   const threshold = otsu(lum);
@@ -1217,6 +1297,8 @@ export function autoVectorize(bmp: Bitmap, opts: { scale?: number | null; debug?
   let best: (AutoVectorizeResult & { score: number }) | null = null;
   const seen = new Set<string>();
   for (const c of candidates(bmp, lum, threshold)) {
+    // Relecture à une autre échelle : même façon de lire les murs que la première fois
+    if (opts.style && c.style !== opts.style) continue;
     const th = wallThickness(thicknessHistogram(c.mask, w, h));
     if (!th) continue;
     const key = `${c.style === 'contour' ? 'c' : c.style}-${th.thin}-${th.thick}-${th.mass}`;
@@ -1236,6 +1318,7 @@ export function autoVectorize(bmp: Bitmap, opts: { scale?: number | null; debug?
         const major = (x: TracedWall) => x.thickness >= th.thick * scale * 0.8 && Math.hypot(x.b.x - x.a.x, x.b.y - x.a.y) >= 2.5;
         r = keepWalls(r, (x) => major(x) || inBox(x.a) || inBox(x.b) || inBox({ x: (x.a.x + x.b.x) / 2, y: (x.a.y + x.b.y) / 2 }));
         r = { ...r, free: r.free?.filter(inBox) };
+        r = dropOutsideStubs(r, { w: w * scale, h: h * scale });
         if (r.walls.length !== n) closed = closedArea(r.walls, { w: w * scale, h: h * scale });
       }
       return { r, ...closed };
@@ -1351,7 +1434,8 @@ export function refine<T extends VectorizeResult>(r: T): T {
     }
     // Pas deux ouvertures qui se chevauchent sur le même mur
     if (openings.some((x) => x.wall === o.wall && Math.abs(x.offset - offset) < (x.width + o.width) / 2)) return;
-    openings.push({ ...o, kind, offset });
+    const { garage, ...rest } = o;
+    openings.push({ ...rest, kind, offset, ...(garage && exterior(w, offset) ? { garage: true } : {}) });
   });
   return { ...r, walls, openings };
 }

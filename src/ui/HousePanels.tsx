@@ -4,7 +4,7 @@ import { setCondition, setRoofCovering, setRoofInsulation } from '../actions';
 import { productById } from '../model/catalog';
 import { euro } from '../model/estimate';
 import { detectRooms, newId } from '../model/geometry';
-import { levelById } from '../model/levels';
+import { levelById, removeLevel } from '../model/levels';
 import { areaAboveHeight, roofArea, roofFrame } from '../model/roof';
 import { CONDITION_LABELS, ROOF_LABELS, type Building, type Condition, type Level, type RoofType } from '../model/types';
 import { useBuilding, useStore } from '../store';
@@ -114,6 +114,17 @@ export function HouseOverview() {
           + Ajouter une toiture
         </button>
       )}
+      {b.site && (
+        <>
+          <h4>Jardin</h4>
+          <p className="muted small">
+            Parcelle de {Math.round(Math.abs(b.site.parcel.reduce((s, p, i) => s + p.x * b.site!.parcel[(i + 1) % b.site!.parcel.length].y - b.site!.parcel[(i + 1) % b.site!.parcel.length].x * p.y, 0)) / 2).toLocaleString('fr-FR')} m², lue sur le plan d'implantation.
+          </p>
+          <button className="btn" onClick={() => editExisting((x) => void delete x.site)}>
+            Retirer le jardin
+          </button>
+        </>
+      )}
     </>
   );
 }
@@ -171,15 +182,7 @@ export function LevelPanel({ id }: { id: string }) {
             className="btn btn--danger"
             onClick={() => {
               if (!confirm(`Supprimer « ${l.name} » et tout ce qu'il contient ?`)) return;
-              editExisting((bb) => {
-                const walls = new Set(bb.walls.filter((w) => w.levelId === id).map((w) => w.id));
-                bb.levels = bb.levels.filter((x) => x.id !== id);
-                bb.walls = bb.walls.filter((w) => !walls.has(w.id));
-                bb.openings = bb.openings.filter((o) => !walls.has(o.wallId));
-                bb.rooms = bb.rooms.filter((r) => r.levelId !== id);
-                bb.furniture = bb.furniture.filter((f) => f.levelId !== id);
-                if (bb.roof?.levelId === id) bb.roof.levelId = [...bb.levels].sort((p, q) => q.elevation - p.elevation)[0].id;
-              });
+              editExisting((bb) => removeLevel(bb, id));
               setLevel(b.levels.find((x) => x.id !== id)!.id);
             }}
           >

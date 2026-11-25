@@ -77,7 +77,12 @@ Ce que fait le retraçage, dans l'ordre :
 - sur un PDF, l'échelle est lue dans le cartouche (« 1/50 ») avec le format de la page ; un plan étalonné donne la sienne aux plans de même format ; sinon chaque plan a son estimation (deux feuilles de même format peuvent être à des échelles différentes) ;
 - le rez-de-chaussée sert de référence : les autres niveaux sont calés dessus par leurs murs de façade et de pignon, ce qui corrige aussi leur échelle quand elle n'était qu'estimée (un étage dessiné à une autre échelle retrouve la bonne taille) ; les niveaux manquants sont créés ;
 - les fenêtres ne sont placées que dans les murs extérieurs ;
-- la coupe donne les hauteurs sous plafond, l'épaisseur des planchers et la forme du toit (plat, monopente, deux pans et sa pente) ; avec plusieurs coupes, la première qui donne une hauteur fait foi.
+- la coupe donne les hauteurs sous plafond, l'épaisseur des planchers et la forme du toit (plat, monopente, deux pans et sa pente) ; avec plusieurs coupes, la première qui donne une hauteur fait foi. Une coupe tournée sur la page est remise droite, et des hauteurs invraisemblables sont écartées ;
+- une même page présente dans deux documents (le plan du rez-de-chaussée seul et dans le dossier complet) n'est retenue qu'une fois, et les plans en trop par rapport aux niveaux que montrent les coupes sont écartés (la raison s'affiche, le classement reste modifiable) ;
+- les portes de garage (larges baies, de part et d'autre d'un poteau) sont reconnues dans les façades ;
+- **combles aménagés** : un dernier niveau sans façade le long des égouts devient un étage sous combles. Les murs bas (jambettes) sont retrouvés sur le plan et ferment les pièces côté extérieur, les fenêtres de toit (Velux) dessinées en pointillé sont posées dans les rampants, les pignons montent jusqu'au toit et, en 3D, murs et plafonds suivent la pente ;
+- un plancher (dalle) couvre toute l'emprise du niveau du dessous, sous chaque étage, trémies d'escalier comprises ;
+- **jardin** : le plan d'implantation (maison en noir au milieu de sa parcelle) est reconnu ; la maison dessinée est superposée au rez-de-chaussée, ce qui donne l'échelle et l'orientation, et le contour de la parcelle devient le jardin (pelouse et haie en 3D, contour et surface sur le plan du rez-de-chaussée, retirable dans « Ma maison »).
 
 ## Avec ou sans IA
 

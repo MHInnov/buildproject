@@ -12,7 +12,8 @@ import { useBuilding, useStore, type Selection } from '../store';
 import { useUi } from '../uiState';
 import { BuildingMeshes, switchSpots, type MenuTarget } from './BuildingMeshes';
 import { VisitMenu } from './VisitMenu';
-import { GRASS, surfaceMaterial } from './materials';
+import { GRASS, surfaceMaterial, type Surface } from './materials';
+import { Garden } from './Garden';
 import { Avatar, preloadAvatar } from './Avatar';
 import { blocked, groundAt, walkWorld, type WalkWorld } from './physics';
 import { HdrEnvironment, PostEffects } from './Realism';
@@ -60,14 +61,24 @@ function Sun({ building, night }: { building: Building; night: boolean }) {
   );
 }
 
-function Ground() {
+/** Champ autour de la maison ; plus terne quand le jardin (la parcelle) est tracé. */
+const FIELD: Surface = { ...GRASS, color: '#7b8455' };
+
+function Ground({ building }: { building: Building }) {
+  const parcel = building.site?.parcel;
+  const size = parcel ? Math.max(160, 3 * Math.max(...parcel.map((p) => Math.hypot(p.x, p.y)))) : 160;
   const geo = useMemo(() => {
-    const g = new THREE.PlaneGeometry(160, 160);
+    const g = new THREE.PlaneGeometry(size, size);
     const uv = g.attributes.uv as THREE.BufferAttribute;
-    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 160, uv.getY(i) * 160);
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * size, uv.getY(i) * size);
     return g;
-  }, []);
-  return <mesh geometry={geo} rotation-x={-Math.PI / 2} position-y={-0.02} material={surfaceMaterial(GRASS)} receiveShadow />;
+  }, [size]);
+  return (
+    <>
+      <mesh geometry={geo} rotation-x={-Math.PI / 2} position-y={-0.02} material={surfaceMaterial(parcel ? FIELD : GRASS)} receiveShadow />
+      {building.site && <Garden site={building.site} />}
+    </>
+  );
 }
 
 function OrbitRig({ building }: { building: Building }) {
@@ -695,7 +706,7 @@ export function Visit3D() {
         <AdaptiveQuality key={quality} max={quality === 'haute' ? 1.5 : 1.15} canDropAo={quality === 'haute' && !aoOff} onDropAo={() => setAoOff(true)} />
         <hemisphereLight args={[night ? '#28314a' : '#dfeaff', night ? '#0d0f14' : '#8a7d6a', night ? 0.12 : 0.55]} />
         <Sun building={building} night={night} />
-        <Ground />
+        <Ground building={building} />
         {mode === 'photo' && photoView === 'projet' && (
           <group ref={existingRef} visible={false}>
             <BuildingMeshes building={existingBuilding} catalog={catalog} selection={null} visibleLevels={visibleLevels} showRoof showCeiling night={night} />

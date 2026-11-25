@@ -11,7 +11,9 @@ import type { Selection } from '../store';
 import { useUi } from '../uiState';
 import { CEILING, ceramic, chrome, FACADE, fromProduct, glassMaterial, meterBox, plain, PLASTER, RAW_FLOOR, surfaceMaterial, type Surface } from './materials';
 import { RoofMesh } from './RoofMesh';
+import { atticProfiles, clipUnderRoof, prismGeometry, type WallProfile } from './attic';
 import { floorOffsetAt } from './physics';
+import { levelOutline } from '../model/footprint';
 
 export interface Pick {
   sel: NonNullable<Selection>;
@@ -145,6 +147,21 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
   }, [building, catalog]);
 
   const spots = useMemo(() => switchSpots(building, rooms), [building, rooms]);
+  // Combles aménagés : murs mansardés et pignons qui suivent la pente du toit
+  const profiles = useMemo(() => {
+    const fn = atticProfiles(building);
+    return fn ? new Map(building.walls.map((w) => [w.id, fn(w)])) : null;
+  }, [building]);
+  // Planchers : sous chaque étage, une dalle sur toute l'emprise du niveau du dessous (murs compris)
+  const outlines = useMemo(() => {
+    const m = new Map<string, Point[][]>();
+    for (const l of building.levels) {
+      const below = levelBelow(building, l.id);
+      if (!below) continue;
+      m.set(l.id, levelOutline(building.walls.filter((w) => w.levelId === below.id)));
+    }
+    return m;
+  }, [building.levels, building.walls]);
   const lowest = Math.min(...building.levels.map((l) => l.elevation));
   const roofLevel = building.roof?.levelId;
 
@@ -159,6 +176,9 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
           const underRoof = roofLevel === level.id && building.roof?.type !== 'plat';
           return (
             <group key={level.id}>
+              {below && floorThickness > 0.02 && (outlines.get(level.id) ?? []).map((o, i) => (
+                <Slab key={`slab-${i}`} outline={o} top={level.elevation - 0.01} thickness={floorThickness - 0.014} holes={holes.get(level.id) ?? []} />
+              ))}
               {lRooms.map((r) => (
                 <Floor
                   key={r.label.id}
@@ -184,7 +204,7 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
                     onClick={click({ kind: 'zone', id: z.id })}
                   />
                 ))}
-              {showCeiling && !underRoof && lRooms.map((r) => <Ceiling key={`c-${r.label.id}`} room={r} height={level.elevation + roomCeiling(r, level) - 0.004} />)}
+              {showCeiling && (!underRoof || building.roof?.eave != null) && lRooms.map((r) => <Ceiling key={`c-${r.label.id}`} room={r} height={level.elevation + roomCeiling(r, level) - 0.004} />)}
               {building.walls
                 .filter((w) => w.levelId === level.id)
                 .map((w) => (
@@ -195,6 +215,7 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
                     openings={building.openings.filter((o) => o.wallId === w.id)}
                     catalog={catalog}
                     facing={facing.get(w.id)}
+                    profile={profiles?.get(w.id) ?? null}
                     selected={isSel('wall', w.id)}
                     selectedOpening={selection?.kind === 'opening' ? selection.id : null}
                     toggled={toggled}
@@ -278,6 +299,17 @@ function Floor({ room, elevation, offset, thickness, holes, surface, selected, o
       castShadow={depth > 0.001}
     />
   );
+}
+
+const SLAB_EDGE = plain('#d8d2c8', 0.9);
+
+/** Dalle de plancher entre deux niveaux, trémies d'escalier découpées. */
+function Slab({ outline, top, thickness, holes }: { outline: Point[]; top: number; thickness: number; holes: Point[][] }) {
+  const geom = useMemo(() => {
+    const inside = holes.filter((h) => h.every((p) => pointInside(p, outline)));
+    return new THREE.ExtrudeGeometry(shapeOf(outline, inside), { depth: thickness, bevelEnabled: false });
+  }, [outline, thickness, holes]);
+  return <mesh geometry={geom} rotation-x={-Math.PI / 2} position-y={top - thickness} material={[surfaceMaterial(RAW_FLOOR), SLAB_EDGE]} receiveShadow castShadow />;
 }
 
 /** Sol posé sur une partie de pièce : légèrement au-dessus du sol de la pièce. */
@@ -371,8 +403,9 @@ export function wallPieces(w: Wall, openings: Opening[]): Piece[] {
   return pieces.filter((p) => p.x1 - p.x0 > 0.001 && p.y1 - p.y0 > 0.001);
 }
 
-function WallMesh({ wall, elevation, openings, catalog, facing, selected, selectedOpening, toggled, onClick, onOpeningClick, onOpeningToggle }: {
+function WallMesh({ wall, elevation, openings, catalog, facing, profile, selected, selectedOpening, toggled, onClick, onOpeningClick, onOpeningToggle }: {
   wall: Wall;
+  profile?: WallProfile | null;
   elevation: number;
   openings: Opening[];
   catalog: Catalog;
@@ -401,12 +434,16 @@ function WallMesh({ wall, elevation, openings, catalog, facing, selected, select
   const materials = [edge, edge, edge, edge, left, right];
   const pieces = useMemo(
     () =>
-      wallPieces(wall, openings).map((piece) => {
+      wallPieces(profile ? { ...wall, height: profile.height } : wall, openings).flatMap((piece) => {
         // Les blocs en bout de mur débordent d'une demi-épaisseur pour fermer les angles.
         const p = { ...piece, x0: piece.x0 <= 0.001 ? -th / 2 : piece.x0, x1: piece.x1 >= L - 0.001 ? L + th / 2 : piece.x1 };
-        return { p, geo: meterBox(p.x1 - p.x0, p.y1 - p.y0, th, p.x0, p.y0) };
+        // Sous un rampant : le haut du bloc suit la pente
+        const clip = profile ? clipUnderRoof(p.x0, p.x1, p.y0, p.y1, profile) : 'box';
+        if (clip === 'none') return [];
+        if (clip === 'box') return [{ p, geo: meterBox(p.x1 - p.x0, p.y1 - p.y0, th, p.x0, p.y0), placed: false }];
+        return [{ p, geo: prismGeometry(clip, th), placed: true }];
       }),
-    [wall, openings, th, L],
+    [wall, openings, th, L, profile],
   );
   useEffect(() => () => pieces.forEach((x) => x.geo.dispose()), [pieces]);
   // Côté où s'ouvrent les portes et fenêtres : vers une pièce si possible.
@@ -414,11 +451,11 @@ function WallMesh({ wall, elevation, openings, catalog, facing, selected, select
 
   return (
     <group position={[wall.a.x, elevation, wall.a.y]} rotation-y={angle}>
-      {pieces.map(({ p, geo }, i) => {
+      {pieces.map(({ p, geo, placed }, i) => {
         return (
           <mesh
             key={`${i}-${p.x0}-${p.x1}-${p.y0}`}
-            position={[(p.x0 + p.x1) / 2, (p.y0 + p.y1) / 2, 0]}
+            position={placed ? [0, 0, 0] : [(p.x0 + p.x1) / 2, (p.y0 + p.y1) / 2, 0]}
             geometry={geo}
             material={materials}
             userData={{ sel: { kind: 'wall', id: wall.id } }}

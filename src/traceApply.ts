@@ -43,9 +43,9 @@ export function applyTrace(b: Building, levelId: string, r: VectorizeResult, dx:
         kind: o.kind,
         offset: Math.round(dist(piece.a, pt) * 100) / 100,
         width: Math.round(o.width * k * 100) / 100,
-        height: o.kind === 'porte' ? 2.05 : 1.25,
+        height: o.garage ? 2.15 : o.kind === 'porte' ? 2.05 : 1.25,
         sill: o.kind === 'porte' ? 0 : 0.9,
-        productId: o.kind === 'porte' ? 'ex-porte-isoplane' : 'ex-fenetre-bois-simple',
+        productId: o.garage ? 'ex-porte-garage' : o.kind === 'porte' ? 'ex-porte-isoplane' : 'ex-fenetre-bois-simple',
       };
       b.openings.push(op);
     }

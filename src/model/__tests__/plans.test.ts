@@ -3,7 +3,7 @@ import { alignWalls, guessKind, parseDrawingScale, pdfScale, readSection, storey
 import { defaultLevel } from '../levels';
 import type { Building } from '../types';
 import { autoVectorize, type Bitmap } from '../vectorize';
-import { analysePlan, importPlans, spreadFloors } from '../../plansImport';
+import { analysePlan, classifyPages, evenStoreys, importPlans, spreadFloors, type PageInfo } from '../../plansImport';
 
 const PPM = 60;
 
@@ -176,5 +176,45 @@ describe('calage d’un étage à une autre échelle', () => {
     expect(al.dx + 3 * al.k).toBeCloseTo(0, 0);
     expect(al.dy + 2 * al.k).toBeCloseTo(0, 0);
     expect(al.fit).toBeGreaterThan(0.6);
+  });
+});
+
+describe('classement des pages', () => {
+  const sq = (x0: number, y0: number, s: number) => [
+    { a: { x: x0, y: y0 }, b: { x: x0 + s, y: y0 }, thickness: 0.3 },
+    { a: { x: x0 + s, y: y0 }, b: { x: x0 + s, y: y0 + s * 1.5 }, thickness: 0.3 },
+    { a: { x: x0 + s, y: y0 + s * 1.5 }, b: { x: x0, y: y0 + s * 1.5 }, thickness: 0.3 },
+    { a: { x: x0, y: y0 + s * 1.5 }, b: { x: x0, y: y0 }, thickness: 0.3 },
+  ];
+  const page = (p: Partial<PageInfo>): PageInfo => ({ kind: 'rdc', hinted: false, name: 'p', walls: [], rooms: 0, section: null, ...p });
+  const slab = (top: number) => ({ top, bottom: top + 10 });
+
+  it('reconnaît un plan d’implantation par son titre', () => {
+    expect(guessKind("Plan d'implantation")).toBe('implantation');
+    expect(guessKind('plan de masse')).toBe('implantation');
+  });
+
+  it('garde un seul plan d’implantation, qui ne compte pas comme un niveau', () => {
+    const r = classifyPages([
+      page({ kind: 'implantation', name: 'a' }),
+      page({ kind: 'rdc', name: 'rdc', walls: sq(0, 0, 10), rooms: 5 }),
+      page({ kind: 'implantation', name: 'b' }),
+    ]);
+    expect(r.map((x) => x.kind)).toEqual(['implantation', 'rdc', 'ignorer']);
+  });
+
+  it('se méfie d’une coupe aux étages très inégaux pour compter les niveaux', () => {
+    const bad = { slabs: [slab(100), slab(150), slab(400), slab(430)], widthPx: 500, roof: { type: 'deux-pans' as const, pitch: 45 } };
+    const good = { slabs: [slab(100), slab(400)], widthPx: 500, roof: { type: 'deux-pans' as const, pitch: 45 } };
+    expect(evenStoreys(bad as never)).toBe(false);
+    expect(evenStoreys(good as never)).toBe(true);
+    const r = classifyPages([
+      page({ kind: 'coupe', section: bad as never }),
+      page({ kind: 'coupe', section: good as never }),
+      page({ kind: 'rdc', hinted: true, walls: sq(0, 0, 10), rooms: 6 }),
+      page({ kind: 'etage1', hinted: true, walls: sq(30, 0, 8), rooms: 5 }),
+      page({ kind: 'rdc', walls: sq(60, 0, 6), rooms: 2 }),
+    ]);
+    expect(r[4].kind).toBe('ignorer');
   });
 });

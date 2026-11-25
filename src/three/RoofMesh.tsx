@@ -3,8 +3,8 @@ import * as THREE from 'three';
 import type { Catalog } from '../model/catalog';
 import { productById } from '../model/catalog';
 import { roofFrame, type RoofFrame } from '../model/roof';
-import type { Building, Roof } from '../model/types';
-import { FACADE, fromProduct, PLASTER, ROOF_UNDERSIDE, surfaceMaterial } from './materials';
+import type { Building, Roof, RoofWindow } from '../model/types';
+import { CEILING, FACADE, fromProduct, PLASTER, ROOF_UNDERSIDE, surfaceMaterial } from './materials';
 
 type V = THREE.Vector3;
 const v3 = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
@@ -173,13 +173,15 @@ export function RoofMesh({ building, catalog, selected, onClick }: { building: B
     const center = v3((f.minX + f.maxX) / 2, f.base, (f.minY + f.maxY) / 2);
     return {
       slopes: parts.slopes.map((p) => slab(p, roof.type === 'plat' ? 0.3 : 0.24)),
-      gables: parts.gables.map((p) => gable(p, center, 0.3)),
+      // Combles aménagés : les pignons sont les murs de l'étage, montés jusqu'au rampant
+      gables: roof.eave != null ? [] : parts.gables.map((p) => gable(p, center, 0.3)),
     };
   }, [f, roof]);
   if (!geo || !roof) return null;
   const covering = fromProduct(productById(catalog, roof.coveringId), { color: '#9c4f36', pattern: { kind: 'rooftiles', w: 0.22, h: 0.3 }, roughness: 0.85 });
   const top = surfaceMaterial(covering, selected);
-  const under = surfaceMaterial(ROOF_UNDERSIDE, selected);
+  // Sous des combles aménagés, le rampant est plafonné
+  const under = surfaceMaterial(roof.eave != null ? CEILING : ROOF_UNDERSIDE, selected);
   const edge = surfaceMaterial(PLASTER, selected);
   const ud = { sel: { kind: 'roof', id: 'roof' } };
   return (
@@ -190,6 +192,56 @@ export function RoofMesh({ building, catalog, selected, onClick }: { building: B
       {geo.gables.map((g, i) => (
         <mesh key={`g${i}`} geometry={g} material={surfaceMaterial(FACADE, selected)} castShadow receiveShadow userData={ud} onClick={onClick} />
       ))}
+      {f && (roof.windows ?? []).map((w) => <RoofWindowMesh key={w.id} win={w} roof={roof} f={f} selected={selected} onClick={onClick} />)}
+    </group>
+  );
+}
+
+const FRAME = new THREE.MeshStandardMaterial({ color: '#3d3f42', roughness: 0.5, metalness: 0.3 });
+const PANE = new THREE.MeshStandardMaterial({ color: '#5f7d93', roughness: 0.08, metalness: 0.4, envMapIntensity: 1.6 });
+const SKY = new THREE.MeshStandardMaterial({ color: '#cfe3f3', roughness: 0.3, emissive: '#9fc3e0', emissiveIntensity: 0.55 });
+
+/** Fenêtre de toit : cadre et vitre posés dans le pan, et le jour vu de l'intérieur. */
+function RoofWindowMesh({ win, roof, f, selected, onClick }: { win: RoofWindow; roof: Roof; f: RoofFrame; selected: boolean; onClick?: (e: { stopPropagation: () => void; delta: number }) => void }) {
+  const place = useMemo(() => {
+    if (roof.type !== 'deux-pans' && roof.type !== 'monopente') return null;
+    const th = (roof.pitch * Math.PI) / 180;
+    const t = Math.tan(th);
+    const alongX = roof.ridge === 'x';
+    const c = alongX ? win.y : win.x;
+    const lo = alongX ? f.minY : f.minX;
+    const hi = alongX ? f.maxY : f.maxX;
+    const loSide = roof.type === 'monopente' || c < (lo + hi) / 2;
+    const d = loSide ? c - lo : hi - c;
+    const h = f.base + Math.max(0, d) * t;
+    // Repère du pan : u le long du faîtage, s en montant la pente, n la normale vers le ciel
+    const sgn = loSide ? 1 : -1;
+    const u = alongX ? v3(1, 0, 0) : v3(0, 0, 1);
+    const sUp = alongX ? v3(0, Math.sin(th), sgn * Math.cos(th)) : v3(sgn * Math.cos(th), Math.sin(th), 0);
+    const n = new THREE.Vector3().crossVectors(sUp, u).normalize();
+    if (n.y < 0) n.negate();
+    const m = new THREE.Matrix4().makeBasis(u, n, sUp);
+    const q = new THREE.Quaternion().setFromRotationMatrix(m);
+    const center = v3(win.x, h, win.y);
+    const L = win.length / Math.cos(th);
+    return { q, center, n, L };
+  }, [win, roof, f]);
+  if (!place) return null;
+  const { q, center, n, L } = place;
+  const at = (k: number) => center.clone().addScaledVector(n, k).toArray() as [number, number, number];
+  const ud = { sel: { kind: 'roof', id: 'roof' } };
+  return (
+    <group>
+      <mesh position={at(0.03)} quaternion={q} material={selected ? surfaceMaterial({ color: '#3d3f42' }, true) : FRAME} userData={ud} onClick={onClick} castShadow>
+        <boxGeometry args={[win.width, 0.07, L]} />
+      </mesh>
+      <mesh position={at(0.07)} quaternion={q} material={PANE} userData={ud} onClick={onClick}>
+        <boxGeometry args={[win.width - 0.12, 0.02, L - 0.12]} />
+      </mesh>
+      {/* Côté intérieur : le jour du ciel dans l'épaisseur du toit */}
+      <mesh position={at(-0.13)} quaternion={q} material={SKY} userData={ud} onClick={onClick}>
+        <boxGeometry args={[win.width - 0.1, 0.3, L - 0.1]} />
+      </mesh>
     </group>
   );
 }

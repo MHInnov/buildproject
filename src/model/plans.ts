@@ -189,11 +189,70 @@ export interface SectionReading {
   widthPx: number;
   /** Planchers, du plus haut au plus bas : dessus et dessous de dalle, en pixels. */
   slabs: { top: number; bottom: number; length: number }[];
-  roof: { type: RoofType; pitch: number } | null;
+  /**
+   * Toit : forme, pente, et hauteur de l'égout (pied des chevrons au droit de la façade) au-dessus du
+   * dessus du dernier plancher, en pixels (négative si les chevrons partent plus bas).
+   */
+  roof: { type: RoofType; pitch: number; eavePx?: number } | null;
+  /** Rotation appliquée à la page pour la lire (quart de tour), 0 si la coupe était droite. */
+  turned?: 0 | 90 | 270;
 }
 
-/** Lit une coupe : les planchers sont les bandes horizontales épaisses qui traversent le bâtiment. */
+/** Image tournée d'un quart de tour (90 : sens horaire, 270 : sens inverse). */
+export function rotateBitmap(bmp: Bitmap, turn: 90 | 270): Bitmap {
+  const { width: w, height: h, data } = bmp;
+  const out = new Uint8ClampedArray(data.length);
+  // nouvelle image : largeur h, hauteur w
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const nx = turn === 90 ? h - 1 - y : y;
+      const ny = turn === 90 ? x : w - 1 - x;
+      const i = (y * w + x) * 4;
+      const j = (ny * h + nx) * 4;
+      out[j] = data[i];
+      out[j + 1] = data[i + 1];
+      out[j + 2] = data[i + 2];
+      out[j + 3] = data[i + 3];
+    }
+  return { width: h, height: w, data: out };
+}
+
+/**
+ * Une coupe montre des planchers presque aussi longs que le bâtiment, espacés d'une hauteur d'étage
+ * (entre 12 et 50 % de la largeur). Sur un plan, les murs horizontaux sont plus irréguliers.
+ */
+export function looksLikeSection(sec: SectionReading): boolean {
+  const longest = Math.max(...sec.slabs.map((s) => s.length));
+  if (sec.slabs.some((s) => s.length < longest * 0.85)) return false;
+  for (let i = 1; i < sec.slabs.length; i++) {
+    const gap = (sec.slabs[i].top - sec.slabs[i - 1].bottom) / sec.widthPx;
+    if (gap < 0.12 || gap > 0.5) return false;
+  }
+  return true;
+}
+
+/**
+ * Lit une coupe : les planchers sont les bandes horizontales épaisses qui traversent le bâtiment, le toit
+ * les deux longs traits obliques (chevrons) au-dessus. Une page tournée d'un quart de tour (coupe dessinée
+ * en long sur une feuille en hauteur) est remise droite : on garde le sens qui se lit le mieux.
+ */
 export function readSection(bmp: Bitmap): SectionReading | null {
+  let best: { r: SectionReading; score: number } | null = null;
+  for (const turn of [0, 90, 270] as const) {
+    const r = readUpright(turn ? rotateBitmap(bmp, turn) : bmp);
+    if (!r) continue;
+    // Une coupe droite : planchers réguliers, et un toit au-dessus (deux pans symétriques au mieux)
+    const score =
+      (looksLikeSection(r) ? 2 : 0) +
+      (r.roof ? (r.roof.type === 'deux-pans' ? 2 : r.roof.type === 'monopente' ? 1 : 0.5) : 0) +
+      Math.min(r.slabs.length, 4) * 0.1 +
+      (turn ? -0.05 : 0);
+    if (!best || score > best.score) best = { r: { ...r, turned: turn }, score };
+  }
+  return best?.r ?? null;
+}
+
+function readUpright(bmp: Bitmap): SectionReading | null {
   const { width: w, height: h } = bmp;
   const lum = luminance(bmp);
   const t = otsu(lum);
@@ -217,20 +276,154 @@ export function readSection(bmp: Bitmap): SectionReading | null {
       if (last && b.top - last.bottom <= 2) {
         last.bottom = b.bottom;
         last.length = Math.max(last.length, b.length);
+        last.s = Math.min(last.s, b.s);
+        last.e = Math.max(last.e, b.e);
       } else acc.push({ ...b });
       return acc;
     }, []);
   if (slabs.length < 2) return null;
   const ref = slabs.reduce((m, b) => (b.length > m.length ? b : m));
-  const xL = ref.s;
-  const xR = ref.e;
+  let xL = ref.s;
+  let xR = ref.e;
+  // Largeur du bâtiment : entre les faces extérieures des murs de façade coupés (le dernier plancher peut
+  // déborder, avec les fondations et le terrain)
+  {
+    const lowest = slabs[slabs.length - 1];
+    const above = slabs[slabs.length - 2];
+    const storey = lowest.top - above.bottom;
+    const walls = bands(solid, w, h, false, Math.round(storey * 0.5)).filter((b) => b.s <= above.bottom + storey * 0.3 && b.e >= lowest.top - storey * 0.3 && b.t1 - b.t0 < storey * 0.3);
+    if (walls.length >= 2) {
+      const l = Math.min(...walls.map((b) => b.t0));
+      const r = Math.max(...walls.map((b) => b.t1));
+      if (r - l >= ref.length * 0.4) {
+        xL = l;
+        xR = r;
+      }
+    }
+  }
   const widthPx = xR - xL + 1;
-  // Toit : profil du trait le plus haut au-dessus du dernier plancher
   const topSlab = slabs[0];
+  const roof = rafters(ink, w, h, xL, xR, topSlab.top) ?? profileRoof(ink, w, xL, xR, topSlab.top);
+  return { widthPx, slabs: slabs.map(({ top, bottom, length }) => ({ top, bottom, length })), roof };
+}
+
+/**
+ * Chevrons : les deux plus longs traits obliques (15 à 70°) au-dessus du dernier plancher, repérés par une
+ * transformée de Hough. Deux pans : un trait montant et un descendant qui se rejoignent vers le milieu.
+ */
+function rafters(ink: Uint8Array, w: number, h: number, xL: number, xR: number, top: number): SectionReading['roof'] {
+  const W = xR - xL;
+  const x0 = Math.max(0, Math.round(xL - W * 0.15));
+  const x1 = Math.min(w - 1, Math.round(xR + W * 0.15));
+  const y0 = Math.max(0, Math.round(top - W * 1.1));
+  const y1 = Math.min(h - 1, Math.round(top + W * 0.05));
+  const pts: number[] = [];
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (ink[y * w + x]) pts.push(x, y);
+  if (pts.length < 20) return null;
+  // Angles en degrés : pente de la droite dans l'image (y vers le bas). a > 0 : descend vers la droite.
+  const angles: number[] = [];
+  for (let a = 15; a <= 70; a += 1) angles.push(a, -a);
+  const rhoMax = Math.ceil(Math.hypot(x1 - x0, y1 - y0)) + 2;
+  const step = 2;
+  const nr = Math.ceil((2 * rhoMax) / step);
+  let found: { a: number; rho: number; n: number }[] = [];
+  for (const a of angles) {
+    const th = (a * Math.PI) / 180;
+    // normale à la direction (cos a, sin a)
+    const nx = -Math.sin(th);
+    const ny = Math.cos(th);
+    const acc = new Int32Array(nr);
+    for (let i = 0; i < pts.length; i += 2) {
+      const r = (pts[i] - x0) * nx + (pts[i + 1] - y0) * ny;
+      acc[Math.floor((r + rhoMax) / step)]++;
+    }
+    for (let k = 0; k < nr; k++) if (acc[k] > 0) found.push({ a, rho: k * step - rhoMax + step / 2, n: acc[k] + (k > 0 ? acc[k - 1] : 0) * 0.5 + (k + 1 < nr ? acc[k + 1] : 0) * 0.5 });
+  }
+  found.sort((m, n) => n.n - m.n);
+  found = found.slice(0, 400);
+  // Longueur continue réellement encrée le long de la droite (un trait de chevron est long et suivi)
+  const run = (a: number, rho: number) => {
+    const th = (a * Math.PI) / 180;
+    const ux = Math.cos(th);
+    const uy = Math.sin(th);
+    const nx = -uy;
+    const ny = ux;
+    const px = x0 + nx * rho;
+    const py = y0 + ny * rho;
+    let bestLen = 0;
+    let bestS = 0;
+    let bestE = 0;
+    let cur = 0;
+    let gapRun = 0;
+    let s0 = 0;
+    const L = rhoMax * 2;
+    for (let t = -L; t <= L; t++) {
+      const x = Math.round(px + ux * t);
+      const y = Math.round(py + uy * t);
+      if (x < x0 || x > x1 || y < y0 || y > y1) {
+        cur = 0;
+        gapRun = 0;
+        continue;
+      }
+      let hit = false;
+      for (let d = -1; d <= 1 && !hit; d++) {
+        const xx = Math.round(x + nx * d);
+        const yy = Math.round(y + ny * d);
+        if (xx >= 0 && yy >= 0 && xx < w && yy < h && ink[yy * w + xx]) hit = true;
+      }
+      if (hit) {
+        if (cur === 0) s0 = t;
+        cur = t - s0 + 1;
+        gapRun = 0;
+        if (cur > bestLen) {
+          bestLen = cur;
+          bestS = s0;
+          bestE = t;
+        }
+      } else if (cur > 0 && ++gapRun > Math.max(4, W * 0.01)) {
+        cur = 0;
+        gapRun = 0;
+      }
+    }
+    const P = (t: number) => ({ x: px + ux * t, y: py + uy * t });
+    return { len: bestLen, p: P(bestS), q: P(bestE) };
+  };
+  const lines = found.map((f) => ({ ...f, ...run(f.a, f.rho) })).filter((l) => Math.abs(l.q.x - l.p.x) >= W * 0.25);
+  const up = lines.filter((l) => l.a < 0).sort((m, n) => n.len - m.len)[0];
+  const down = lines.filter((l) => l.a > 0).sort((m, n) => n.len - m.len)[0];
+  if (!up && !down) return null;
+  // Montée à gauche (a < 0 : y diminue vers la droite) puis descente à droite
+  const leftEnd = (l: typeof up) => (l.p.x < l.q.x ? l.p : l.q);
+  const rightEnd = (l: typeof up) => (l.p.x < l.q.x ? l.q : l.p);
+  const yAt = (l: typeof up, x: number) => {
+    const th = (l.a * Math.PI) / 180;
+    const p = l.p;
+    return p.y + Math.tan(th) * (x - p.x);
+  };
+  if (up && down && Math.abs(Math.abs(up.a) - Math.abs(down.a)) <= 10) {
+    // Sommet : croisement des deux traits, vers le milieu de la coupe
+    const ta = Math.tan((up.a * Math.PI) / 180);
+    const tb = Math.tan((down.a * Math.PI) / 180);
+    const ax = (yAt(down, 0) - yAt(up, 0)) / (ta - tb);
+    if (ax > xL + W * 0.2 && ax < xR - W * 0.2 && rightEnd(up).x <= ax + W * 0.1 && leftEnd(down).x >= ax - W * 0.1) {
+      const pitch = Math.round((Math.abs(up.a) + Math.abs(down.a)) / 2);
+      const eave = top - (yAt(up, xL) + yAt(down, xR)) / 2;
+      return { type: 'deux-pans', pitch, eavePx: Math.round(eave) };
+    }
+  }
+  const one = [up, down].filter(Boolean).sort((m, n) => n!.len - m!.len)[0]!;
+  if (one.len < W * 0.7) return null;
+  const eave = top - Math.max(yAt(one, xL), yAt(one, xR));
+  return { type: 'monopente', pitch: Math.abs(one.a), eavePx: Math.round(eave) };
+}
+
+/** Repli : profil du trait le plus haut au-dessus du dernier plancher (toit plat, ou chevrons peu visibles). */
+function profileRoof(ink: Uint8Array, w: number, xL: number, xR: number, top: number): SectionReading['roof'] {
+  const widthPx = xR - xL + 1;
   const profile: { x: number; y: number }[] = [];
-  const yMin = Math.max(0, Math.round(topSlab.top - widthPx * 0.9));
+  const yMin = Math.max(0, Math.round(top - widthPx * 0.9));
   for (let x = xL; x <= xR; x += 2) {
-    for (let y = yMin; y < topSlab.top - 2; y++)
+    for (let y = yMin; y < top - 2; y++)
       if (ink[y * w + x]) {
         profile.push({ x, y });
         break;
@@ -248,21 +441,15 @@ export function readSection(bmp: Bitmap): SectionReading | null {
     }
     return den ? num / den : null;
   };
-  let roof: SectionReading['roof'] = null;
-  if (profile.length > 10) {
-    const left = fit(profile.filter((p) => p.x > xL + widthPx * 0.1 && p.x < xL + widthPx * 0.4));
-    const right = fit(profile.filter((p) => p.x > xL + widthPx * 0.6 && p.x < xL + widthPx * 0.9));
-    if (left !== null && right !== null) {
-      const deg = (s: number) => (Math.atan(Math.abs(s)) * 180) / Math.PI;
-      const dl = deg(left);
-      const dr = deg(right);
-      if (dl < 4 && dr < 4) roof = { type: 'plat', pitch: 0 };
-      // Image : y vers le bas. Montée à gauche (pente négative) et descente à droite : deux pans
-      else if (left < 0 && right > 0 && dl >= 4 && dr >= 4) roof = { type: 'deux-pans', pitch: Math.round((dl + dr) / 2) };
-      else roof = { type: 'monopente', pitch: Math.round(Math.max(dl, dr)) };
-    }
-  }
-  return { widthPx, slabs: slabs.map(({ top, bottom, length }) => ({ top, bottom, length })), roof };
+  if (profile.length <= 10) return null;
+  const left = fit(profile.filter((p) => p.x > xL + widthPx * 0.1 && p.x < xL + widthPx * 0.4));
+  const right = fit(profile.filter((p) => p.x > xL + widthPx * 0.6 && p.x < xL + widthPx * 0.9));
+  if (left === null || right === null) return null;
+  const deg = (s: number) => (Math.atan(Math.abs(s)) * 180) / Math.PI;
+  const dl = deg(left);
+  const dr = deg(right);
+  if (dl < 4 && dr < 4) return { type: 'plat', pitch: 0 };
+  return null;
 }
 
 export interface Storey {
@@ -298,7 +485,10 @@ export function storeysFromSection(sec: SectionReading, planSizes: number[], fal
 // Reconnaître le contenu d'un plan d'après son nom ou ses textes
 // ---------------------------------------------------------------------------
 
-export type PlanKind = 'cave' | 'rdc' | 'etage1' | 'etage2' | 'etage3' | 'combles' | 'coupe' | 'ignorer';
+export type PlanKind = 'cave' | 'rdc' | 'etage1' | 'etage2' | 'etage3' | 'combles' | 'coupe' | 'implantation' | 'ignorer';
+
+/** Plan d'un niveau (à retracer), par opposition aux coupes, au plan d'implantation et aux pages écartées. */
+export const isFloorKind = (k: PlanKind) => k !== 'coupe' && k !== 'implantation' && k !== 'ignorer';
 
 export const PLAN_KIND_LABELS: Record<PlanKind, string> = {
   cave: 'Cave / sous-sol',
@@ -308,6 +498,7 @@ export const PLAN_KIND_LABELS: Record<PlanKind, string> = {
   etage3: '3e étage',
   combles: 'Combles',
   coupe: 'Coupe',
+  implantation: "Plan d'implantation (jardin)",
   ignorer: 'Ignorer (façade, situation…)',
 };
 
@@ -318,7 +509,8 @@ export function guessKind(text: string): PlanKind | null {
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase();
   if (/\bcoupe|\bsection|\bcoupe\s*[a-z]{1,2}\b|\b[a-z]-[a-z]\b/.test(t)) return 'coupe';
-  if (/facade|elevation|situation|implantation|toiture vue/.test(t)) return 'ignorer';
+  if (/implantation|plan de masse|plan masse/.test(t)) return 'implantation';
+  if (/facade|elevation|situation|toiture vue|profil/.test(t)) return 'ignorer';
   if (/sous[- ]?sol|\bcave|\bs-?sol|\br\s*-\s*1\b/.test(t)) return 'cave';
   if (/comble|grenier|mansard/.test(t)) return 'combles';
   if (/\br\s*\+\s*3\b|3e(me)?\s*etage|troisieme/.test(t)) return 'etage3';
@@ -346,4 +538,34 @@ export function parseDrawingScale(text: string): number | null {
 /** Mètres par pixel d'une page PDF rendue : `pxPerPt` pixels par point (1 pt = 1/72 pouce), dessin au 1/`denominator`. */
 export function pdfScale(pxPerPt: number, denominator: number): number {
   return (0.0254 / 72 / pxPerPt) * denominator;
+}
+
+/**
+ * Deux pages montrent-elles le même niveau ? On cale la seconde sur la première par ses façades, puis on
+ * mesure la part de tous les murs (cloisons comprises) qui se retrouvent dans un sens et dans l'autre.
+ * Un étage et le rez-de-chaussée ont les mêmes façades mais pas les mêmes cloisons.
+ */
+export function planSimilarity(walls: TracedWall[], ref: TracedWall[]): { similarity: number; fit: number; k: number; turn: 0 | 90 | 180 | 270 } {
+  let best = { similarity: 0, fit: 0, k: 1, turn: 0 as 0 | 90 | 180 | 270 };
+  // Une page peut être tournée d'un quart de tour par rapport à l'autre (feuille en hauteur ou en largeur)
+  for (const turn of [0, 90, 180, 270] as const) {
+    const ws = turn ? turnWalls(walls, turn) : walls;
+    const al = alignFacades(ws, ref);
+    if (al.fit < 0.3) continue;
+    const len = (w: Seg) => Math.hypot(w.b.x - w.a.x, w.b.y - w.a.y);
+    const moved = ws.map((w) => ({ a: { x: w.a.x * al.k + al.dx, y: w.a.y * al.k + al.dy }, b: { x: w.b.x * al.k + al.dx, y: w.b.y * al.k + al.dy } }));
+    const tw = moved.reduce((s, w) => s + len(w), 0) || 1;
+    const tr = ref.reduce((s, w) => s + len(w), 0) || 1;
+    const there = overlap(moved, ref, 0, 0, 1, 0.2) / tw;
+    const back = overlap(ref, moved, 0, 0, 1, 0.2) / tr;
+    const similarity = Math.min(there, back);
+    if (similarity > best.similarity) best = { similarity, fit: al.fit, k: al.k, turn };
+  }
+  return best;
+}
+
+/** Murs tournés d'un quart de tour (ou d'un demi-tour) autour de l'origine. */
+export function turnWalls<T extends Seg>(walls: T[], turn: 90 | 180 | 270): T[] {
+  const R = (p: { x: number; y: number }) => (turn === 90 ? { x: -p.y, y: p.x } : turn === 180 ? { x: -p.x, y: -p.y } : { x: p.y, y: -p.x });
+  return walls.map((w) => ({ ...w, a: R(w.a), b: R(w.b) }));
 }
