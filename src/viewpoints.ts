@@ -176,7 +176,7 @@ export function closestByColor(catalog: Catalog, target: PhotoTarget, color: str
   const [r, g, b] = rgb(color);
   const cats = TARGET_CATEGORIES[target];
   return catalog.products
-    .filter((p) => cats.includes(p.category) && (includeExisting || !p.existingOnly))
+    .filter((p) => !p.hidden && cats.includes(p.category) && (includeExisting || !p.existingOnly))
     .map((p) => {
       const [pr, pg, pb] = rgb(p.color);
       // Distance perceptuelle simple (rouge-moyen)

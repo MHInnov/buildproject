@@ -1,9 +1,10 @@
+import { itemPrice, withOptions } from './generic';
 import type { Catalog, LaborTask, Product } from './catalog';
 import { productById, taskById } from './catalog';
 import { detectRooms, inRoom, wallFaceArea, wallLength } from './geometry';
 import { applyOperations } from './operations';
 import { roofArea, roofInsulationArea } from './roof';
-import type { Building, FloorZone, Lot, Operation, Project, Room, Wall } from './types';
+import type { Building, FloorZone, ItemOptions, Lot, Operation, Project, Room, Wall } from './types';
 import { CONDITION_LABELS, LOT_ORDER } from './types';
 
 export interface MaterialLine {
@@ -187,7 +188,8 @@ export function computeEstimate(project: Project, catalog: Catalog): Estimate {
       }
       case 'addOpening': {
         const o = op.opening;
-        const p = productById(catalog, o.productId);
+        const base = productById(catalog, o.productId);
+        const p = base && { ...withOptions(base, o.options)!, price: itemPrice(base, o.options, { w: o.width, h: o.height }) };
         const items: LaborLine[] = [];
         if (isExistingWall(o.wallId)) items.push(labor(taskById(catalog, 'creation-baie'), 1));
         items.push(labor(taskById(catalog, o.kind === 'porte' ? 'pose-porte' : 'pose-chassis'), 1));
@@ -227,8 +229,9 @@ export function computeEstimate(project: Project, catalog: Catalog): Estimate {
       case 'replaceOpening': {
         const before = stateBefore(i);
         const o = before.openings.find((x) => x.id === op.openingId);
-        const p = productById(catalog, op.productId);
-        if (!o || !p) return;
+        const base = productById(catalog, op.productId);
+        if (!o || !base) return;
+        const p = { ...withOptions(base, op.options)!, price: itemPrice(base, op.options, { w: o.width, h: o.height }) };
         const porte = o.kind === 'porte';
         lines.push(
           finalize({
@@ -316,7 +319,9 @@ export function computeEstimate(project: Project, catalog: Catalog): Estimate {
           );
           return;
         }
-        furnitureByProduct.set(op.item.productId, (furnitureByProduct.get(op.item.productId) ?? 0) + 1);
+        // Meubles identiques (même fiche, mêmes réglages) regroupés
+        const key = JSON.stringify([op.item.productId, op.item.options ?? null]);
+        furnitureByProduct.set(key, (furnitureByProduct.get(key) ?? 0) + 1);
         return;
       }
       case 'setRoofCovering': {
@@ -458,9 +463,11 @@ export function computeEstimate(project: Project, catalog: Catalog): Estimate {
     );
   }
 
-  for (const [pid, qty] of furnitureByProduct) {
-    const p = productById(catalog, pid);
-    if (!p) continue;
+  for (const [key, qty] of furnitureByProduct) {
+    const [pid, options] = JSON.parse(key) as [string, ItemOptions | null];
+    const base = productById(catalog, pid);
+    if (!base) continue;
+    const p = { ...withOptions(base, options ?? undefined)!, price: itemPrice(base, options ?? undefined) };
     const task =
       p.subcategory === 'cuisine'
         ? 'pose-cuisine'
@@ -473,7 +480,7 @@ export function computeEstimate(project: Project, catalog: Catalog): Estimate {
               : 'montage-meuble';
     lines.push(
       finalize({
-        id: `furn-${pid}`,
+        id: `furn-${key}`,
         lot: taskById(catalog, task).lot,
         title: `${qty > 1 ? `${qty} × ` : ''}${p.name}`,
         materials: [{ label: p.name, quantity: qty, unit: 'pièce', unitPrice: p.price, total: round2(qty * p.price) }],

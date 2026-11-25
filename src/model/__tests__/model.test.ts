@@ -133,7 +133,9 @@ describe('recherche', () => {
     expect(f.excludeTones).toEqual(['fonce']);
     expect(f.size).toBe('grand');
     const { results } = searchCatalog(DEMO_CATALOG, 'Un grand canapé pas trop foncé');
-    expect(results[0].product.id).toBe('canape-angle-beige');
+    // Un seul canapé générique, réglable (dimensions, couleur) ; les anciennes fiches figées ne sont plus proposées
+    expect(results[0].product.id).toBe('canape-3p-gris');
+    expect(results.some((r) => r.product.hidden)).toBe(false);
   });
 
   it('applique un budget maximum', () => {

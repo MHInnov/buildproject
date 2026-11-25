@@ -2,6 +2,7 @@ import { useFrame, type ThreeEvent } from '@react-three/fiber';
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { Catalog, Product } from '../model/catalog';
+import { itemProduct, leavesOf } from '../model/generic';
 import { productById } from '../model/catalog';
 import { detectRooms, lerp, wallLength, wallNormal, wallSideFacingRoom } from '../model/geometry';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
@@ -128,7 +129,7 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
   const holes = useMemo(() => {
     const m = new Map<string, Point[][]>();
     for (const f of building.furniture) {
-      const p = productById(catalog, f.productId);
+      const p = itemProduct(catalog, f);
       if (p?.category !== 'escalier') continue;
       const up = levelAbove(building, f.levelId);
       if (!up) continue;
@@ -227,7 +228,7 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
               {building.furniture
                 .filter((f) => f.levelId === level.id)
                 .map((f) => {
-                  const p = productById(catalog, f.productId);
+                  const p = itemProduct(catalog, f);
                   const lift = floorOffsetAt(lRooms, level.id, f);
                   return p ? (
                     <FurnitureMesh key={f.id} item={f} product={p} level={lift ? { ...level, elevation: level.elevation + lift } : level} selected={isSel('furniture', f.id)} onClick={click({ kind: 'furniture', id: f.id })} />
@@ -497,7 +498,7 @@ function WallMesh({ wall, elevation, openings, catalog, facing, profile, selecte
             key={o.id}
             o={o}
             th={th}
-            product={productById(catalog, o.productId)}
+            product={itemProduct(catalog, o)}
             selected={selectedOpening === o.id}
             open={isOpen}
             inward={inward}
@@ -518,7 +519,7 @@ function Lift({ target, children }: { target: number; children: React.ReactNode 
   useFrame((_, dt) => {
     const g = ref.current;
     if (!g) return;
-    g.position.y += (target - g.position.y) * Math.min(1, dt * 4);
+    g.position.y += (target - g.position.y) * Math.min(1, dt * 1.4);
   });
   return (
     <group ref={ref} position-y={target}>
@@ -533,7 +534,7 @@ function Swing({ target, children, position }: { target: number; children: React
   useFrame((_, dt) => {
     const g = ref.current;
     if (!g) return;
-    g.rotation.y += (target - g.rotation.y) * Math.min(1, dt * 6);
+    g.rotation.y += (target - g.rotation.y) * Math.min(1, dt * 2.6);
   });
   return (
     <group ref={ref} position={position} rotation-y={target}>
@@ -568,71 +569,105 @@ function OpeningMesh({ o, th, product, selected, open, inward, onClick, onToggle
     },
   };
 
-  if (o.kind === 'porte' && isGarage(o)) {
-    // Porte sectionnelle : tablier à panneaux horizontaux, qui remonte sous le plafond quand on l'ouvre
-    const panels = Math.max(3, Math.round(o.height / 0.5));
+  const tags = product?.tags ?? [];
+  const leaves = Math.max(1, leavesOf(product, o.options));
+  // Chambranles des portes, sur les deux faces
+  const casings = (
+    <>
+      {[1, -1].map((side) => (
+        <group key={side} position-z={side * (th / 2 + 0.008)}>
+          <mesh position={[s - 0.035, o.height / 2, 0]} material={casing}>
+            <boxGeometry args={[0.07, o.height + 0.07, 0.016]} />
+          </mesh>
+          <mesh position={[s + o.width + 0.035, o.height / 2, 0]} material={casing}>
+            <boxGeometry args={[0.07, o.height + 0.07, 0.016]} />
+          </mesh>
+          <mesh position={[o.offset, o.height + 0.035, 0]} material={casing}>
+            <boxGeometry args={[o.width + 0.14, 0.07, 0.016]} />
+          </mesh>
+        </group>
+      ))}
+    </>
+  );
+
+  if (o.kind === 'porte' && isGarage(o) && !tags.includes('battante')) {
+    // Sectionnelle : panneaux horizontaux ; enroulable : lames fines ; basculante : un seul panneau nervuré.
+    // Le tablier remonte sous le plafond quand on l'ouvre.
+    const roll = tags.includes('enroulable');
+    const tilt = tags.includes('basculante');
+    const panels = tilt ? 1 : roll ? Math.max(8, Math.round(o.height / 0.08)) : Math.max(3, Math.round(o.height / 0.5));
     const ph = (o.height - 0.04) / panels;
+    const ribs = tilt ? Math.max(6, Math.round(o.width / 0.12)) : 0;
     return (
       <group>
-        {[1, -1].map((side) => (
-          <group key={side} position-z={side * (th / 2 + 0.008)}>
-            <mesh position={[s - 0.035, o.height / 2, 0]} material={casing}>
-              <boxGeometry args={[0.07, o.height + 0.07, 0.016]} />
-            </mesh>
-            <mesh position={[s + o.width + 0.035, o.height / 2, 0]} material={casing}>
-              <boxGeometry args={[0.07, o.height + 0.07, 0.016]} />
-            </mesh>
-            <mesh position={[o.offset, o.height + 0.035, 0]} material={casing}>
-              <boxGeometry args={[o.width + 0.14, 0.07, 0.016]} />
-            </mesh>
-          </group>
-        ))}
+        {casings}
         <Lift target={open ? o.height - 0.25 : 0}>
           {Array.from({ length: panels }, (_, i) => (
             <mesh key={i} position={[o.offset, 0.02 + ph * (i + 0.5), 0]} material={frame} castShadow receiveShadow {...events}>
-              <boxGeometry args={[o.width - 0.02, ph - 0.015, 0.045]} />
+              <boxGeometry args={[o.width - 0.02, ph - (roll ? 0.006 : 0.015), roll ? 0.03 : 0.045]} />
             </mesh>
           ))}
+          {Array.from({ length: ribs }, (_, i) =>
+            [1, -1].map((side) => (
+              <mesh key={`${i}${side}`} position={[s + 0.06 + ((o.width - 0.12) * (i + 0.5)) / ribs, o.height / 2, side * 0.026]} material={frame} {...events}>
+                <boxGeometry args={[0.025, o.height - 0.12, 0.012]} />
+              </mesh>
+            )),
+          )}
+          {tilt && (
+            <mesh position={[o.offset, 1.0, -inward * 0.035]} material={chrome}>
+              <boxGeometry args={[0.18, 0.025, 0.025]} />
+            </mesh>
+          )}
         </Lift>
       </group>
     );
   }
 
   if (o.kind === 'porte') {
-    const leafW = o.width - 0.02;
+    // Simple ou double vantail (porte de garage battante : toujours deux vantaux)
+    const n = isGarage(o) ? 2 : Math.min(2, leaves);
+    const leafW = (o.width - 0.02) / n - (n > 1 ? 0.005 : 0);
     const leafH = o.height - 0.02;
-    const glazed = product?.tags.includes('vitré');
-    return (
-      <group>
-        {/* Chambranles sur les deux faces */}
-        {[1, -1].map((side) => (
-          <group key={side} position-z={side * (th / 2 + 0.008)}>
-            <mesh position={[s - 0.035, o.height / 2, 0]} material={casing}>
-              <boxGeometry args={[0.07, o.height + 0.07, 0.016]} />
+    const glazed = tags.includes('vitré');
+    const moulded = tags.includes('moulures');
+    const angle = -inward * Math.PI * (n > 1 ? 0.46 : 0.48);
+    // Vantail dessiné de x0 à x0 + leafW (x0 < 0 pour le vantail de droite, qui pivote sur l'autre bord)
+    const leaf = (x0: number, handleX: number) => (
+      <>
+        <LeafMesh w={leafW} h={leafH} x0={x0} material={glazed ? [frame, frame, frame, frame, glassMaterial, glassMaterial] : frame} events={events} />
+        {glazed &&
+          [0.25, 0.5, 0.75].map((k) => (
+            <mesh key={k} position={[x0 + leafW / 2, leafH * k, 0]} material={frame} {...events}>
+              <boxGeometry args={[leafW, 0.03, 0.045]} />
             </mesh>
-            <mesh position={[s + o.width + 0.035, o.height / 2, 0]} material={casing}>
-              <boxGeometry args={[0.07, o.height + 0.07, 0.016]} />
+          ))}
+        {moulded &&
+          !glazed &&
+          [0.3, 0.73].map((k) => (
+            <mesh key={k} position={[x0 + leafW / 2, leafH * k, 0]} material={frame} castShadow {...events}>
+              <boxGeometry args={[Math.max(0.1, leafW - 0.22), leafH * (k < 0.5 ? 0.42 : 0.34), 0.052]} />
             </mesh>
-            <mesh position={[o.offset, o.height + 0.035, 0]} material={casing}>
-              <boxGeometry args={[o.width + 0.14, 0.07, 0.016]} />
-            </mesh>
-          </group>
-        ))}
-        {/* Vantail pivotant sur ses paumelles */}
-        <Swing target={open ? -inward * Math.PI * 0.48 : 0} position={[s + 0.01, 0, 0]}>
-          <LeafMesh w={leafW} h={leafH} material={glazed ? [frame, frame, frame, frame, glassMaterial, glassMaterial] : frame} events={events} />
-          {glazed &&
-            [0.25, 0.5, 0.75].map((k) => (
-              <mesh key={k} position={[leafW / 2, leafH * k, 0]} material={frame} {...events}>
-                <boxGeometry args={[leafW, 0.03, 0.045]} />
-              </mesh>
-            ))}
-          {[1, -1].map((side) => (
-            <mesh key={side} position={[leafW - 0.08, 1.02, side * 0.045]} material={chrome}>
+          ))}
+        {handleX >= 0 &&
+          [1, -1].map((side) => (
+            <mesh key={side} position={[x0 + handleX, 1.02, side * 0.045]} material={chrome}>
               <boxGeometry args={[0.13, 0.02, 0.02]} />
             </mesh>
           ))}
+      </>
+    );
+    return (
+      <group>
+        {casings}
+        <Swing target={open ? angle : 0} position={[s + 0.01, 0, 0]}>
+          {leaf(0, n > 1 ? -1 : leafW - 0.08)}
         </Swing>
+        {n > 1 && (
+          <Swing target={open ? -angle : 0} position={[s + o.width - 0.01, 0, 0]}>
+            {leaf(-leafW, 0.08)}
+          </Swing>
+        )}
       </group>
     );
   }
@@ -640,6 +675,34 @@ function OpeningMesh({ o, th, product, selected, open, inward, onClick, onToggle
   const yMid = o.sill + o.height / 2;
   const sashW = o.width - 2 * f;
   const sashH = o.height - 2 * f;
+  const fixed = tags.includes('fixe');
+  const sliding = tags.includes('coulissant');
+  const nSash = fixed ? 1 : sliding ? Math.max(2, leaves) : leaves;
+  const w1 = sashW / nSash;
+  // Un ouvrant : vitrage + cadre, de x0 à x0 + w1 (repère du dormant)
+  const sash = (x0: number, z: number, handle: number | null) => (
+    <group position-z={z}>
+      <mesh position={[x0 + w1 / 2, yMid, 0]} material={glassMaterial} {...events}>
+        <boxGeometry args={[w1 - 0.06, sashH - 0.06, 0.012]} />
+      </mesh>
+      {!fixed &&
+        [
+          [x0 + w1 / 2, o.sill + f + 0.025, w1, 0.05],
+          [x0 + w1 / 2, o.sill + o.height - f - 0.025, w1, 0.05],
+          [x0 + 0.025, yMid, 0.05, sashH],
+          [x0 + w1 - 0.025, yMid, 0.05, sashH],
+        ].map(([x, y, w, h], i) => (
+          <mesh key={i} position={[x, y, 0]} material={frame} castShadow {...events}>
+            <boxGeometry args={[w, h, 0.06]} />
+          </mesh>
+        ))}
+      {handle !== null && (
+        <mesh position={[x0 + handle, yMid, inward * 0.04]} material={chrome}>
+          <boxGeometry args={[0.02, 0.12, 0.02]} />
+        </mesh>
+      )}
+    </group>
+  );
   return (
     <group>
       {/* Dormant */}
@@ -653,6 +716,13 @@ function OpeningMesh({ o, th, product, selected, open, inward, onClick, onToggle
           <boxGeometry args={[w, h, 0.08]} />
         </mesh>
       ))}
+      {/* Montants entre les ouvrants d'un châssis fixe à plusieurs vitrages */}
+      {fixed &&
+        Array.from({ length: leaves - 1 }, (_, i) => (
+          <mesh key={i} position={[s + f + (sashW * (i + 1)) / leaves, yMid, 0]} material={frame} {...events}>
+            <boxGeometry args={[0.06, sashH, 0.08]} />
+          </mesh>
+        ))}
       {/* Tablette intérieure et seuil extérieur */}
       <mesh position={[o.offset, o.sill - 0.015, inward * (th / 2 + 0.03)]} material={plain('#ece9e2', 0.5)} receiveShadow>
         <boxGeometry args={[o.width + 0.1, 0.03, 0.1]} />
@@ -660,25 +730,43 @@ function OpeningMesh({ o, th, product, selected, open, inward, onClick, onToggle
       <mesh position={[o.offset, o.sill - 0.03, -inward * (th / 2 + 0.02)]} material={plain('#8d8a84', 0.8)} receiveShadow>
         <boxGeometry args={[o.width + 0.08, 0.05, 0.08]} />
       </mesh>
-      {/* Ouvrant : vitrage + petit bois, pivote vers l'intérieur */}
-      <Swing target={open ? inward * -1.2 : 0} position={[s + f, 0, inward * 0.02]}>
-        <mesh position={[sashW / 2, yMid, 0]} material={glassMaterial} {...events}>
-          <boxGeometry args={[sashW - 0.06, sashH - 0.06, 0.012]} />
-        </mesh>
-        {[
-          [sashW / 2, o.sill + f + 0.025, sashW, 0.05],
-          [sashW / 2, o.sill + o.height - f - 0.025, sashW, 0.05],
-          [0.025, yMid, 0.05, sashH],
-          [sashW - 0.025, yMid, 0.05, sashH],
-        ].map(([x, y, w, h], i) => (
-          <mesh key={i} position={[x, y, 0]} material={frame} castShadow {...events}>
-            <boxGeometry args={[w, h, 0.06]} />
-          </mesh>
-        ))}
-        <mesh position={[sashW - 0.05, yMid, inward * 0.04]} material={chrome}>
-          <boxGeometry args={[0.02, 0.12, 0.02]} />
-        </mesh>
-      </Swing>
+      {fixed ? (
+        <group position={[s + f, 0, 0]}>{sash(0, 0, null)}</group>
+      ) : sliding ? (
+        // Coulissant : deux vantaux sur deux rails ; ouvert, le premier glisse derrière le second
+        <group position={[s + f, 0, 0]}>
+          <Slide target={open ? w1 * 0.92 : 0}>{sash(0, inward * 0.025, w1 - 0.05)}</Slide>
+          {Array.from({ length: nSash - 1 }, (_, i) => (
+            <group key={i}>{sash(w1 * (i + 1), -inward * 0.025, i === nSash - 2 ? 0.05 : null)}</group>
+          ))}
+        </group>
+      ) : (
+        // À la française : ouvrants qui pivotent vers l'intérieur, par paires depuis chaque bord
+        Array.from({ length: nSash }, (_, i) => {
+          const left = nSash === 1 || i < nSash / 2 || (nSash === 3 && i === 1 && false);
+          const hingeX = left ? s + f + w1 * i : s + f + w1 * (i + 1);
+          return (
+            <Swing key={i} target={open ? inward * (left ? -1.2 : 1.2) : 0} position={[hingeX, 0, inward * 0.02]}>
+              {sash(left ? 0 : -w1, 0, left ? (i === Math.ceil(nSash / 2) - 1 || nSash === 1 ? w1 - 0.05 : null) : i === Math.ceil(nSash / 2) ? 0.05 : null)}
+            </Swing>
+          );
+        })
+      )}
+    </group>
+  );
+}
+
+/** Vantail coulissant : glisse en douceur le long du rail. */
+function Slide({ target, children }: { target: number; children: React.ReactNode }) {
+  const ref = useRef<THREE.Group>(null);
+  useFrame((_, dt) => {
+    const g = ref.current;
+    if (!g) return;
+    g.position.x += (target - g.position.x) * Math.min(1, dt * 2.4);
+  });
+  return (
+    <group ref={ref} position-x={target}>
+      {children}
     </group>
   );
 }
@@ -862,7 +950,7 @@ function FurnitureMesh({ item, product: p, level, selected, onClick }: { item: F
         break;
       }
       case 'armoire': {
-        const body = p.tags.includes('bois') || c !== '#f2f2ef' ? woodMat(c, selected, 0.3) : plain(c, 0.45, selected);
+        const body = p.tags.includes('bois') || (!p.generic && c !== '#f2f2ef') ? woodMat(c, selected, 0.3) : plain(c, 0.45, selected);
         const n = Math.max(2, Math.round(w / 0.5));
         parts = (
           <>
@@ -884,7 +972,7 @@ function FurnitureMesh({ item, product: p, level, selected, onClick }: { item: F
         break;
       }
       case 'rangement': {
-        const shelf = p.tags.includes('métal') || c === '#262626' ? metal(c, selected) : woodMat(c, selected, 0.3);
+        const shelf = p.tags.includes('métal') || (!p.generic && c === '#262626') ? metal(c, selected) : woodMat(c, selected, 0.3);
         const open = h > 1.2;
         const books = ['#8b3a3a', '#2f4f6f', '#c9a227', '#4e6b4a', '#d8d2c4', '#6b4f7a'];
         parts = open ? (
@@ -1014,8 +1102,8 @@ function FurnitureMesh({ item, product: p, level, selected, onClick }: { item: F
   );
 }
 
-function LeafMesh({ w, h, material, events }: { w: number; h: number; material: THREE.Material | THREE.Material[]; events: Record<string, unknown> }) {
+function LeafMesh({ w, h, x0 = 0, material, events }: { w: number; h: number; x0?: number; material: THREE.Material | THREE.Material[]; events: Record<string, unknown> }) {
   const geo = useMemo(() => meterBox(w, h, 0.04), [w, h]);
   useEffect(() => () => geo.dispose(), [geo]);
-  return <mesh position={[w / 2, h / 2 + 0.01, 0]} geometry={geo} material={material} castShadow {...events} />;
+  return <mesh position={[x0 + w / 2, h / 2 + 0.01, 0]} geometry={geo} material={material} castShadow {...events} />;
 }

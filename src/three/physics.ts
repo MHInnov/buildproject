@@ -1,5 +1,5 @@
 import type { Catalog } from '../model/catalog';
-import { productById } from '../model/catalog';
+import { itemProduct } from '../model/generic';
 import { detectRooms, inRoom, projectOnSegment, wallLength, wallSideFacingRoom } from '../model/geometry';
 import { floorToFloor, levelById } from '../model/levels';
 import type { Building, Point, Room } from '../model/types';
@@ -49,7 +49,7 @@ const STEP_OVER = 0.15;
 export function walkWorld(b: Building, catalog: Catalog): WalkWorld {
   const rooms = detectRooms(b).map((r) => ({ ...r, elevation: (levelById(b, r.label.levelId)?.elevation ?? 0) + (r.label.floorOffset ?? 0) }));
   const stairs: StairInfo[] = b.furniture.flatMap((f) => {
-    const p = productById(catalog, f.productId);
+    const p = itemProduct(catalog, f);
     const l = levelById(b, f.levelId);
     if (p?.category !== 'escalier' || !l) return [];
     const s = p.size ?? { w: 0.8, d: 3.6, h: 2.8 };
@@ -57,7 +57,7 @@ export function walkWorld(b: Building, catalog: Catalog): WalkWorld {
   });
   const obstacles: Obstacle[] = [];
   for (const f of b.furniture) {
-    const p = productById(catalog, f.productId);
+    const p = itemProduct(catalog, f);
     const l = levelById(b, f.levelId);
     if (!p?.size || !l || p.category === 'escalier' || p.size.h < STEP_OVER) continue;
     const a = (f.rotation * Math.PI) / 180;

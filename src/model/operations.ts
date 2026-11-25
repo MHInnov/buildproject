@@ -25,7 +25,11 @@ function applyOne(b: Building, op: Operation): void {
       return;
     case 'replaceOpening': {
       const o = b.openings.find((x) => x.id === op.openingId);
-      if (o) o.productId = op.productId;
+      if (o) {
+        o.productId = op.productId;
+        if (op.options) o.options = structuredClone(op.options);
+        else delete o.options;
+      }
       return;
     }
     case 'setFloor': {
@@ -85,6 +89,14 @@ function applyOne(b: Building, op: Operation): void {
       }
       return;
     }
+    case 'setFurnitureOptions': {
+      const f = b.furniture.find((x) => x.id === op.furnitureId);
+      if (f) {
+        if (op.options) f.options = structuredClone(op.options);
+        else delete f.options;
+      }
+      return;
+    }
     case 'setRoofCovering':
       if (b.roof) b.roof.coveringId = op.productId;
       return;
@@ -122,6 +134,8 @@ function targetKey(op: Operation): string | null {
       return `opening:${op.openingId}`;
     case 'moveFurniture':
       return `move:${op.furnitureId}`;
+    case 'setFurnitureOptions':
+      return `furnopt:${op.furnitureId}`;
     case 'setRoofCovering':
       return 'roof:covering';
     case 'setRoofInsulation':
@@ -152,8 +166,9 @@ export function pushOperation(ops: Operation[], op: Operation): Operation[] {
 
   if (op.type === 'removeFurniture') {
     const added = next.find((o) => o.type === 'addFurniture' && o.item.id === op.furnitureId);
-    if (added) return next.filter((o) => !(o.type === 'addFurniture' && o.item.id === op.furnitureId) && !(o.type === 'moveFurniture' && o.furnitureId === op.furnitureId));
-    next = next.filter((o) => !(o.type === 'moveFurniture' && o.furnitureId === op.furnitureId));
+    const same = (o: Operation) => (o.type === 'moveFurniture' || o.type === 'setFurnitureOptions') && o.furnitureId === op.furnitureId;
+    if (added) return next.filter((o) => !(o.type === 'addFurniture' && o.item.id === op.furnitureId) && !same(o));
+    next = next.filter((o) => !same(o));
   }
   if (op.type === 'moveFurniture') {
     const added = next.find((o): o is Extract<Operation, { type: 'addFurniture' }> => o.type === 'addFurniture' && o.item.id === op.furnitureId);
@@ -163,6 +178,14 @@ export function pushOperation(ops: Operation[], op: Operation): Operation[] {
       );
     }
   }
+  if (op.type === 'setFurnitureOptions') {
+    const added = next.find((o): o is Extract<Operation, { type: 'addFurniture' }> => o.type === 'addFurniture' && o.item.id === op.furnitureId);
+    if (added) {
+      const item = { ...added.item, options: op.options };
+      if (!op.options) delete item.options;
+      return next.map((o) => (o === added ? { ...added, item } : o));
+    }
+  }
   if (op.type === 'removeOpening') {
     const added = next.find((o) => o.type === 'addOpening' && o.opening.id === op.openingId);
     if (added) return next.filter((o) => o !== added && !(o.type === 'replaceOpening' && o.openingId === op.openingId));
@@ -170,7 +193,11 @@ export function pushOperation(ops: Operation[], op: Operation): Operation[] {
   }
   if (op.type === 'replaceOpening') {
     const added = next.find((o): o is Extract<Operation, { type: 'addOpening' }> => o.type === 'addOpening' && o.opening.id === op.openingId);
-    if (added) return next.map((o) => (o === added ? { ...added, opening: { ...added.opening, productId: op.productId } } : o));
+    if (added) {
+      const opening = { ...added.opening, productId: op.productId, options: op.options };
+      if (!op.options) delete opening.options;
+      return next.map((o) => (o === added ? { ...added, opening } : o));
+    }
   }
   if (op.type === 'removeRoofWindow') {
     const added = next.find((o) => o.type === 'addRoofWindow' && o.window.id === op.windowId);

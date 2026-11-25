@@ -2,7 +2,7 @@ import { detectRooms, newId, projectOnSegment, wallLength, wallSideFacingRoom } 
 import { productById } from './model/catalog';
 import { applyOperations, pushOperation as pushOp } from './model/operations';
 import { placeRoofWindow, roofWindowLength } from './model/roof';
-import type { Condition, FloorZone, FurnitureItem, Opening, Point, Room, RoofWindow, RoomLabel, Viewpoint, Wall, WallSide } from './model/types';
+import type { Condition, FloorZone, FurnitureItem, ItemOptions, Opening, Point, Room, RoofWindow, RoomLabel, Viewpoint, Wall, WallSide } from './model/types';
 import { useStore } from './store';
 
 /**
@@ -100,9 +100,59 @@ export function replaceOpening(openingId: string, productId: string) {
   if (isExisting()) {
     st().editExisting((b) => {
       const o = b.openings.find((x) => x.id === openingId);
-      if (o) o.productId = productId;
+      if (o) {
+        o.productId = productId;
+        delete o.options;
+      }
     });
   } else st().addOperation({ type: 'replaceOpening', openingId, productId });
+}
+
+/** Règle un modèle générique (couleur, vantaux, variante) sur une ouverture. */
+export function setOpeningOptions(openingId: string, options: ItemOptions | undefined) {
+  const clean = options && Object.keys(options).length ? options : undefined;
+  if (isExisting()) {
+    st().editExisting((b) => {
+      const o = b.openings.find((x) => x.id === openingId);
+      if (!o) return;
+      if (clean) o.options = clean;
+      else delete o.options;
+    });
+    return;
+  }
+  const o = currentBuilding().openings.find((x) => x.id === openingId);
+  if (o?.productId) st().addOperation({ type: 'replaceOpening', openingId, productId: o.productId, options: clean });
+}
+
+/** Une ouverture ajoutée dans le projet (sa taille reste alors modifiable). */
+export const isAddedOpening = (id: string) => st().project.operations.some((o) => o.type === 'addOpening' && o.opening.id === id);
+
+/** Modifie une ouverture : directement à l'étape existant, ou l'ouverture ajoutée par le projet. */
+export function editOpening(id: string, fn: (o: Opening) => void) {
+  if (isExisting()) {
+    st().editExisting((b) => {
+      const o = b.openings.find((x) => x.id === id);
+      if (o) fn(o);
+    });
+    return;
+  }
+  st().updateProject((p) => {
+    const op = p.operations.find((o): o is Extract<typeof o, { type: 'addOpening' }> => o.type === 'addOpening' && o.opening.id === id);
+    if (op) fn(op.opening);
+  });
+}
+
+/** Règle un meuble générique (couleur, dimensions, variante). */
+export function setFurnitureOptions(id: string, options: ItemOptions | undefined) {
+  const clean = options && Object.keys(options).length ? options : undefined;
+  if (isExisting()) {
+    st().editExisting((b) => {
+      const f = b.furniture.find((x) => x.id === id);
+      if (!f) return;
+      if (clean) f.options = clean;
+      else delete f.options;
+    });
+  } else st().addOperation({ type: 'setFurnitureOptions', furnitureId: id, options: clean });
 }
 
 export function removeOpening(openingId: string) {
@@ -138,13 +188,17 @@ export function swapFurniture(item: FurnitureItem, productId: string) {
   if (isExisting()) {
     st().editExisting((b) => {
       const f = b.furniture.find((i) => i.id === item.id);
-      if (f) f.productId = productId;
+      if (f) {
+        f.productId = productId;
+        delete f.options;
+      }
     });
     return;
   }
   st().updateProject((p) => {
     let ops = pushOp(p.operations, { type: 'removeFurniture', furnitureId: item.id });
     const added = { ...item, id: newId('f'), productId };
+    delete added.options;
     ops = pushOp(ops, { type: 'addFurniture', item: added });
     p.operations = ops;
     queueMicrotask(() => st().select({ kind: 'furniture', id: added.id }));

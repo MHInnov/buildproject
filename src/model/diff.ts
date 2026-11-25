@@ -1,3 +1,4 @@
+import { describeOptions } from './generic';
 import { applyOperations } from './operations';
 import type { Operation, Project, Wall } from './types';
 import type { Catalog } from './catalog';
@@ -47,11 +48,11 @@ export function describeOperation(op: Operation, catalog: Catalog, roomName: (id
     case 'addWall':
       return 'Construire une cloison';
     case 'addOpening':
-      return `Créer une ${op.opening.kind === 'porte' ? 'porte' : 'fenêtre'} (${pn(op.opening.productId)})`;
+      return `Créer une ${op.opening.kind === 'porte' ? 'porte' : 'fenêtre'} (${pn(op.opening.productId)}${op.opening.options ? `, ${describeOptions(op.opening.options, productById(catalog, op.opening.productId))}` : ''})`;
     case 'removeOpening':
       return 'Supprimer une ouverture';
     case 'replaceOpening':
-      return `Remplacer par : ${pn(op.productId)}`;
+      return `Remplacer par : ${pn(op.productId)}${op.options ? ` (${describeOptions(op.options, productById(catalog, op.productId))})` : ''}`;
     case 'setFloor':
       return `Sol de ${roomName(op.roomId)} : ${pn(op.productId)}`;
     case 'setWallFinish':
@@ -72,6 +73,8 @@ export function describeOperation(op: Operation, catalog: Catalog, roomName: (id
       return 'Retirer un meuble';
     case 'moveFurniture':
       return 'Déplacer un meuble';
+    case 'setFurnitureOptions':
+      return `Régler un meuble${op.options ? ` : ${describeOptions(op.options)}` : ''}`;
     case 'setRoofCovering':
       return `Toiture : ${pn(op.productId)}`;
     case 'setRoofInsulation':

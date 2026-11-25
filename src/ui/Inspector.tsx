@@ -21,7 +21,13 @@ import {
   setRoomFloor,
   setWallFinish,
   swapFurniture,
+  editOpening,
+  isAddedOpening,
+  setFurnitureOptions,
+  setOpeningOptions,
 } from '../actions';
+import { itemPrice, itemProduct } from '../model/generic';
+import { GenericOptions } from './GenericOptions';
 import { productById } from '../model/catalog';
 import { euro } from '../model/estimate';
 import { detectRooms, inRoom, newId, wallLength, wallSideFacingRoom } from '../model/geometry';
@@ -280,15 +286,12 @@ function RoomPanel({ r, isExisting }: { r: Room; isExisting: boolean }) {
 function OpeningPanel({ id, isExisting }: { id: string; isExisting: boolean }) {
   const building = useBuilding();
   const catalog = useStore((s) => s.catalog);
-  const editExisting = useStore((s) => s.editExisting);
   const o = building.openings.find((x) => x.id === id)!;
   const wall = building.walls.find((w) => w.id === o.wallId);
   const product = productById(catalog, o.productId);
-  const edit = (fn: (x: typeof o) => void) =>
-    editExisting((b) => {
-      const x = b.openings.find((y) => y.id === id);
-      if (x) fn(x);
-    });
+  // Taille modifiable à l'existant, et dans le projet pour une ouverture ajoutée
+  const sizable = isExisting || isAddedOpening(id);
+  const edit = (fn: (x: typeof o) => void) => editOpening(id, fn);
   const maxOffset = wall ? wallLength(wall) - o.width / 2 : 99;
   const step = useStore((s) => s.step);
   const toggled = useUi((s) => !!s.toggled[id]);
@@ -298,7 +301,7 @@ function OpeningPanel({ id, isExisting }: { id: string; isExisting: boolean }) {
   return (
     <div className="panel">
       <h3>{o.kind === 'porte' ? 'Porte' : 'Fenêtre'}</h3>
-      <p className="muted">{product ? `${product.name} · ${euro(product.price)}` : 'Produit non défini'}</p>
+      <p className="muted">{product ? `${itemProduct(catalog, o)?.name} · ${euro(itemPrice(product, o.options, { w: o.width, h: o.height }))}` : 'Produit non défini'}</p>
       {step === 'visite' && (
         <div className="actions">
           <button className="btn btn--primary" onClick={() => toggle(id)}>
@@ -307,11 +310,12 @@ function OpeningPanel({ id, isExisting }: { id: string; isExisting: boolean }) {
         </div>
       )}
       <div className="fields">
-        <NumberField label="Largeur (m)" value={o.width} disabled={!isExisting} onChange={(v) => edit((x) => void (x.width = v))} />
-        <NumberField label="Hauteur (m)" value={o.height} disabled={!isExisting} onChange={(v) => edit((x) => void (x.height = v))} />
-        <NumberField label="Allège (m)" value={o.sill} disabled={!isExisting} onChange={(v) => edit((x) => void (x.sill = v))} />
-        <NumberField label="Position (m)" value={o.offset} disabled={!isExisting} onChange={(v) => edit((x) => void (x.offset = Math.min(maxOffset, Math.max(o.width / 2, v))))} />
+        <NumberField label="Largeur (m)" value={o.width} disabled={!sizable} onChange={(v) => edit((x) => void (x.width = Math.min(wall ? wallLength(wall) - 0.05 : v, Math.max(0.3, v))))} />
+        <NumberField label="Hauteur (m)" value={o.height} disabled={!sizable} onChange={(v) => edit((x) => void (x.height = v))} />
+        <NumberField label="Allège (m)" value={o.sill} disabled={!sizable} onChange={(v) => edit((x) => void (x.sill = v))} />
+        <NumberField label="Position (m)" value={o.offset} disabled={!sizable} onChange={(v) => edit((x) => void (x.offset = Math.min(maxOffset, Math.max(o.width / 2, v))))} />
       </div>
+      {product?.generic && <GenericOptions product={product} options={o.options} dims={{ w: o.width, h: o.height }} onChange={(opt) => setOpeningOptions(o.id, opt)} />}
       {isExisting && <ConditionField value={o.condition} onChange={(c) => setCondition({ kind: 'opening', id: o.id }, c)} />}
       <h4>{isExisting ? 'Modèle actuel' : 'Remplacer par'}</h4>
       <ProductPicker categories={[o.kind === 'porte' ? 'porte' : 'fenetre']} only={(p) => p.subcategory !== 'toit'} currentId={o.productId} onPick={(p) => replaceOpening(o.id, p.id)} />
@@ -328,13 +332,15 @@ function FurniturePanel({ id }: { id: string }) {
   const building = useBuilding();
   const catalog = useStore((s) => s.catalog);
   const f = building.furniture.find((x) => x.id === id)!;
-  const p = productById(catalog, f.productId);
+  const base = productById(catalog, f.productId);
+  const p = itemProduct(catalog, f);
   return (
     <div className="panel">
       <h3>{p?.name ?? 'Meuble'}</h3>
       <p className="muted">
-        {p ? `${euro(p.price)} · ${Math.round((p.size?.w ?? 0) * 100)} × ${Math.round((p.size?.d ?? 0) * 100)} cm` : ''}
+        {p && base ? `${euro(itemPrice(base, f.options))} · ${Math.round((p.size?.w ?? 0) * 100)} × ${Math.round((p.size?.d ?? 0) * 100)} cm` : ''}
       </p>
+      {base?.generic && <GenericOptions product={base} options={f.options} onChange={(opt) => setFurnitureOptions(f.id, opt)} />}
       <div className="actions">
         <button className="btn" onClick={() => moveFurniture(f.id, f.x, f.y, (f.rotation + 90) % 360)}>
           Pivoter (R)

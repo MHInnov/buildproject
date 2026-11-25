@@ -266,6 +266,59 @@ function gableSurface(b: Building, catalog: Catalog) {
   return best ? fromProduct(productById(catalog, best[0]), FACADE) : FACADE;
 }
 
+/**
+ * Sous-face des débords (lambris sous l'avancée du toit, côté extérieur) : sous des combles aménagés le
+ * dessous du toit est un plafond blanc, mais dehors, sous les débords, on voit le bois.
+ */
+function soffit(f: RoofFrame, roof: Roof): THREE.BufferGeometry | null {
+  if ((roof.type !== 'deux-pans' && roof.type !== 'monopente') || roof.overhang < 0.02) return null;
+  const swap = roof.ridge === 'y';
+  const u0 = swap ? f.minY : f.minX;
+  const u1 = swap ? f.maxY : f.maxX;
+  const w0 = swap ? f.minX : f.minY;
+  const w1 = swap ? f.maxX : f.maxY;
+  const ov = roof.overhang;
+  const t = Math.tan((roof.pitch * Math.PI) / 180);
+  const drop = SLAB / Math.cos((roof.pitch * Math.PI) / 180) + 0.004;
+  const two = roof.type === 'deux-pans';
+  const cw = (w0 + w1) / 2;
+  const H = (w: number) => f.base + (two ? Math.min(w - w0, w1 - w) : w - w0) * t - drop;
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const quad = (ua: number, ub: number, wa: number, wb: number) => {
+    const c = [
+      [ua, wa],
+      [ub, wa],
+      [ub, wb],
+      [ua, wb],
+    ];
+    for (const i of [0, 1, 2, 0, 2, 3]) {
+      const [u, w] = c[i];
+      const p = swap ? [w, H(w), u] : [u, H(w), w];
+      pos.push(p[0], p[1], p[2]);
+      uv.push(u, w);
+    }
+  };
+  // Le long des égouts (et du haut d'un monopente), sur toute la longueur débords compris
+  quad(u0 - ov, u1 + ov, w0 - ov, w0);
+  quad(u0 - ov, u1 + ov, w1, w1 + ov);
+  // Le long des pignons, entre les égouts (en deux parties de part et d'autre du faîtage)
+  for (const [ua, ub] of [
+    [u0 - ov, u0],
+    [u1, u1 + ov],
+  ]) {
+    if (two) {
+      quad(ua, ub, w0, cw);
+      quad(ua, ub, cw, w1);
+    } else quad(ua, ub, w0, w1);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.computeVertexNormals();
+  return g;
+}
+
 /** Faîtage : rangée de tuiles faîtières (ou bande d'ardoise) qui couvre la jonction des deux pans. */
 function ridgeCap(f: RoofFrame, roof: Roof): THREE.BufferGeometry | null {
   if (roof.type !== 'deux-pans') return null;
@@ -309,6 +362,7 @@ export function RoofMesh({
       slopes: parts.slopes.map((p) => slab(p, roof.type === 'plat' ? 0.3 : SLAB)),
       timber: roofTimber(f, roof),
       cap: ridgeCap(f, roof),
+      soffit: soffit(f, roof),
       // Combles aménagés : les pignons sont les murs de l'étage, montés jusqu'au rampant
       gables: roof.eave != null ? [] : parts.gables.map((p) => gable(p, center, 0.3)),
     };
@@ -325,7 +379,8 @@ export function RoofMesh({
       {geo.slopes.map((g, i) => (
         <mesh key={i} geometry={g} material={[top, under, edge]} castShadow receiveShadow userData={ud} onClick={onClick} />
       ))}
-      {geo.cap && <mesh geometry={geo.cap} material={top} castShadow receiveShadow userData={ud} onClick={onClick} />}
+      {geo.soffit && <mesh geometry={geo.soffit} material={surfaceMaterial(ROOF_UNDERSIDE, selected, { side: THREE.DoubleSide })} receiveShadow userData={ud} onClick={onClick} />}
+      {geo.cap && <mesh geometry={geo.cap} material={surfaceMaterial({ color: `#${new THREE.Color(covering.color).multiplyScalar(0.72).getHexString()}`, roughness: 0.8 }, selected)} castShadow receiveShadow userData={ud} onClick={onClick} />}
       {geo.timber && <mesh geometry={geo.timber} material={surfaceMaterial((outdoorById(TIMBERS, roof.timber) ?? TIMBERS[0]).surface, selected)} castShadow receiveShadow userData={ud} onClick={onClick} />}
       {geo.gables.map((g, i) => (
         <mesh key={`g${i}`} geometry={g} material={surfaceMaterial(gableSurface(building, catalog), selected)} castShadow receiveShadow userData={ud} onClick={onClick} />

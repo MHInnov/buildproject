@@ -25,7 +25,7 @@ export function ProductPicker({ categories, subcategory, currentId, onPick, plac
   const step = useStore((s) => s.step);
   // Les matériaux « existants » (papier peint ancien, simple vitrage…) ne servent qu'au relevé.
   const catalog = useMemo(
-    () => ({ ...fullCatalog, products: fullCatalog.products.filter((p) => (step === 'existant' || !p.existingOnly) && (!only || only(p))) }),
+    () => ({ ...fullCatalog, products: fullCatalog.products.filter((p) => !p.hidden && (step === 'existant' || !p.existingOnly) && (!only || only(p))) }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [fullCatalog, step],
   );

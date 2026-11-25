@@ -78,8 +78,38 @@ export interface Product {
   existingOnly?: boolean;
   /** Tâche de dépose propre à ce matériau, utilisée quand le projet le remplace. */
   removal?: string;
+  /**
+   * Objet générique paramétrable : une seule fiche par type d'objet, réglée sur place (couleur, dimensions,
+   * vantaux, variante). Le prix est celui de la taille `size` et de la première variante, ajusté selon les réglages.
+   */
+  generic?: GenericSpec;
+  /** Ancienne fiche remplacée par un objet générique : gardée pour les projets existants, plus proposée. */
+  hidden?: boolean;
   /** Isolation : résistance thermique R (m².K/W). */
   rValue?: number;
+}
+
+export interface GenericStyle {
+  id: string;
+  label: string;
+  /** Coefficient de prix par rapport à la première variante. */
+  factor: number;
+  /** Mots-clés de rendu ajoutés au produit (ex. 'vitré'). */
+  tags?: string[];
+}
+
+export interface GenericSpec {
+  /** Variantes proposées ; la première est celle par défaut. */
+  styles?: GenericStyle[];
+  /** Nombres de vantaux proposés (portes, fenêtres). */
+  leaves?: number[];
+  /** Couleur réglable (palette + couleur libre). */
+  color?: boolean;
+  /** Dimensions d'un meuble réglables (les portes et fenêtres se règlent toujours sur le plan). */
+  sized?: boolean;
+  /** Bornes des dimensions (m). */
+  min?: { w: number; d: number; h: number };
+  max?: { w: number; d: number; h: number };
 }
 
 export interface LaborTask {

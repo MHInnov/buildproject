@@ -131,6 +131,20 @@ export interface Opening {
   sill: number;
   productId: string | null;
   condition?: Condition;
+  /** Réglages d'un modèle générique (couleur, vantaux, variante). */
+  options?: ItemOptions;
+}
+
+/** Réglages d'un objet générique paramétrable (voir model/generic.ts). */
+export interface ItemOptions {
+  /** Couleur choisie (sinon celle du produit). */
+  color?: string;
+  /** Nombre de vantaux : porte simple ou double, fenêtre à 1, 2 ou 3 ouvrants. */
+  leaves?: number;
+  /** Variante du modèle (porte vitrée, fenêtre coulissante, porte de garage basculante…). */
+  style?: string;
+  /** Dimensions d'un meuble, en mètres (largeur, profondeur, hauteur). */
+  size?: { w: number; d: number; h: number };
 }
 
 /**
@@ -176,6 +190,8 @@ export interface FurnitureItem {
   y: number;
   /** Rotation en degrés. */
   rotation: number;
+  /** Réglages d'un meuble générique (couleur, dimensions, variante). */
+  options?: ItemOptions;
 }
 
 export interface Building {
@@ -247,7 +263,7 @@ export type Operation =
   | { type: 'addWall'; wall: Wall }
   | { type: 'addOpening'; opening: Opening }
   | { type: 'removeOpening'; openingId: string }
-  | { type: 'replaceOpening'; openingId: string; productId: string }
+  | { type: 'replaceOpening'; openingId: string; productId: string; options?: ItemOptions }
   | { type: 'setFloor'; roomId: string; productId: string }
   | { type: 'addFloorZone'; zone: FloorZone }
   | { type: 'setFloorZone'; zoneId: string; productId: string }
@@ -258,6 +274,7 @@ export type Operation =
   | { type: 'addFurniture'; item: FurnitureItem }
   | { type: 'removeFurniture'; furnitureId: string }
   | { type: 'moveFurniture'; furnitureId: string; x: number; y: number; rotation: number }
+  | { type: 'setFurnitureOptions'; furnitureId: string; options?: ItemOptions }
   | { type: 'setRoofCovering'; productId: string }
   | { type: 'setRoofInsulation'; productId: string }
   | { type: 'addRoofWindow'; window: RoofWindow }

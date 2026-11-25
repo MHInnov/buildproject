@@ -171,7 +171,7 @@ export function ViewpointPanel({ id }: { id: string }) {
                   setBusy(true);
                   try {
                     const list = catalog.products
-                      .filter((p) => ['sol', 'peinture', 'mur', 'faience', 'porte', 'fenetre', 'meuble'].includes(p.category) && (isExisting || !p.existingOnly))
+                      .filter((p) => !p.hidden && ['sol', 'peinture', 'mur', 'faience', 'porte', 'fenetre', 'meuble'].includes(p.category) && (isExisting || !p.existingOnly))
                       .map((p) => ({ id: p.id, name: p.name, kind: p.category }));
                     setFound(await aiReadPhoto(photo, list));
                   } catch (e) {

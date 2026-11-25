@@ -81,7 +81,7 @@ export const FACADE: Surface = { color: '#9b5a40', pattern: { kind: 'bricks', w:
 export const PLASTER: Surface = { color: '#f1efe9', pattern: { kind: 'plaster' }, roughness: 0.92 };
 export const CEILING: Surface = { color: '#fbfaf7', pattern: { kind: 'plaster' }, roughness: 0.95 };
 export const RAW_FLOOR: Surface = { color: '#b9b2a6', pattern: { kind: 'concrete', w: 1, h: 1 }, roughness: 0.9 };
-export const ROOF_UNDERSIDE: Surface = { color: '#c9a77a', pattern: { kind: 'paneling', w: 0.6 }, roughness: 0.8 };
+export const ROOF_UNDERSIDE: Surface = { color: '#c9a77a', pattern: { kind: 'paneling', w: 0.12 }, roughness: 0.8 };
 
 /**
  * Boîte dont les coordonnées de texture sont en mètres.

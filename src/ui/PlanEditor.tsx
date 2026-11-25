@@ -20,6 +20,7 @@ import { useAsset } from '../assets';
 import { productById, type Product } from '../model/catalog';
 import { levelBelow, levelById, onLevel } from '../model/levels';
 import { groundLevel } from '../traceApply';
+import { itemProduct } from '../model/generic';
 import { isSloped, placeRoofWindow, ROOF_DEPTH, roofFrame, roofWindowHeight, roofWindowRect } from '../model/roof';
 import { patternTile, patternUrl } from '../textures/patterns';
 import { useUi } from '../uiState';
@@ -681,7 +682,7 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
         <line key={`lw-${w.id}`} x1={w.a.x} y1={w.a.y} x2={w.b.x} y2={w.b.y} stroke="var(--ink-soft)" strokeOpacity={0.18} strokeWidth={w.thickness} strokeLinecap="square" pointerEvents="none" />
       ))}
       {stairsBelow.map((f) => {
-        const s = productById(catalog, f.productId)?.size ?? { w: 0.8, d: 3, h: 2.8 };
+        const s = itemProduct(catalog, f)?.size ?? { w: 0.8, d: 3, h: 2.8 };
         return (
           <g key={`tr-${f.id}`} transform={`translate(${f.x} ${f.y}) rotate(${f.rotation})`} pointerEvents="none">
             <rect x={-s.w / 2} y={-s.d / 2} width={s.w} height={s.d} fill="none" stroke="var(--ink-soft)" strokeWidth={fs * 0.12} strokeDasharray={`${fs * 0.5} ${fs * 0.3}`} />
@@ -868,7 +869,7 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
 
       {/* Meubles */}
       {furniture.map((f) => {
-        const p = productById(catalog, f.productId);
+        const p = itemProduct(catalog, f);
         const s = p?.size ?? { w: 0.6, d: 0.6, h: 0.8 };
         const sel = isSel('furniture', f.id);
         return (
@@ -1111,7 +1112,7 @@ function OpeningShape({ o, w, selected, isNew, onSelect, onMenu }: { o: Opening;
     );
   }
   // Porte de garage : tablier dessiné en tirets (il remonte au plafond), sans arc
-  if (o.productId?.includes('garage')) {
+  if (o.productId?.includes('garage') && o.options?.style !== 'battante') {
     const off = th / 2 + 0.04;
     const q1 = { x: p1.x - n.x * off, y: p1.y - n.y * off };
     const q2 = { x: p2.x - n.x * off, y: p2.y - n.y * off };
@@ -1127,13 +1128,24 @@ function OpeningShape({ o, w, selected, isNew, onSelect, onMenu }: { o: Opening;
       </g>
     );
   }
-  // Porte : vantail + arc d'ouverture
-  const leaf = { x: p1.x + n.x * o.width, y: p1.y + n.y * o.width };
+  // Porte : vantail + arc d'ouverture ; double porte (ou garage battant) : deux vantaux depuis chaque bord
+  const double = (o.options?.leaves ?? 1) >= 2 || o.options?.style === 'battante';
+  const r = double ? o.width / 2 : o.width;
+  const mid = lerp(w.a, w.b, (t1 + t2) / 2);
+  const leaf = { x: p1.x + n.x * r, y: p1.y + n.y * r };
+  const leaf2 = { x: p2.x + n.x * r, y: p2.y + n.y * r };
+  const sweep = crossSign(w) ? 1 : 0;
   return (
     <g onPointerDown={onSelect} onContextMenu={onMenu} style={{ cursor: 'pointer' }}>
       <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke="var(--paper)" strokeWidth={th + 0.01} />
       <line x1={p1.x} y1={p1.y} x2={leaf.x} y2={leaf.y} stroke={stroke} strokeWidth={sw * 1.5} />
-      <path d={`M${leaf.x} ${leaf.y} A${o.width} ${o.width} 0 0 ${crossSign(w) ? 1 : 0} ${p2.x} ${p2.y}`} fill="none" stroke={stroke} strokeWidth={sw * 0.6} strokeDasharray="0.05 0.04" />
+      <path d={`M${leaf.x} ${leaf.y} A${r} ${r} 0 0 ${sweep} ${double ? `${mid.x} ${mid.y}` : `${p2.x} ${p2.y}`}`} fill="none" stroke={stroke} strokeWidth={sw * 0.6} strokeDasharray="0.05 0.04" />
+      {double && (
+        <>
+          <line x1={p2.x} y1={p2.y} x2={leaf2.x} y2={leaf2.y} stroke={stroke} strokeWidth={sw * 1.5} />
+          <path d={`M${leaf2.x} ${leaf2.y} A${r} ${r} 0 0 ${1 - sweep} ${mid.x} ${mid.y}`} fill="none" stroke={stroke} strokeWidth={sw * 0.6} strokeDasharray="0.05 0.04" />
+        </>
+      )}
       <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke="transparent" strokeWidth={th + 0.15} />
     </g>
   );
