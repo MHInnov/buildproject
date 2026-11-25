@@ -244,3 +244,15 @@ details.sub summary { cursor: pointer; font-size: 13px; }
 .plan__dim--muted text { fill: var(--ink-soft); font-weight: 500; }
 .plan__zone-label { fill: var(--ink); font-weight: 600; paint-order: stroke; stroke: var(--paper); stroke-width: 0.03; }
 .icon-btn.is-on { background: var(--accent-soft); color: var(--accent); }
+.plan__dim--opening line { stroke: #b45309; }
+.plan__dim--opening text { fill: #b45309; font-weight: 600; }
+
+/* Faces d'un mur (revêtement) */
+.faces { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 6px 0; }
+.face { display: flex; gap: 8px; align-items: center; text-align: left; border: 1px solid var(--line); background: var(--paper); border-radius: 8px; padding: 6px 8px; cursor: pointer; font: inherit; color: var(--ink); min-width: 0; }
+.face span { display: flex; flex-direction: column; min-width: 0; }
+.face small { color: var(--ink-soft); font-size: 11px; }
+.face strong { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.face.is-active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.face__swatch { width: 22px; height: 22px; border-radius: 5px; border: 1px solid rgba(0,0,0,.15); flex-shrink: 0; }
+.photo--static { cursor: default; }

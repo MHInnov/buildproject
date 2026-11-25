@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { NumberInput } from './NumberInput';
 import { setCondition, setRoofCovering, setRoofInsulation } from '../actions';
 import { productById } from '../model/catalog';
 import { euro } from '../model/estimate';
@@ -140,15 +141,12 @@ export function LevelPanel({ id }: { id: string }) {
       <div className="fields">
         <label className="field">
           <span>Hauteur sous plafond (m)</span>
-          <input
-            type="number"
-            step={0.05}
+          <NumberInput
             min={0.5}
+            max={10}
             value={l.height}
             disabled={ro}
-            onChange={(e) => {
-              const v = Number(e.target.value);
-              if (!(v > 0.3)) return;
+            onChange={(v) => {
               // Les murs du niveau suivent la nouvelle hauteur.
               edit((x, bb) => {
                 for (const w of bb.walls) if (w.levelId === id && Math.abs(w.height - x.height) < 0.01) w.height = v;
@@ -159,11 +157,11 @@ export function LevelPanel({ id }: { id: string }) {
         </label>
         <label className="field">
           <span>Altitude du sol (m)</span>
-          <input type="number" step={0.05} value={l.elevation} disabled={ro} onChange={(e) => edit((x) => void (x.elevation = Number(e.target.value)))} />
+          <NumberInput value={l.elevation} disabled={ro} onChange={(v) => edit((x) => void (x.elevation = v))} />
         </label>
         <label className="field">
           <span>Épaisseur du plancher (m)</span>
-          <input type="number" step={0.01} min={0.05} value={l.slab} disabled={ro} onChange={(e) => edit((x) => void (x.slab = Math.max(0.05, Number(e.target.value))))} />
+          <NumberInput min={0.05} max={2} value={l.slab} disabled={ro} onChange={(v) => edit((x) => void (x.slab = v))} />
         </label>
       </div>
       <p className="muted small">Pour des combles, la hauteur sous plafond est celle des murs bas (jambettes) ; la toiture fait le reste.</p>
@@ -251,12 +249,12 @@ export function RoofPanel() {
             {roof.type !== 'plat' && (
               <label className="field">
                 <span>Pente (°)</span>
-                <input type="number" min={5} max={70} value={roof.pitch} onChange={(e) => edit((r) => void (r.pitch = Math.min(70, Math.max(5, Number(e.target.value)))))} />
+                <NumberInput min={5} max={70} digits={0} value={roof.pitch} onChange={(v) => edit((r) => void (r.pitch = v))} />
               </label>
             )}
             <label className="field">
               <span>Débord (m)</span>
-              <input type="number" step={0.05} min={0} value={roof.overhang} onChange={(e) => edit((r) => void (r.overhang = Math.max(0, Number(e.target.value))))} />
+              <NumberInput min={0} max={3} value={roof.overhang} onChange={(v) => edit((r) => void (r.overhang = v))} />
             </label>
             {(roof.type === 'deux-pans' || roof.type === 'monopente') && (
               <label className="field">

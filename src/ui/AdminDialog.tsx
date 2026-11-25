@@ -1,6 +1,86 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { aiCheck } from '../ai';
+import { CSV_TEMPLATE, loadImported, mergeCatalogs, parseCatalogFile, saveImported, type ImportedCatalog } from '../catalogImport';
+import { DEMO_CATALOG } from '../data/catalog';
+import { newId } from '../model/geometry';
 import { AI_MODELS, useSettings } from '../settings';
+import { useStore } from '../store';
+
+/** Catalogues fournisseurs : import d'un fichier CSV ou JSON. */
+function CatalogImport() {
+  const [list, setList] = useState<ImportedCatalog[]>(loadImported);
+  const [report, setReport] = useState<string[]>([]);
+  const [brand, setBrand] = useState('');
+  const file = useRef<HTMLInputElement>(null);
+  const commit = (next: ImportedCatalog[]) => {
+    const warn = saveImported(next);
+    setList(next);
+    useStore.setState({ catalog: mergeCatalogs(DEMO_CATALOG, next) });
+    return warn;
+  };
+  return (
+    <section>
+      <h3>Catalogues fournisseurs</h3>
+      <p className="muted small">
+        Importez le catalogue d'une marque (meubles, sols, peintures…) au format CSV (Excel) ou JSON : ses produits apparaissent ensuite dans les choix de l'application, avec leur prix,
+        leur couleur et leurs dimensions. IKEA et Quick-Step ne publient pas de catalogue ouvert : il faut le fichier produits fourni par la marque ou par un distributeur partenaire.
+      </p>
+      <div className="inline-form">
+        <input placeholder="Marque par défaut (ex. Quick-Step)" value={brand} onChange={(e) => setBrand(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />
+        <button className="btn btn--primary" onClick={() => file.current?.click()}>
+          Importer un fichier…
+        </button>
+      </div>
+      <input
+        ref={file}
+        type="file"
+        accept=".csv,.json,.txt,text/csv,application/json"
+        hidden
+        onChange={async (e) => {
+          const f = e.target.files?.[0];
+          e.target.value = '';
+          if (!f) return;
+          const name = brand.trim() || f.name.replace(/\.[^.]+$/, '');
+          const r = parseCatalogFile(await f.text(), f.name, name);
+          const lines = [`${r.products.length} produit(s) importé(s) depuis « ${f.name} ».`, ...r.errors.slice(0, 8)];
+          if (r.errors.length > 8) lines.push(`… et ${r.errors.length - 8} autre(s) ligne(s) ignorée(s).`);
+          if (r.products.length) {
+            const warn = commit([...list, { id: newId('cat'), name, importedAt: new Date().toISOString().slice(0, 10), products: r.products }]);
+            if (warn) lines.push(warn);
+          }
+          setReport(lines);
+        }}
+      />
+      <p className="small">
+        <a href={`data:text/csv;charset=utf-8,${encodeURIComponent('\uFEFF' + CSV_TEMPLATE)}`} download="modele-catalogue.csv">
+          Télécharger le modèle CSV
+        </a>{' '}
+        <span className="muted">(colonnes : référence, nom, marque, catégorie, prix, unité, m² par paquet, couleur, dimensions en cm, aspect du sol…)</span>
+      </p>
+      {report.length > 0 && (
+        <ul className="log">
+          {report.map((l, i) => (
+            <li key={i}>{l}</li>
+          ))}
+        </ul>
+      )}
+      {list.length > 0 && (
+        <ul className="vp-list">
+          {list.map((c) => (
+            <li key={c.id} className="inline-form">
+              <span>
+                <strong>{c.name}</strong> · {c.products.length} produits · importé le {new Date(c.importedAt).toLocaleDateString('fr-FR')}
+              </span>
+              <button className="btn btn--small btn--danger" onClick={() => commit(list.filter((x) => x.id !== c.id))}>
+                Retirer
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
 
 /** Panneau d'administration : choix avec ou sans IA. */
 export function AdminDialog({ onClose }: { onClose: () => void }) {
@@ -69,6 +149,7 @@ export function AdminDialog({ onClose }: { onClose: () => void }) {
             </>
           )}
         </section>
+        <CatalogImport />
         <div className="actions">
           <button className="btn btn--primary" onClick={onClose}>
             Fermer

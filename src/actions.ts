@@ -1,6 +1,7 @@
-import { detectRooms, newId, wallSideFacingRoom } from './model/geometry';
+import { detectRooms, newId, projectOnSegment, wallLength, wallSideFacingRoom } from './model/geometry';
+import { productById } from './model/catalog';
 import { applyOperations, pushOperation as pushOp } from './model/operations';
-import type { Condition, FloorZone, FurnitureItem, Opening, Room, RoomLabel, Viewpoint, WallSide } from './model/types';
+import type { Condition, FloorZone, FurnitureItem, Opening, Point, Room, RoomLabel, Viewpoint, Wall, WallSide } from './model/types';
 import { useStore } from './store';
 
 /**
@@ -225,4 +226,56 @@ export function removeFloorZone(id: string) {
   if (isExisting()) st().editExisting((b) => void (b.floorZones = (b.floorZones ?? []).filter((z) => z.id !== id)));
   else st().addOperation({ type: 'removeFloorZone', zoneId: id });
   st().select(null);
+}
+
+/** Hauteur d'un mur (relevé dans l'existant, modification dans le projet). */
+export function setWallHeight(wallId: string, height: number) {
+  if (isExisting()) {
+    st().editExisting((b) => {
+      const w = b.walls.find((x) => x.id === wallId);
+      if (w) w.height = height;
+    });
+  } else st().addOperation({ type: 'setWallHeight', wallId, height });
+}
+
+/**
+ * Hauteurs propres à une pièce : plafond et niveau du sol.
+ * Si le plafond monte au-dessus des murs de la pièce (dans l'existant), les murs suivent.
+ */
+export function setRoomHeights(room: Room, patch: { ceilingHeight?: number; floorOffset?: number }) {
+  if (isExisting()) {
+    st().editExisting((b) => {
+      const l = ensureLabel(b.rooms, room.label);
+      Object.assign(l, patch);
+      const top = (l.floorOffset ?? 0) + (l.ceilingHeight ?? 0);
+      for (const id of room.wallIds) {
+        const w = b.walls.find((x) => x.id === id);
+        if (w && l.ceilingHeight !== undefined && w.height < top) w.height = Math.round(top * 100) / 100;
+      }
+    });
+  } else st().addOperation({ type: 'setRoomHeights', roomId: room.label.id, ...patch });
+}
+
+/** Pose une porte ou une fenêtre standard sur un mur, centrée au plus près du point donné. Renvoie son id. */
+export function addOpeningAt(wall: Wall, p: Point, kind: 'porte' | 'fenetre'): string | null {
+  const catalog = st().catalog;
+  const productId = kind === 'porte' ? 'porte-int-blanche' : 'chassis-pvc-blanc';
+  const prod = productById(catalog, productId);
+  const L = wallLength(wall);
+  const width = Math.min(prod?.size?.w ?? (kind === 'porte' ? 0.83 : 1.2), L - 0.1);
+  if (width < 0.3) return null;
+  const t = projectOnSegment(p, wall.a, wall.b).t;
+  const offset = Math.min(L - width / 2, Math.max(width / 2, Math.round(t * L * 20) / 20));
+  const o: Opening = {
+    id: newId('o'),
+    wallId: wall.id,
+    kind,
+    offset,
+    width,
+    height: prod?.size?.h ?? (kind === 'porte' ? 2.01 : 1.35),
+    sill: kind === 'porte' ? 0 : 0.9,
+    productId,
+  };
+  addOpening(o);
+  return o.id;
 }

@@ -116,7 +116,7 @@ function PlanStep() {
     { id: 'wall', label: 'Mur', hint: 'Cliquer point par point ; double-clic ou Échap pour terminer ; Maj pour un angle libre' },
     { id: 'door', label: 'Porte', hint: 'Cliquer sur un mur' },
     { id: 'window', label: 'Fenêtre', hint: 'Cliquer sur un mur' },
-    { id: 'viewpoint', label: 'Point de vue', hint: 'Cliquer là où la photo a été prise, puis glisser dans la direction visée' },
+    ...(isExisting ? [{ id: 'viewpoint' as Tool, label: 'Point de vue', hint: 'Cliquer là où la photo a été prise, puis glisser dans la direction visée' }] : []),
   ];
   const current = tools.find((t) => t.id === tool);
   const hint = tool === 'calibrate' ? "Cliquez les deux extrémités d'une cote connue du plan importé" : current?.hint;
@@ -217,7 +217,7 @@ function FileMenu() {
           <button onClick={() => { resetDemo(); setOpen(false); }}>Recharger la maison de démo</button>
           <button onClick={exportJson}>Exporter le projet (.json)</button>
           <button onClick={() => input.current?.click()}>Importer un projet…</button>
-          <button onClick={() => { setAdmin(true); setOpen(false); }}>Administration (IA)…</button>
+          <button onClick={() => { setAdmin(true); setOpen(false); }}>Administration (IA, catalogues)…</button>
           <input
             ref={input}
             type="file"

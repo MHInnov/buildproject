@@ -114,6 +114,10 @@ export interface RoomLabel {
   name: string;
   floorProductId: string | null;
   floorCondition?: Condition;
+  /** Hauteur sous plafond propre à la pièce (sinon celle du niveau), en mètres. */
+  ceilingHeight?: number;
+  /** Sol plus haut (+) ou plus bas (−) que le niveau : marche, estrade, pièce en contrebas, en mètres. */
+  floorOffset?: number;
 }
 
 /**
@@ -198,6 +202,8 @@ export type Operation =
   | { type: 'addFloorZone'; zone: FloorZone }
   | { type: 'setFloorZone'; zoneId: string; productId: string }
   | { type: 'removeFloorZone'; zoneId: string }
+  | { type: 'setWallHeight'; wallId: string; height: number }
+  | { type: 'setRoomHeights'; roomId: string; ceilingHeight?: number; floorOffset?: number }
   | { type: 'setWallFinish'; wallId: string; side: WallSide; productId: string }
   | { type: 'addFurniture'; item: FurnitureItem }
   | { type: 'removeFurniture'; furnitureId: string }

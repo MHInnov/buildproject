@@ -1,16 +1,17 @@
 import { create } from 'zustand';
 import { DEMO_CATALOG } from './data/catalog';
+import { loadImported, mergeCatalogs } from './catalogImport';
 import { demoProject, emptyProject } from './data/demoProject';
 import type { Catalog } from './model/catalog';
 import { migrateProject } from './model/levels';
 import { applyOperations, pushOperation } from './model/operations';
-import type { Building, Operation, Project } from './model/types';
+import type { Building, Operation, Project, WallSide } from './model/types';
 
 export type Step = 'existant' | 'projet' | 'visite' | 'artisans' | 'resume';
 export type Tool = 'select' | 'wall' | 'room' | 'zone' | 'door' | 'window' | 'furniture' | 'viewpoint' | 'calibrate';
 
 export type Selection =
-  | { kind: 'wall'; id: string }
+  | { kind: 'wall'; id: string; side?: WallSide }
   | { kind: 'viewpoint'; id: string }
   | { kind: 'roof'; id: 'roof' }
   | { kind: 'level'; id: string }
@@ -98,7 +99,7 @@ export const useStore = create<State>((set, get) => {
   }
   return {
     project,
-    catalog: DEMO_CATALOG,
+    catalog: mergeCatalogs(DEMO_CATALOG, loadImported()),
     step: 'existant',
     tool: 'select',
     levelId,

@@ -249,3 +249,50 @@ describe('textures photo', () => {
     expect(photoSize('tiles-large', { kind: 'tiles', w: 0.6, h: 0.6 })).toEqual([4.8, 4.8]);
   });
 });
+
+describe('hauteurs par pièce et par mur', () => {
+  it('les réglages successifs d’une pièce se cumulent en une opération', () => {
+    let ops = pushOperation([], { type: 'setRoomHeights', roomId: 'r-cuisine', ceilingHeight: 2.8 });
+    ops = pushOperation(ops, { type: 'setRoomHeights', roomId: 'r-cuisine', floorOffset: -0.2 });
+    expect(ops).toHaveLength(1);
+    const label = applyOperations(demoBuilding(), ops).rooms.find((r) => r.id === 'r-cuisine')!;
+    expect(label.ceilingHeight).toBe(2.8);
+    expect(label.floorOffset).toBe(-0.2);
+  });
+
+  it('une pièce en contrebas abaisse le sol sous les pieds', async () => {
+    const { walkWorld, groundAt } = await import('../../three/physics');
+    const b = applyOperations(demoBuilding(), [{ type: 'setRoomHeights', roomId: 'r-cuisine', floorOffset: -0.15 }]);
+    const room = detectRooms(b).find((r) => r.label.id === 'r-cuisine')!;
+    const world = walkWorld(b, DEMO_CATALOG);
+    expect(groundAt(world, room.label.at, 0)).toBeCloseTo(-0.15);
+  });
+
+  it('la hauteur d’un mur ajouté reste dans son opération', () => {
+    let ops = pushOperation([], { type: 'addWall', wall: w('nw', 0, 0, 3, 0) });
+    ops = pushOperation(ops, { type: 'setWallHeight', wallId: 'nw', height: 1.1 });
+    expect(ops).toHaveLength(1);
+    expect(applyOperations(empty(), ops).walls[0].height).toBe(1.1);
+  });
+});
+
+describe('import de catalogue fournisseur', () => {
+  it('lit le modèle CSV (séparateur ;, virgule décimale, dimensions en cm)', async () => {
+    const { parseCatalogFile, CSV_TEMPLATE } = await import('../../catalogImport');
+    const r = parseCatalogFile(CSV_TEMPLATE, 'modele.csv', 'Test');
+    expect(r.errors).toEqual([]);
+    expect(r.products).toHaveLength(4);
+    const [sol, carrelage, canape] = r.products;
+    expect(sol).toMatchObject({ category: 'sol', saleUnit: 'paquet', packSize: 2.22, price: 34.9, color: '#b88a55' });
+    expect(sol.pattern).toMatchObject({ kind: 'planks', w: 0.19, h: 1.28 });
+    expect(carrelage.pattern?.kind).toBe('tiles');
+    expect(canape).toMatchObject({ subcategory: 'canape', saleUnit: 'piece', size: { w: 2.28, d: 0.95, h: 0.83 } });
+  });
+
+  it('signale les lignes incomplètes et accepte le JSON', async () => {
+    const { parseCatalogFile } = await import('../../catalogImport');
+    const r = parseCatalogFile(JSON.stringify([{ name: 'Lampe', category: 'luminaire', price: 20 }, { name: 'Chaise', category: 'furniture', subcategory: 'chair', price: '45,00' }]), 'x.json', 'B');
+    expect(r.errors).toHaveLength(1);
+    expect(r.products[0]).toMatchObject({ category: 'meuble', subcategory: 'chaise', price: 45, brand: 'B' });
+  });
+});

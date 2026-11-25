@@ -47,7 +47,7 @@ export interface WalkWorld {
 const STEP_OVER = 0.15;
 
 export function walkWorld(b: Building, catalog: Catalog): WalkWorld {
-  const rooms = detectRooms(b).map((r) => ({ ...r, elevation: levelById(b, r.label.levelId)?.elevation ?? 0 }));
+  const rooms = detectRooms(b).map((r) => ({ ...r, elevation: (levelById(b, r.label.levelId)?.elevation ?? 0) + (r.label.floorOffset ?? 0) }));
   const stairs: StairInfo[] = b.furniture.flatMap((f) => {
     const p = productById(catalog, f.productId);
     const l = levelById(b, f.levelId);
@@ -61,7 +61,8 @@ export function walkWorld(b: Building, catalog: Catalog): WalkWorld {
     const l = levelById(b, f.levelId);
     if (!p?.size || !l || p.category === 'escalier' || p.size.h < STEP_OVER) continue;
     const a = (f.rotation * Math.PI) / 180;
-    obstacles.push({ x: f.x, y: f.y, ux: Math.cos(a), uy: Math.sin(a), hw: p.size.w / 2, hd: p.size.d / 2, bottom: l.elevation, top: l.elevation + p.size.h });
+    const base = l.elevation + floorOffsetAt(rooms, f.levelId, f);
+    obstacles.push({ x: f.x, y: f.y, ux: Math.cos(a), uy: Math.sin(a), hw: p.size.w / 2, hd: p.size.d / 2, bottom: base, top: base + p.size.h });
   }
   // Vantaux de porte : une porte ouverte se rabat dans la pièce, perpendiculaire au mur.
   const facing = new Map<string, Set<string>>();
@@ -98,6 +99,11 @@ export function walkWorld(b: Building, catalog: Catalog): WalkWorld {
     });
   }
   return { b, rooms, stairs, obstacles };
+}
+
+/** Décalage du sol de la pièce qui contient le point (estrade, pièce en contrebas). */
+export function floorOffsetAt(rooms: Room[], levelId: string, p: Point): number {
+  return rooms.find((r) => r.label.levelId === levelId && inRoom(p, r))?.label.floorOffset ?? 0;
 }
 
 function hitsObstacle(o: Obstacle, p: Point, y: number): boolean {

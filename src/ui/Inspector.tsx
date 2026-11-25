@@ -1,10 +1,12 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   addFloorZone,
   canEditZone,
   editFloorZone,
   removeFloorZone,
   setFloorZoneProduct,
+  setRoomHeights,
+  setWallHeight,
   finishRoomWalls,
   moveFurniture,
   removeFurniture,
@@ -27,26 +29,17 @@ import { useBuilding, useStore } from '../store';
 import { useUi } from '../uiState';
 import { ConditionField, HouseOverview, LevelPanel, RoofPanel } from './HousePanels';
 import { ProductPicker } from './ProductPicker';
+import { NumberInput } from './NumberInput';
 import { UnderlayPanel } from './UnderlayPanel';
 import { ViewpointPanel } from './ViewpointPanel';
 
 const n2 = (n: number) => Math.round(n * 100) / 100;
 
-function NumberField({ label, value, onChange, step = 0.01, min = 0, disabled }: { label: string; value: number; onChange: (v: number) => void; step?: number; min?: number; disabled?: boolean }) {
+function NumberField({ label, value, onChange, min = 0, max, disabled, title }: { label: string; value: number; onChange: (v: number) => void; min?: number; max?: number; disabled?: boolean; title?: string }) {
   return (
-    <label className="field">
+    <label className="field" title={title}>
       <span>{label}</span>
-      <input
-        type="number"
-        step={step}
-        min={min}
-        value={n2(value)}
-        disabled={disabled}
-        onChange={(e) => {
-          const v = Number(e.target.value);
-          if (Number.isFinite(v) && v >= min) onChange(v);
-        }}
-      />
+      <NumberInput value={value} min={min} max={max} disabled={disabled} onChange={onChange} />
     </label>
   );
 }
@@ -66,7 +59,7 @@ export function Inspector() {
 
   if (selection.kind === 'wall') {
     const w = building.walls.find((x) => x.id === selection.id);
-    return w ? <WallPanel w={w} rooms={rooms} isExisting={isExisting} /> : <NoSelection />;
+    return w ? <WallPanel key={`${w.id}-${selection.side ?? ''}`} w={w} rooms={rooms} isExisting={isExisting} initialSide={selection.side} /> : <NoSelection />;
   }
   if (selection.kind === 'room') {
     const r = rooms.find((x) => x.label.id === selection.id);
@@ -134,7 +127,7 @@ function NoSelection() {
   );
 }
 
-function WallPanel({ w, rooms, isExisting }: { w: Wall; rooms: Room[]; isExisting: boolean }) {
+function WallPanel({ w, rooms, isExisting, initialSide }: { w: Wall; rooms: Room[]; isExisting: boolean; initialSide?: WallSide }) {
   const catalog = useStore((s) => s.catalog);
   const editExisting = useStore((s) => s.editExisting);
   const L = wallLength(w);
@@ -147,10 +140,43 @@ function WallPanel({ w, rooms, isExisting }: { w: Wall; rooms: Room[]; isExistin
       const x = b.walls.find((y) => y.id === w.id);
       if (x) fn(x);
     });
+  // Face à revêtir : celle cliquée (visite 3D), sinon la première tournée vers une pièce.
+  const [side, setSide] = useState<WallSide>(initialSide ?? sides.find((s) => s.room)?.side ?? 'gauche');
+  const faceName = (s: { side: WallSide; room?: Room }) => (s.room ? `côté ${s.room.label.name}` : s.side === 'gauche' ? 'face A (extérieur)' : 'face B (extérieur)');
+  const active = sides.find((s) => s.side === side)!;
+  const current = productById(catalog, w.finish[side]);
 
   return (
     <div className="panel">
       <h3>{w.kind === 'porteur' ? 'Mur porteur' : 'Cloison'}</h3>
+      <h4>Peinture et revêtement</h4>
+      <div className="faces" role="radiogroup" aria-label="Face du mur">
+        {sides.map((s) => {
+          const p = productById(catalog, w.finish[s.side]);
+          return (
+            <button key={s.side} role="radio" aria-checked={s.side === side} className={`face ${s.side === side ? 'is-active' : ''}`} onClick={() => setSide(s.side)}>
+              <i className="face__swatch" style={{ background: p?.color ?? 'repeating-linear-gradient(45deg,#eee 0 4px,#fff 4px 8px)' }} />
+              <span>
+                <small>{faceName(s)}</small>
+                <strong>{p?.name ?? 'Enduit brut'}</strong>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <p className="muted small">
+        Choisissez ci-dessous la peinture, le papier peint ou la faïence de la face <strong>{faceName(active)}</strong>
+        {current ? ` (actuellement : ${current.name})` : ''}. Dans la visite 3D, cliquez directement sur la face du mur à changer.
+      </p>
+      <ProductPicker compact categories={['peinture', 'mur', 'faience']} currentId={w.finish[side]} onPick={(p) => setWallFinish(w.id, side, p.id)} placeholder="« blanc mat », « vert sauge », « faïence métro »…" />
+      {active.room && current && (
+        <div className="actions">
+          <button className="btn" onClick={() => finishRoomWalls(active.room!, current.id)} title="Même revêtement sur toutes les faces de murs de la pièce">
+            Appliquer à tous les murs de {active.room.label.name}
+          </button>
+        </div>
+      )}
+      <h4>Dimensions</h4>
       <div className="fields">
         <NumberField
           label="Longueur (m)"
@@ -164,7 +190,7 @@ function WallPanel({ w, rooms, isExisting }: { w: Wall; rooms: Room[]; isExistin
           }
         />
         <NumberField label="Épaisseur (m)" value={w.thickness} disabled={!isExisting} onChange={(v) => edit((x) => void (x.thickness = v))} />
-        <NumberField label="Hauteur (m)" value={w.height} disabled={!isExisting} onChange={(v) => edit((x) => void (x.height = v))} />
+        <NumberField label="Hauteur (m)" value={w.height} min={0.3} max={12} onChange={(v) => setWallHeight(w.id, v)} title={isExisting ? undefined : 'Dans le projet, la nouvelle hauteur apparaît dans les modifications'} />
         {isExisting && (
           <label className="field">
             <span>Type</span>
@@ -175,17 +201,6 @@ function WallPanel({ w, rooms, isExisting }: { w: Wall; rooms: Room[]; isExistin
           </label>
         )}
       </div>
-      {sides.map(({ side, room }) => {
-        const current = productById(catalog, w.finish[side]);
-        return (
-          <details key={side} className="sub">
-            <summary>
-              Face côté {room ? room.label.name : side === 'gauche' ? 'A' : 'B'} : <strong>{current?.name ?? 'non définie'}</strong>
-            </summary>
-            <ProductPicker compact categories={['peinture', 'mur', 'faience']} currentId={w.finish[side]} onPick={(p) => setWallFinish(w.id, side, p.id)} />
-          </details>
-        );
-      })}
       {isExisting && <ConditionField value={w.condition} onChange={(c) => setCondition({ kind: 'wall', id: w.id }, c)} label="État (fissures, humidité…)" />}
       <div className="actions">
         <button className="btn btn--danger" onClick={() => removeWall(w.id)}>
@@ -212,8 +227,28 @@ function RoomPanel({ r, isExisting }: { r: Room; isExisting: boolean }) {
       )}
       <p className="muted">
         {r.area.toLocaleString('fr-BE', { maximumFractionDigits: 1 })} m² au sol · périmètre {r.perimeter.toLocaleString('fr-BE', { maximumFractionDigits: 1 })} m
-        {level ? ` · ${level.name}, ${level.height.toLocaleString('fr-BE')} m sous plafond` : ''}
+        {level ? ` · ${level.name}` : ''}
       </p>
+      {level && (
+        <div className="fields">
+          <NumberField
+            label="Hauteur sous plafond (m)"
+            value={r.label.ceilingHeight ?? level.height}
+            min={1}
+            max={12}
+            title={`Par défaut celle du niveau (${level.height.toLocaleString('fr-BE')} m) ; une pièce peut avoir un plafond plus bas ou plus haut.`}
+            onChange={(v) => setRoomHeights(r, { ceilingHeight: v })}
+          />
+          <NumberField
+            label="Sol : décalage (m)"
+            value={r.label.floorOffset ?? 0}
+            min={-2}
+            max={2}
+            title="+0,15 : sol surélevé d'une marche ; −0,20 : pièce en contrebas"
+            onChange={(v) => setRoomHeights(r, { floorOffset: v })}
+          />
+        </div>
+      )}
       {under != null && (
         <p className="muted small">
           Sous toiture : {under.toLocaleString('fr-BE', { maximumFractionDigits: 1 })} m² avec plus de 1,80 m de hauteur libre.
@@ -228,10 +263,9 @@ function RoomPanel({ r, isExisting }: { r: Room; isExisting: boolean }) {
         </button>
       </div>
       <p className="muted small">Ou outil « Zone de sol » : glissez dans le plan pour délimiter la partie à revêtir.</p>
-      <details className="sub">
-        <summary>Revêtir tous les murs de la pièce</summary>
-        <ProductPicker compact categories={['peinture', 'mur', 'faience']} onPick={(p) => finishRoomWalls(r, p.id)} />
-      </details>
+      <h4>Peindre ou revêtir tous les murs de la pièce</h4>
+      <p className="muted small">Pour un seul mur : cliquez sur ce mur (dans la visite 3D, sur la face voulue).</p>
+      <ProductPicker compact categories={['peinture', 'mur', 'faience']} onPick={(p) => finishRoomWalls(r, p.id)} placeholder="« blanc mat », « greige »…" />
     </div>
   );
 }

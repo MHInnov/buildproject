@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { addFloorZone, addFurniture, addOpening, canEditZone, editFloorZone, moveFurniture, removeFloorZone, removeFurniture, removeOpening, removeWall, removeViewpoint, updateViewpoint } from '../actions';
+import { addFloorZone, addFurniture, addOpeningAt, canEditZone, editFloorZone, moveFurniture, removeFloorZone, removeFurniture, removeOpening, removeWall, removeViewpoint, updateViewpoint } from '../actions';
 import { useAsset } from '../assets';
 import { productById, type Product } from '../model/catalog';
 import { levelBelow, levelById, onLevel } from '../model/levels';
@@ -19,6 +19,7 @@ import {
   splitWall,
   wallLength,
   wallNormal,
+  wallSideFacingRoom,
 } from '../model/geometry';
 import type { Building, FloorZone, Opening, Point, Viewpoint, Wall, WallKind, WallSide } from '../model/types';
 import { useBuilding, useStore } from '../store';
@@ -237,31 +238,16 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
   function placeOpening(p: Point, kind: 'porte' | 'fenetre') {
     const hit = nearestWall(p);
     if (!hit) return;
-    const productId = kind === 'porte' ? 'porte-int-blanche' : 'chassis-pvc-blanc';
-    const prod = productById(catalog, productId);
-    const L = wallLength(hit.wall);
-    const width = Math.min(prod?.size?.w ?? (kind === 'porte' ? 0.83 : 1.2), L - 0.1);
-    const offset = Math.min(L - width / 2, Math.max(width / 2, Math.round(hit.t * L * 20) / 20));
-    const o: Opening = {
-      id: newId('o'),
-      wallId: hit.wall.id,
-      kind,
-      offset,
-      width,
-      height: prod?.size?.h ?? (kind === 'porte' ? 2.01 : 1.35),
-      sill: kind === 'porte' ? 0 : 0.9,
-      productId,
-    };
-    addOpening(o);
+    const id = addOpeningAt(hit.wall, p, kind);
     setTool('select');
-    select({ kind: 'opening', id: o.id });
+    if (id) select({ kind: 'opening', id });
   }
 
   // ----- Événements -----
   // Point de vue sélectionné : un clic n'importe où sur le plan (même sur une pièce ou un meuble) l'y place,
   // un glisser donne la direction de la photo. Échap pour terminer.
   const onPointerDownCapture = (e: React.PointerEvent) => {
-    if (tool !== 'select' || e.button !== 0 || selection?.kind !== 'viewpoint') return;
+    if (!isExisting || tool !== 'select' || e.button !== 0 || selection?.kind !== 'viewpoint') return;
     if ((e.target as Element).closest?.('[data-vp]')) return;
     const v = project.viewpoints.find((x) => x.id === selection.id);
     if (!v) return;
@@ -293,7 +279,7 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
       ui.set({ calibration: [...pts, raw] });
       return;
     }
-    if (tool === 'viewpoint') {
+    if (tool === 'viewpoint' && isExisting) {
       const v: Viewpoint = { id: newId('v'), levelId, x: Math.round(raw.x * 20) / 20, y: Math.round(raw.y * 20) / 20, direction: 0, fov: 66, eye: 1.5, assetId: null, caption: '' };
       useStore.getState().updateProject((pr) => void pr.viewpoints.push(v));
       setTool('select');
@@ -427,8 +413,13 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
   const wallMenu = (e: React.MouseEvent, w: Wall) => {
     const p = at(e);
     select({ kind: 'wall', id: w.id });
+    const faces = (['gauche', 'droite'] as WallSide[]).flatMap((side) => {
+      const room = rooms.find((r) => r.wallIds.includes(w.id) && wallSideFacingRoom(w, r) === side);
+      return room ? [{ label: `Peindre / revêtir côté ${room.label.name}…`, run: () => select({ kind: 'wall', id: w.id, side }) }] : [];
+    });
     const items: MenuItem[] = [
-      { label: 'Revêtement et dimensions…', run: () => select({ kind: 'wall', id: w.id }) },
+      ...faces,
+      { label: 'Hauteur et dimensions…', run: () => select({ kind: 'wall', id: w.id }) },
       { label: 'Ajouter une porte ici', run: () => placeOpening(p, 'porte') },
       { label: 'Ajouter une fenêtre ici', run: () => placeOpening(p, 'fenetre') },
     ];
@@ -482,10 +473,21 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
   };
   const viewpointMenu = (e: React.MouseEvent, v: Viewpoint) => {
     select({ kind: 'viewpoint', id: v.id });
-    openMenu(e, v.caption || 'Point de vue', [
-      { label: 'Photo et réglages…', run: () => select({ kind: 'viewpoint', id: v.id }) },
-      { label: 'Supprimer le point de vue', run: () => removeViewpoint(v.id), danger: true },
-    ]);
+    openMenu(
+      e,
+      v.caption || 'Point de vue',
+      isExisting
+        ? [
+            { label: 'Photo et réglages…', run: () => select({ kind: 'viewpoint', id: v.id }) },
+            { label: 'Supprimer le point de vue', run: () => removeViewpoint(v.id), danger: true },
+          ]
+        : [
+            { label: 'Voir la photo du projet', run: () => {
+              useUi.getState().set({ viewFrom: v.id });
+              useStore.getState().setStep('visite');
+            } },
+          ],
+    );
   };
   /** Pendant le tracé d'un mur, le clic droit sur un élément termine aussi le mur. */
   const ctx = (fn: (e: React.MouseEvent) => void) => (e: React.MouseEvent) => {
@@ -507,11 +509,13 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
       } },
       { label: 'Tracer une pièce', run: () => setTool('room') },
       { label: 'Tracer une zone de sol', run: () => setTool('zone') },
-      { label: 'Point de vue photo ici', run: () => {
-        const v: Viewpoint = { id: newId('v'), levelId, x: r05(p.x), y: r05(p.y), direction: 0, fov: 66, eye: 1.5, assetId: null, caption: '' };
-        useStore.getState().updateProject((pr) => void pr.viewpoints.push(v));
-        select({ kind: 'viewpoint', id: v.id });
-      } },
+      ...(isExisting
+        ? [{ label: 'Point de vue photo ici', run: () => {
+            const v: Viewpoint = { id: newId('v'), levelId, x: r05(p.x), y: r05(p.y), direction: 0, fov: 66, eye: 1.5, assetId: null, caption: '' };
+            useStore.getState().updateProject((pr) => void pr.viewpoints.push(v));
+            select({ kind: 'viewpoint', id: v.id });
+          } }]
+        : []),
       { label: showDims ? 'Masquer les cotes des murs' : 'Afficher les cotes des murs', run: toggleDims },
       { label: 'Recadrer sur la maison', run: () => fit(building) },
     ]);
@@ -561,7 +565,7 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
       <button className="icon-btn" onClick={() => zoom(0.8)} aria-label="Zoomer">+</button>
       <button className="icon-btn" onClick={() => zoom(1.25)} aria-label="Dézoomer">−</button>
       <button className="icon-btn" onClick={() => fit(building)} aria-label="Recadrer" title="Recadrer sur la maison">⤢</button>
-      {isExisting && (
+      {(
         <button className={`icon-btn ${showDims ? 'is-on' : ''}`} onClick={toggleDims} aria-pressed={showDims} title={showDims ? 'Masquer les cotes des murs' : 'Afficher les cotes des murs'}>
           ↔
         </button>
@@ -763,8 +767,8 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
         }),
       )}
 
-      {/* Cotes de tous les murs (plan de l'existant) */}
-      {isExisting && showDims &&
+      {/* Cotes de tous les murs */}
+      {showDims &&
         walls
           .filter((w) => w.id !== selectedWall?.id && wallLength(w) >= 0.3)
           .map((w) => {
@@ -775,6 +779,22 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
             const off = out * (Math.max(w.thickness, 0.06) / 2 + fs * 0.9);
             return <Dimension key={`dim-${w.id}`} a={w.a} b={w.b} offset={off} fs={fs * 0.85} muted />;
           })}
+
+      {/* Largeur des portes et fenêtres (côté opposé aux cotes du mur) */}
+      {showDims &&
+        building.openings.map((o) => {
+          const w = walls.find((x) => x.id === o.wallId);
+          if (!w) return null;
+          const L = wallLength(w);
+          if (L < 0.01) return null;
+          const p1 = lerp(w.a, w.b, (o.offset - o.width / 2) / L);
+          const p2 = lerp(w.a, w.b, (o.offset + o.width / 2) / L);
+          const n = wallNormal(w);
+          const mid = lerp(w.a, w.b, 0.5);
+          const out = (mid.x + n.x - center.x) ** 2 + (mid.y + n.y - center.y) ** 2 > (mid.x - n.x - center.x) ** 2 + (mid.y - n.y - center.y) ** 2 ? 1 : -1;
+          const label = `${o.kind === 'porte' ? 'P' : 'F'} ${Math.round(o.width * 100)}${o.kind === 'fenetre' ? ` × ${Math.round(o.height * 100)}` : ''}`;
+          return <Dimension key={`od-${o.id}`} a={p1} b={p2} offset={-out * (Math.max(w.thickness, 0.06) / 2 + fs * 0.7)} fs={fs * 0.8} text={label} opening />;
+        })}
 
       {/* Ouvertures */}
       {building.openings.map((o) => {
@@ -882,8 +902,9 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
           onDown={(e, mode) => {
             if (tool !== 'select' || e.button !== 0) return;
             e.stopPropagation();
-            (e.target as Element).setPointerCapture?.(e.pointerId);
             select({ kind: 'viewpoint', id: v.id });
+            if (!isExisting) return; // en projet, les points de vue sont figés
+            (e.target as Element).setPointerCapture?.(e.pointerId);
             setDrag({ kind: 'viewpoint', id: v.id, mode, x: v.x, y: v.y, direction: v.direction, moved: false });
           }}
         />
@@ -948,7 +969,7 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
   );
 }
 
-function Dimension({ a, b, offset, fs, muted }: { a: Point; b: Point; offset: number; fs: number; muted?: boolean }) {
+function Dimension({ a, b, offset, fs, muted, text, opening }: { a: Point; b: Point; offset: number; fs: number; muted?: boolean; text?: string; opening?: boolean }) {
   const L = dist(a, b);
   if (L < 0.05) return null;
   const n = wallNormal({ a, b } as Wall);
@@ -958,7 +979,7 @@ function Dimension({ a, b, offset, fs, muted }: { a: Point; b: Point; offset: nu
   let ang = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
   if (ang > 90 || ang < -90) ang += 180;
   return (
-    <g className={muted ? 'plan__dim plan__dim--muted' : 'plan__dim'} pointerEvents="none">
+    <g className={opening ? 'plan__dim plan__dim--opening' : muted ? 'plan__dim plan__dim--muted' : 'plan__dim'} pointerEvents="none">
       <line x1={pa.x} y1={pa.y} x2={pb.x} y2={pb.y} strokeWidth={fs * 0.08} />
       {/* Petits traits aux extrémités */}
       {[pa, pb].map((q, i) => {
@@ -966,7 +987,7 @@ function Dimension({ a, b, offset, fs, muted }: { a: Point; b: Point; offset: nu
         return <line key={i} x1={q.x - nn.x * fs * 0.35} y1={q.y - nn.y * fs * 0.35} x2={q.x + nn.x * fs * 0.35} y2={q.y + nn.y * fs * 0.35} strokeWidth={fs * 0.08} />;
       })}
       <text x={m.x} y={m.y - fs * 0.35} fontSize={fs} textAnchor="middle" transform={`rotate(${ang} ${m.x} ${m.y})`}>
-        {fmtM(L)}
+        {text ?? fmtM(L)}
       </text>
     </g>
   );

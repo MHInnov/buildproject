@@ -10,11 +10,13 @@ import { levelById } from '../model/levels';
 import type { Building, Viewpoint } from '../model/types';
 import { useBuilding, useStore, type Selection } from '../store';
 import { useUi } from '../uiState';
-import { BuildingMeshes, switchSpots } from './BuildingMeshes';
+import { BuildingMeshes, switchSpots, type MenuTarget } from './BuildingMeshes';
+import { VisitMenu } from './VisitMenu';
 import { GRASS, surfaceMaterial } from './materials';
 import { Avatar, preloadAvatar } from './Avatar';
 import { blocked, groundAt, walkWorld, type WalkWorld } from './physics';
 import { HdrEnvironment, PostEffects } from './Realism';
+import { PhotoComposite } from './PhotoComposite';
 
 type Mode = 'orbit' | 'perso' | 'walk' | 'photo';
 const EYE = 1.62;
@@ -71,6 +73,9 @@ function Ground() {
 function OrbitRig({ building }: { building: Building }) {
   const { camera, gl } = useThree();
   const bb = useMemo(() => bounds(building), [building]);
+  const controls = useRef<OrbitControls | null>(null);
+  // Mise à jour dans la boucle de rendu (pas de seconde boucle d'animation)
+  useFrame(() => controls.current?.update());
   useEffect(() => {
     camera.position.set(bb.cx + bb.size * 0.6, bb.size * 0.85, bb.cy + bb.size * 1.15);
     (camera as THREE.PerspectiveCamera).fov = 50;
@@ -80,19 +85,42 @@ function OrbitRig({ building }: { building: Building }) {
     c.maxPolarAngle = Math.PI / 2.02;
     c.enableDamping = true;
     c.update();
-    let raf = 0;
-    const loop = () => {
-      c.update();
-      raf = requestAnimationFrame(loop);
-    };
-    loop();
+    controls.current = c;
     return () => {
-      cancelAnimationFrame(raf);
+      controls.current = null;
       c.dispose();
     };
     // On ne recadre pas à chaque modification du projet.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [camera, gl]);
+  return null;
+}
+
+/**
+ * Résolution adaptative : si les images ralentissent, on coupe d'abord l'occlusion ambiante,
+ * puis on baisse la définition ; on la remonte quand tout redevient fluide.
+ */
+function AdaptiveQuality({ max, canDropAo, onDropAo }: { max: number; canDropAo: boolean; onDropAo: () => void }) {
+  const setDpr = useThree((s) => s.setDpr);
+  const st = useRef({ t: 0, n: 0, dpr: Math.min(window.devicePixelRatio || 1, max), calm: 0 });
+  useFrame((_, dt) => {
+    const s = st.current;
+    if (dt > 0.5) return; // onglet en arrière-plan
+    s.t += dt;
+    s.n++;
+    if (s.t < 1.5) return;
+    const fps = s.n / s.t;
+    s.t = 0;
+    s.n = 0;
+    if (fps < 40) {
+      s.calm = 0;
+      if (canDropAo) onDropAo();
+      else if (s.dpr > 0.75) setDpr((s.dpr = Math.max(0.75, s.dpr - 0.25)));
+    } else if (fps > 57 && s.dpr < max && ++s.calm >= 3) {
+      s.calm = 0;
+      setDpr((s.dpr = Math.min(max, s.dpr + 0.25)));
+    }
+  });
   return null;
 }
 
@@ -263,7 +291,7 @@ function PersoRig({ world, levelId, onHint }: { world: WalkWorld; levelId: strin
   const speedRef = useRef(0);
   const worldRef = useRef(world);
   worldRef.current = world;
-  const st = useRef({ pos: new THREE.Vector3(), heading: 0, yaw: Math.PI, look: 0, dragging: false, pitch: 0.3, dist: 2.8, phase: 0, near: null as Interactive | null, lastHint: 0, hint: null as string | null });
+  const st = useRef({ pos: new THREE.Vector3(), heading: 0, yaw: Math.PI, look: 0, dragging: false, frame: 0, camDist: null as number | null, pitch: 0.3, dist: 2.8, phase: 0, near: null as Interactive | null, lastHint: 0, hint: null as string | null });
   const items = useMemo(() => interactives(world.b), [world]);
   const itemsRef = useRef(items);
   itemsRef.current = items;
@@ -371,6 +399,9 @@ function PersoRig({ world, levelId, onHint }: { world: WalkWorld; levelId: strin
     // Caméra derrière le personnage, rapprochée si un mur s'interpose
     const head = s.pos.clone().add(new THREE.Vector3(0, 1.55, 0));
     const dir = new THREE.Vector3(Math.sin(s.yaw) * Math.cos(s.pitch), Math.sin(s.pitch), Math.cos(s.yaw) * Math.cos(s.pitch));
+    // Obstacle entre la tête et la caméra : recherché une image sur trois (le lancer de rayon coûte cher)
+    s.frame = (s.frame + 1) % 3;
+    if (s.frame === 0 || s.camDist === null) {
     ray.set(head, dir);
     ray.far = s.dist;
     const hit = ray.intersectObjects(scene.children, true).find((h) => {
@@ -382,7 +413,9 @@ function PersoRig({ world, levelId, onHint }: { world: WalkWorld; levelId: strin
       const m = (h.object as THREE.Mesh).material as THREE.Material;
       return !(m && !Array.isArray(m) && m.transparent);
     });
-    const d = hit ? Math.max(0.3, hit.distance - 0.2) : s.dist;
+    s.camDist = hit ? Math.max(0.3, hit.distance - 0.2) : s.dist;
+    }
+    const d = s.camDist ?? s.dist;
     camera.position.copy(head).addScaledVector(dir, d);
     // On vise un peu devant le personnage pour voir où il va.
     camera.lookAt(head.x - dir.x * 0.6, head.y - 0.1, head.z - dir.z * 0.6);
@@ -417,7 +450,7 @@ function PersoRig({ world, levelId, onHint }: { world: WalkWorld; levelId: strin
 }
 
 /** Promenade à hauteur d'yeux (vue subjective). */
-function WalkRig({ world, levelId, onPick, onUnlock }: { world: WalkWorld; levelId: string; onPick: (s: NonNullable<Selection>) => void; onUnlock: () => void }) {
+function WalkRig({ world, levelId, onPick, onUnlock, onMenu }: { world: WalkWorld; levelId: string; onPick: (s: NonNullable<Selection>) => void; onUnlock: () => void; onMenu: (t: MenuTarget) => void }) {
   const { camera, gl, scene } = useThree();
   const keys = useKeys();
   const pos = useRef(new THREE.Vector3());
@@ -438,10 +471,24 @@ function WalkRig({ world, levelId, onPick, onUnlock }: { world: WalkWorld; level
     gl.domElement.addEventListener('click', lock);
     c.addEventListener('unlock', onUnlock);
     const ray = new THREE.Raycaster();
-    const click = () => {
+    const click = (e: MouseEvent) => {
       if (!c.isLocked) return;
       ray.setFromCamera(new THREE.Vector2(0, 0), camera);
       const hits = ray.intersectObjects(scene.children, true);
+      if (e.button === 2) {
+        // Clic droit : menu d'actions sur l'élément visé par le viseur
+        for (const h of hits) {
+          let sel = findData(h.object, 'sel') as NonNullable<Selection> | null;
+          if (!sel) continue;
+          const mi = h.face?.materialIndex;
+          if (sel.kind === 'wall') sel = { ...sel, side: mi === 4 ? 'gauche' : mi === 5 ? 'droite' : undefined };
+          const r = gl.domElement.getBoundingClientRect();
+          c.unlock();
+          onMenu({ sel, at: { x: h.point.x, y: h.point.z }, screen: { x: r.left + r.width / 2, y: r.top + r.height / 2 } });
+          return;
+        }
+        return;
+      }
       for (const h of hits) {
         const act = findData(h.object, 'action') as { kind: string; id: string } | null;
         if (act?.kind === 'light') {
@@ -478,6 +525,7 @@ function WalkRig({ world, levelId, onPick, onUnlock }: { world: WalkWorld; level
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [camera, gl, scene]);
 
+  const euler = useMemo(() => new THREE.Euler(0, 0, 0, 'YXZ'), []);
   useFrame((_, dt) => {
     const { fwd, side, run } = axis(keys.current);
     const ui = useUi.getState();
@@ -485,14 +533,22 @@ function WalkRig({ world, levelId, onPick, onUnlock }: { world: WalkWorld; level
       const o = worldRef.current.b.openings.find((x) => x.id === id);
       return o?.kind === 'porte' ? !ui.toggled[id] : !!ui.toggled[id];
     };
-    if (fwd || side) {
+    const k = keys.current;
+    // Tourner et regarder au clavier : pas besoin de la souris en marchant (pavé tactile bloqué pendant la frappe).
+    const look = Number(k.has('PageUp') || k.has('KeyR')) - Number(k.has('PageDown') || k.has('KeyF'));
+    if (side || look) {
+      euler.setFromQuaternion(camera.quaternion);
+      euler.y -= side * (run ? 2.4 : 1.8) * Math.min(dt, 0.05);
+      euler.x = Math.max(-1.3, Math.min(1.3, euler.x + look * 1.2 * Math.min(dt, 0.05)));
+      camera.quaternion.setFromEuler(euler);
+    }
+    if (fwd) {
       const speed = (run ? 3 : 1.5) * Math.min(dt, 0.05);
       const dir = new THREE.Vector3();
       camera.getWorldDirection(dir);
       dir.y = 0;
       dir.normalize();
-      const right = new THREE.Vector3().crossVectors(dir, camera.up).normalize();
-      const move = dir.multiplyScalar(fwd * speed).add(right.multiplyScalar(side * speed));
+      const move = dir.multiplyScalar(fwd * speed);
       step(worldRef.current, pos.current, move.x, move.z, isOpen);
     } else pos.current.y = groundAt(worldRef.current, { x: pos.current.x, y: pos.current.z }, pos.current.y);
     camera.position.set(pos.current.x, camera.position.y + (pos.current.y + EYE - camera.position.y) * Math.min(1, dt * 10), pos.current.z);
@@ -509,9 +565,9 @@ function PhotoRig({ building, v, aspect }: { building: Building; v: Viewpoint; a
     cam.position.set(v.x, elev + v.eye, v.y);
     const a = (v.direction * Math.PI) / 180;
     cam.lookAt(v.x + Math.cos(a), elev + v.eye, v.y + Math.sin(a));
-    // Même champ horizontal que la photo, sur toute la largeur de l'écran
+    // Même cadrage que la photo affichée en « cover » (rognée en haut/bas ou sur les côtés)
     const tanH = Math.tan((v.fov * Math.PI) / 360);
-    cam.fov = (2 * Math.atan(tanH / (size.width / size.height)) * 180) / Math.PI;
+    cam.fov = (2 * Math.atan(tanH / Math.max(size.width / size.height, aspect)) * 180) / Math.PI;
     cam.updateProjectionMatrix();
   }, [camera, building, v, size, aspect]);
   return null;
@@ -532,6 +588,9 @@ function levelChoices(b: Building) {
 /** Étape 3 : visite du projet en 3D, vue d'ensemble, avec personnage ou à hauteur d'yeux. */
 export function Visit3D() {
   const building = useBuilding('projet');
+  const existingBuilding = useBuilding('existant');
+  const existingRef = useRef<THREE.Group>(null);
+  const projectRef = useRef<THREE.Group>(null);
   const catalog = useStore((s) => s.catalog);
   const selection = useStore((s) => s.selection);
   const select = useStore((s) => s.select);
@@ -564,8 +623,20 @@ export function Visit3D() {
   const [roofOn, setRoofOn] = useState(true);
   const [hint, setHint] = useState<string | null>(null);
   const [photoOpacity, setPhotoOpacity] = useState(0.5);
+  // Photo du projet (photo réelle + modifications) ou superposition de la maquette
+  const [photoView, setPhotoView] = useState<'projet' | 'maquette'>('projet');
+  const [after, setAfter] = useState(1);
   const [photoAspect, setPhotoAspect] = useState(4 / 3);
+  useEffect(() => {
+    if (!photo) return;
+    const im = new Image();
+    im.onload = () => im.naturalHeight && setPhotoAspect(im.naturalWidth / im.naturalHeight);
+    im.src = photo;
+  }, [photo]);
 
+  const [menu, setMenu] = useState<MenuTarget | null>(null);
+  // Occlusion ambiante coupée automatiquement si l'ordinateur peine (images saccadées)
+  const [aoOff, setAoOff] = useState(false);
   useEffect(() => {
     const onChange = () => setLocked(!!document.pointerLockElement);
     document.addEventListener('pointerlockchange', onChange);
@@ -598,14 +669,15 @@ export function Visit3D() {
 
   const changeMode = (m: Mode) => {
     if (m !== 'photo') setUi({ viewFrom: null });
+    setMenu(null);
     setMode(m);
   };
 
   return (
-    <div className="visit">
+    <div className="visit" onContextMenu={(e) => e.preventDefault()}>
       <Canvas
         shadows="soft"
-        dpr={[1, quality === 'haute' ? 1.75 : 1.25]}
+        dpr={[0.75, quality === 'haute' ? 1.5 : 1.15]}
         camera={{ fov: 60, near: 0.05, far: 400 }}
         gl={{ antialias: true }}
         onCreated={({ gl }) => {
@@ -616,10 +688,20 @@ export function Visit3D() {
         onPointerMissed={() => mode !== 'walk' && select(null)}
       >
         <HdrEnvironment preset="apartment" night={night} />
-        {quality === 'haute' && <PostEffects />}
+        {quality === 'haute' && !aoOff && !(mode === 'photo' && photoView === 'projet') && <PostEffects />}
+        {mode === 'photo' && photoView === 'projet' && vp && photo && (
+          <PhotoComposite photo={photo} photoAspect={photoAspect} existing={existingRef} project={projectRef} amount={after} exposure={1.12} />
+        )}
+        <AdaptiveQuality key={quality} max={quality === 'haute' ? 1.5 : 1.15} canDropAo={quality === 'haute' && !aoOff} onDropAo={() => setAoOff(true)} />
         <hemisphereLight args={[night ? '#28314a' : '#dfeaff', night ? '#0d0f14' : '#8a7d6a', night ? 0.12 : 0.55]} />
         <Sun building={building} night={night} />
         <Ground />
+        {mode === 'photo' && photoView === 'projet' && (
+          <group ref={existingRef} visible={false}>
+            <BuildingMeshes building={existingBuilding} catalog={catalog} selection={null} visibleLevels={visibleLevels} showRoof showCeiling night={night} />
+          </group>
+        )}
+        <group ref={projectRef}>
         <BuildingMeshes
           building={building}
           catalog={catalog}
@@ -629,15 +711,17 @@ export function Visit3D() {
           showCeiling={mode !== 'orbit'}
           night={night}
           onPick={mode === 'walk' ? undefined : select}
+          onMenu={mode === 'walk' || mode === 'photo' ? undefined : setMenu}
         />
+        </group>
         {mode === 'orbit' && <OrbitRig building={building} />}
         {mode === 'perso' && <PersoRig key={walkLevel} world={world} levelId={walkLevel} onHint={setHint} />}
-        {mode === 'walk' && <WalkRig key={walkLevel} world={world} levelId={walkLevel} onPick={select} onUnlock={() => setLocked(false)} />}
+        {mode === 'walk' && <WalkRig key={walkLevel} world={world} levelId={walkLevel} onPick={select} onUnlock={() => setLocked(false)} onMenu={setMenu} />}
         {mode === 'photo' && vp && <PhotoRig building={building} v={vp} aspect={photoAspect} />}
       </Canvas>
 
-      {mode === 'photo' && photo && (
-        <img className="visit__photo" src={photo} alt="" style={{ opacity: photoOpacity }} onLoad={(e) => setPhotoAspect(e.currentTarget.naturalWidth / e.currentTarget.naturalHeight)} />
+      {mode === 'photo' && photo && photoView === 'maquette' && (
+        <img className="visit__photo" src={photo} alt="" style={{ opacity: photoOpacity }} />
       )}
 
       <div className="visit__bar">
@@ -701,6 +785,23 @@ export function Visit3D() {
         )}
         {mode === 'photo' && (
           <div className="segmented">
+            <button className={photoView === 'projet' ? 'is-active' : ''} onClick={() => setPhotoView('projet')} title="La photo réelle, avec les modifications du projet appliquées">
+              Photo du projet
+            </button>
+            <button className={photoView === 'maquette' ? 'is-active' : ''} onClick={() => setPhotoView('maquette')} title="Superposer la maquette 3D à la photo pour vérifier le calage">
+              Calage maquette
+            </button>
+          </div>
+        )}
+        {mode === 'photo' && photoView === 'projet' && (
+          <div className="segmented">
+            <label className="toggle">
+              Avant <input type="range" min={0} max={1} step={0.05} value={after} onChange={(e) => setAfter(Number(e.target.value))} aria-label="Avant / après" /> Après
+            </label>
+          </div>
+        )}
+        {mode === 'photo' && photoView === 'maquette' && (
+          <div className="segmented">
             <label className="toggle">
               Photo <input type="range" min={0} max={1} step={0.05} value={photoOpacity} onChange={(e) => setPhotoOpacity(Number(e.target.value))} /> 3D
             </label>
@@ -710,8 +811,8 @@ export function Visit3D() {
       {mode === 'walk' && !locked && (
         <div className="visit__hint">
           <strong>Cliquez dans la scène pour entrer dans la maison.</strong>
-          <span>Avancer : Z/W ou ↑ · Reculer : S ou ↓ · Côtés : Q/A, D · Courir : Maj · E : ouvrir, allumer</span>
-          <span>Visez un sol, un mur, une fenêtre ou un meuble et cliquez pour le modifier. Échap pour reprendre la souris.</span>
+          <span>Avancer : Z/W ou ↑ · Reculer : S ou ↓ · Tourner : Q/A, D ou ← → · Regarder en haut / en bas : R, F · Courir : Maj · E : ouvrir, allumer</span>
+          <span>Le clavier suffit pour se déplacer ; la souris sert à viser. Clic : modifier l'élément visé · Clic droit : actions. Échap pour reprendre la souris.</span>
         </div>
       )}
       {mode === 'walk' && locked && <div className="visit__crosshair" />}
@@ -726,9 +827,12 @@ export function Visit3D() {
       )}
       {mode === 'photo' && vp && (
         <div className="visit__hint visit__hint--small">
-          Comparaison avec la photo « {vp.caption || 'point de vue'} » : faites glisser le curseur pour passer de la photo à la maquette.
+          {photoView === 'projet'
+            ? `Photo « ${vp.caption || 'point de vue'} » avec les modifications du projet : glissez le curseur pour comparer avant et après. Les zones inchangées restent celles de la photo.`
+            : `Calage : faites glisser le curseur pour passer de la photo à la maquette ; si elles ne se superposent pas, ajustez le point de vue dans la situation existante.`}
         </div>
       )}
+      {menu && <VisitMenu target={menu} building={building} onClose={() => setMenu(null)} />}
     </div>
   );
 }

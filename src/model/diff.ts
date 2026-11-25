@@ -60,6 +60,10 @@ export function describeOperation(op: Operation, catalog: Catalog, roomName: (id
       return `Zone de sol : ${pn(op.productId)}`;
     case 'removeFloorZone':
       return 'Retirer une zone de sol';
+    case 'setWallHeight':
+      return `Hauteur de mur : ${fmtDim(op.height)} m`;
+    case 'setRoomHeights':
+      return `${roomName(op.roomId)} : ${[op.ceilingHeight !== undefined ? `plafond à ${fmtDim(op.ceilingHeight)} m` : '', op.floorOffset ? `sol ${op.floorOffset > 0 ? '+' : ''}${fmtDim(op.floorOffset)} m` : ''].filter(Boolean).join(', ') || 'hauteurs'}`;
     case 'addFurniture':
       return `Ajouter : ${pn(op.item.productId)}`;
     case 'removeFurniture':

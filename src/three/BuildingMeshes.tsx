@@ -1,4 +1,4 @@
-import { useFrame } from '@react-three/fiber';
+import { useFrame, type ThreeEvent } from '@react-three/fiber';
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { Catalog, Product } from '../model/catalog';
@@ -11,6 +11,7 @@ import type { Selection } from '../store';
 import { useUi } from '../uiState';
 import { CEILING, ceramic, chrome, FACADE, fromProduct, glassMaterial, meterBox, plain, PLASTER, RAW_FLOOR, surfaceMaterial, type Surface } from './materials';
 import { RoofMesh } from './RoofMesh';
+import { floorOffsetAt } from './physics';
 
 export interface Pick {
   sel: NonNullable<Selection>;
@@ -26,9 +27,22 @@ interface Props {
   showCeiling: boolean;
   night: boolean;
   onPick?: (sel: NonNullable<Selection>) => void;
+  onMenu?: (t: MenuTarget) => void;
 }
 
-type ClickHandler = (e: { stopPropagation: () => void; delta: number }) => void;
+type ClickHandler = (e: { stopPropagation: () => void; delta: number; face?: { materialIndex: number } | null }) => void;
+
+/** Face d'un mur touchée : les boîtes de mur portent la face gauche en matériau 4, la droite en 5. */
+const faceSide = (face?: { materialIndex: number } | null): WallSide | undefined =>
+  face?.materialIndex === 4 ? 'gauche' : face?.materialIndex === 5 ? 'droite' : undefined;
+
+/** Élément visé par un clic droit dans la visite. */
+export interface MenuTarget {
+  sel: NonNullable<Selection>;
+  /** Point touché, en coordonnées du plan (mètres). */
+  at: Point;
+  screen: { x: number; y: number };
+}
 
 /** Interrupteur d'une pièce : à côté de la première porte, côté pièce, à 1,10 m. */
 export interface SwitchSpot {
@@ -66,7 +80,7 @@ export function switchSpots(b: Building, rooms: Room[]): SwitchSpot[] {
   return out;
 }
 
-export function BuildingMeshes({ building, catalog, selection, visibleLevels, showRoof, showCeiling, night, onPick }: Props) {
+export function BuildingMeshes({ building, catalog, selection, visibleLevels, showRoof, showCeiling, night, onPick, onMenu }: Props) {
   const rooms = useMemo(() => detectRooms(building), [building]);
   const toggled = useUi((s) => s.toggled);
   const lights = useUi((s) => s.lights);
@@ -76,7 +90,21 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
   const click = (sel: NonNullable<Selection>): ClickHandler => (e) => {
     if (!onPick || e.delta > 4) return;
     e.stopPropagation();
-    onPick(sel);
+    onPick(sel.kind === 'wall' ? { ...sel, side: faceSide(e.face) } : sel);
+  };
+  const contextMenu = (e: ThreeEvent<MouseEvent>) => {
+    if (!onMenu) return;
+    let o: THREE.Object3D | null = e.object;
+    let sel: NonNullable<Selection> | null = null;
+    while (o && !sel) {
+      sel = (o.userData?.sel as NonNullable<Selection> | undefined) ?? null;
+      o = o.parent;
+    }
+    if (!sel) return;
+    e.stopPropagation();
+    e.nativeEvent.preventDefault();
+    if (sel.kind === 'wall') sel = { ...sel, side: faceSide(e.face) };
+    onMenu({ sel, at: { x: e.point.x, y: e.point.z }, screen: { x: e.nativeEvent.clientX, y: e.nativeEvent.clientY } });
   };
 
   // Faces de mur tournées vers une pièce (les autres sont des façades).
@@ -121,7 +149,7 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
   const roofLevel = building.roof?.levelId;
 
   return (
-    <group>
+    <group onContextMenu={contextMenu}>
       {building.levels
         .filter((l) => visibleLevels.has(l.id))
         .map((level) => {
@@ -136,6 +164,7 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
                   key={r.label.id}
                   room={r}
                   elevation={level.elevation}
+                  offset={r.label.floorOffset ?? 0}
                   thickness={floorThickness}
                   holes={holes.get(level.id) ?? []}
                   surface={fromProduct(productById(catalog, r.label.floorProductId), RAW_FLOOR)}
@@ -149,13 +178,13 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
                   <ZoneFloor
                     key={z.id}
                     zone={z}
-                    elevation={level.elevation}
+                    elevation={level.elevation + floorOffsetAt(lRooms, level.id, { x: z.x + z.w / 2, y: z.y + z.h / 2 })}
                     surface={fromProduct(productById(catalog, z.productId), RAW_FLOOR)}
                     selected={isSel('zone', z.id)}
                     onClick={click({ kind: 'zone', id: z.id })}
                   />
                 ))}
-              {showCeiling && !underRoof && lRooms.map((r) => <Ceiling key={`c-${r.label.id}`} room={r} height={level.elevation + level.height - 0.004} />)}
+              {showCeiling && !underRoof && lRooms.map((r) => <Ceiling key={`c-${r.label.id}`} room={r} height={level.elevation + roomCeiling(r, level) - 0.004} />)}
               {building.walls
                 .filter((w) => w.levelId === level.id)
                 .map((w) => (
@@ -178,8 +207,9 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
                 .filter((f) => f.levelId === level.id)
                 .map((f) => {
                   const p = productById(catalog, f.productId);
+                  const lift = floorOffsetAt(lRooms, level.id, f);
                   return p ? (
-                    <FurnitureMesh key={f.id} item={f} product={p} level={level} selected={isSel('furniture', f.id)} onClick={click({ kind: 'furniture', id: f.id })} />
+                    <FurnitureMesh key={f.id} item={f} product={p} level={lift ? { ...level, elevation: level.elevation + lift } : level} selected={isSel('furniture', f.id)} onClick={click({ kind: 'furniture', id: f.id })} />
                   ) : null;
                 })}
               {lRooms.map((r) => (
@@ -220,25 +250,32 @@ function shapeOf(poly: Point[], holes: Point[][] = []): THREE.Shape {
   return s;
 }
 
-function Floor({ room, elevation, thickness, holes, surface, selected, onClick }: { room: Room; elevation: number; thickness: number; holes: Point[][]; surface: Surface; selected: boolean; onClick: ClickHandler }) {
+/** Hauteur du plafond d'une pièce au-dessus du niveau (sol décalé + hauteur propre). */
+export function roomCeiling(r: Room, level: Level): number {
+  return (r.label.floorOffset ?? 0) + (r.label.ceilingHeight ?? level.height);
+}
+
+function Floor({ room, elevation, offset, thickness, holes, surface, selected, onClick }: { room: Room; elevation: number; offset: number; thickness: number; holes: Point[][]; surface: Surface; selected: boolean; onClick: ClickHandler }) {
   // Trémies entièrement contenues dans la pièce
   const inside = [...holes.filter((h) => h.every((p) => pointInside(p, room.polygon))), ...(room.holes ?? [])];
+  const depth = Math.max(0, thickness + offset);
   const geom = useMemo(() => {
     const shape = shapeOf(room.polygon, inside);
-    return thickness > 0 ? new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: false }) : new THREE.ShapeGeometry(shape);
+    // Sol décalé : la dalle s'épaissit (estrade) ou descend (pièce en contrebas).
+    return depth > 0.001 ? new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false }) : new THREE.ShapeGeometry(shape);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [room, thickness, JSON.stringify(inside)]);
-  const mats = thickness > 0 ? [surfaceMaterial(surface, selected), surfaceMaterial(CEILING)] : surfaceMaterial(surface, selected);
+  }, [room, depth, JSON.stringify(inside)]);
+  const mats = depth > 0.001 ? [surfaceMaterial(surface, selected), surfaceMaterial(CEILING)] : surfaceMaterial(surface, selected);
   return (
     <mesh
       geometry={geom}
       rotation-x={-Math.PI / 2}
-      position-y={elevation - thickness + 0.001}
+      position-y={elevation + offset - depth + 0.001}
       material={mats}
       userData={{ sel: { kind: 'room', id: room.label.id } }}
       onClick={onClick}
       receiveShadow
-      castShadow={thickness > 0}
+      castShadow={depth > 0.001}
     />
   );
 }
@@ -284,7 +321,8 @@ function Ceiling({ room, height }: { room: Room; height: number }) {
 
 /** Suspension au plafond + lumière de la pièce (éteinte = intensité nulle, sans recompiler les shaders). */
 function Lamp({ room, level, underRoof, on, night }: { room: Room; level: Level; underRoof: boolean; on: boolean; night: boolean }) {
-  const top = level.elevation + (underRoof ? Math.min(level.height + 1.2, 2.4) : level.height);
+  const h = roomCeiling(room, level);
+  const top = level.elevation + (underRoof ? Math.min(h + 1.2, 2.4) : h);
   const y = top - 0.45;
   const bulb = useMemo(() => new THREE.MeshStandardMaterial({ color: '#fff7e0', emissive: new THREE.Color('#ffd48a'), emissiveIntensity: 0, roughness: 0.4 }), []);
   bulb.emissiveIntensity = on ? 2.2 : 0;
@@ -301,7 +339,8 @@ function Lamp({ room, level, underRoof, on, night }: { room: Room; level: Level;
       <mesh position-y={y - 0.03} material={bulb}>
         <sphereGeometry args={[0.045, 12, 8]} />
       </mesh>
-      <pointLight position-y={y - 0.08} intensity={on ? (night ? 9 : 4) : 0} distance={0} decay={2} color="#ffe2b8" />
+      {/* Lumière montée seulement quand elle est allumée : chaque lumière coûte à chaque image. */}
+      {on && <pointLight position-y={y - 0.08} intensity={night ? 9 : 4} distance={0} decay={2} color="#ffe2b8" />}
     </group>
   );
 }
