@@ -153,10 +153,14 @@ function detectLevelRooms(building: Building, levelId: string): Room[] {
     const ka = key(w.a);
     const kb = key(w.b);
     if (ka === kb) continue;
-    nodes.set(ka, w.a);
-    nodes.set(kb, w.b);
-    const ab: HalfEdge = { from: ka, to: kb, wallId: w.id, angle: Math.atan2(w.b.y - w.a.y, w.b.x - w.a.x), used: false };
-    const ba: HalfEdge = { from: kb, to: ka, wallId: w.id, angle: Math.atan2(w.a.y - w.b.y, w.a.x - w.b.x), used: false };
+    // Les angles se calculent sur les nœuds (et non sur les extrémités de chaque mur, qui peuvent
+    // différer d'une fraction de millimètre après une découpe) pour que le parcours retrouve l'arête retour.
+    if (!nodes.has(ka)) nodes.set(ka, w.a);
+    if (!nodes.has(kb)) nodes.set(kb, w.b);
+    const na = nodes.get(ka)!;
+    const nb = nodes.get(kb)!;
+    const ab: HalfEdge = { from: ka, to: kb, wallId: w.id, angle: Math.atan2(nb.y - na.y, nb.x - na.x), used: false };
+    const ba: HalfEdge = { from: kb, to: ka, wallId: w.id, angle: Math.atan2(na.y - nb.y, na.x - nb.x), used: false };
     if (!out.has(ka)) out.set(ka, []);
     if (!out.has(kb)) out.set(kb, []);
     out.get(ka)!.push(ab);

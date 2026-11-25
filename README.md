@@ -59,6 +59,10 @@ Ouvrir ensuite http://localhost:7080. Le port 7080 est le port convenu pour ce p
 
 Les projets dessinés restent dans le navigateur (stockage local), pas dans le conteneur : on peut arrêter et relancer l'image sans rien perdre. Le menu ☰ permet de les exporter en JSON.
 
+## Retraçage d'un plan existant
+
+Importez le plan (image, scan ou PDF) dans l'existant : l'application reconnaît seule la façon dont les murs sont dessinés (noirs pleins, gris ou en couleur, hachurés, ou en double trait), leur épaisseur, les portes et les fenêtres, et en déduit l'échelle (murs extérieurs d'environ 30 cm). « Retracer les murs » dessine le tout ; étalonner sur une cote connue reste possible pour plus de précision. L'IA, si elle est activée, nomme en plus les pièces et ajoute les ouvertures oubliées.
+
 ## Avec ou sans IA
 
 Tout fonctionne sans IA : retraçage du plan par analyse d'image, report des éléments d'une photo par géométrie et couleur.

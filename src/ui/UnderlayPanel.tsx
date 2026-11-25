@@ -4,7 +4,7 @@ import { putAsset, shrinkImage, useAsset } from '../assets';
 import { dist, insertWall, newId, projectOnSegment } from '../model/geometry';
 import { levelById } from '../model/levels';
 import type { Opening, Wall } from '../model/types';
-import { guessScale, vectorize, type Bitmap } from '../model/vectorize';
+import { autoVectorize, guessScale, WALL_STYLE_LABELS, type AutoVectorizeResult, type Bitmap } from '../model/vectorize';
 import { aiReady, useSettings } from '../settings';
 import { useStore } from '../store';
 import { useUi } from '../uiState';
@@ -73,11 +73,20 @@ export function UnderlayPanel() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [realLength, setRealLength] = useState('');
-  const [minThick, setMinThick] = useState(7);
+  const [found, setFound] = useState<string | null>(null);
   const levelWalls = existing.walls.filter((w) => w.levelId === levelId).length;
 
   useEffect(() => () => useUi.getState().set({ tracePreview: null, moveUnderlay: false }), []);
-  useEffect(() => ui.set({ tracePreview: null }), [levelId, minThick]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    ui.set({ tracePreview: null });
+    setFound(null);
+  }, [levelId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Laisse le message « Analyse… » s'afficher avant le calcul, qui occupe le navigateur une à deux secondes. */
+  const nextFrame = () => new Promise((r) => setTimeout(r, 30));
+  const describe = (r: AutoVectorizeResult) =>
+    `Reconnu : ${WALL_STYLE_LABELS[r.style]}, murs de ${Math.round(r.thick * 100)} cm et cloisons de ${Math.round(r.thin * 100)} cm, ` +
+    `${r.walls.length} murs, ${r.openings.filter((o) => o.kind === 'porte').length} portes, ${r.openings.filter((o) => o.kind === 'fenetre').length} fenêtres, ${r.rooms} pièce${r.rooms > 1 ? 's' : ''}.`;
 
   const setUl = (fn: (u: NonNullable<typeof ul>) => void) =>
     editExisting((b) => {
@@ -91,8 +100,12 @@ export function UnderlayPanel() {
     try {
       const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
       const shrunk = await shrinkImage(isPdf ? await pdfToCanvas(file) : file, 2400, 0.86);
-      const { bmp, k } = await decode(shrunk.dataUrl, 1200);
-      const scale = guessScale(bmp) * k;
+      setBusy('Analyse du dessin des murs…');
+      await nextFrame();
+      const { bmp, k } = await decode(shrunk.dataUrl, 1600);
+      // L'aspect des murs est reconnu tout seul ; l'échelle s'en déduit (murs extérieurs ≈ 30 cm)
+      const auto = autoVectorize(bmp);
+      const scale = (auto?.scale ?? guessScale(bmp)) * k;
       const assetId = await putAsset(shrunk.dataUrl);
       editExisting((b) => {
         const l = b.levels.find((x) => x.id === levelId);
@@ -102,8 +115,10 @@ export function UnderlayPanel() {
         const y0 = walls.length ? Math.min(...walls.map((w) => Math.min(w.a.y, w.b.y))) : 0;
         l.underlay = { assetId, x: x0, y: y0, scale, width: shrunk.width, height: shrunk.height, opacity: 0.55, visible: true, calibrated: false };
       });
-      setTool('calibrate');
-      ui.set({ calibration: [] });
+      if (auto) {
+        ui.set({ tracePreview: maskToDataUrl(auto.mask, bmp.width, bmp.height) });
+        setFound(describe(auto));
+      } else setFound(null);
     } catch (e) {
       setError(`Impossible de lire ce fichier (${(e as Error).message}).`);
     }
@@ -113,23 +128,33 @@ export function UnderlayPanel() {
   async function trace(apply: boolean) {
     if (!ul || !src) return;
     setError(null);
-    setBusy(apply ? 'Retraçage…' : 'Analyse…');
+    setBusy(apply ? 'Retraçage…' : 'Analyse du dessin des murs…');
     try {
+      await nextFrame();
       const { bmp, k } = await decode(src, 1600);
-      const scale = ul.scale / k;
-      const r = vectorize(bmp, { scale, minThickness: minThick / 100 });
+      // Plan étalonné : on garde son échelle ; sinon elle est déduite de l'épaisseur des murs.
+      const r = autoVectorize(bmp, { scale: ul.calibrated ? ul.scale / k : null });
+      if (!r || !r.walls.length) {
+        throw new Error('aucun mur reconnu sur ce plan. Vérifiez qu’il est bien droit et lisible (un PDF d’architecte donne le meilleur résultat), ou dessinez les murs à la main par-dessus');
+      }
+      setFound(describe(r));
       if (!apply) {
         ui.set({ tracePreview: maskToDataUrl(r.mask, bmp.width, bmp.height) });
         setBusy(null);
         return;
       }
-      if (!r.walls.length) throw new Error('aucun mur trouvé : réduisez l’épaisseur minimale ou étalonnez le plan');
+      const scaleFix = ul.calibrated ? 1 : (r.scale * k) / ul.scale;
       if (levelWalls && !confirm(`Remplacer les ${levelWalls} murs déjà dessinés sur ce niveau par le retraçage ?`)) {
         setBusy(null);
         return;
       }
       const level_ = level!;
       editExisting((b) => {
+        // Échelle estimée affinée par le retraçage : le plan importé suit
+        if (scaleFix !== 1) {
+          const l = b.levels.find((x) => x.id === levelId);
+          if (l?.underlay) l.underlay.scale *= scaleFix;
+        }
         const old = new Set(b.walls.filter((w) => w.levelId === levelId).map((w) => w.id));
         b.walls = b.walls.filter((w) => !old.has(w.id));
         b.openings = b.openings.filter((o) => !old.has(o.wallId));
@@ -281,7 +306,7 @@ export function UnderlayPanel() {
                 )
               ) : (
                 <p className="muted small">
-                  {ul.calibrated ? 'Échelle mesurée. ' : 'Échelle estimée d’après l’épaisseur des murs. '}
+                  {ul.calibrated ? 'Échelle mesurée. ' : 'Échelle estimée d’après l’épaisseur des murs (facultatif : étalonner pour plus de précision). '}
                   <button className="link" onClick={() => { setTool('calibrate'); ui.set({ calibration: [] }); }}>
                     {ul.calibrated ? 'Refaire' : 'Étalonner sur une cote'}
                   </button>
@@ -290,19 +315,19 @@ export function UnderlayPanel() {
             </li>
             <li>
               <strong>Retracer automatiquement</strong>
-              <label className="field">
-                <span>Épaisseur minimale d'un mur : {minThick} cm</span>
-                <input type="range" min={3} max={25} value={minThick} onChange={(e) => setMinThick(Number(e.target.value))} />
-              </label>
               <div className="actions">
                 <button className="btn" onClick={() => void trace(false)} disabled={!!busy}>
-                  Aperçu
+                  Aperçu des murs reconnus
                 </button>
                 <button className="btn btn--primary" onClick={() => void trace(true)} disabled={!!busy}>
                   Retracer les murs
                 </button>
               </div>
-              <p className="muted small">Les murs épais deviennent porteurs, les trous dans les murs des portes (vides) ou des fenêtres (traits fins). Vérifiez et corrigez ensuite à la main.</p>
+              {found && <p className="small">{found}</p>}
+              <p className="muted small">
+                Aucun réglage : l'application reconnaît d'elle-même comment les murs sont dessinés (noirs, gris ou en couleur, hachurés, ou en double trait), leur épaisseur et les
+                portes et fenêtres. Les murs épais deviennent porteurs. Vérifiez et corrigez ensuite à la main.
+              </p>
             </li>
             {settings.aiEnabled && (
               <li>

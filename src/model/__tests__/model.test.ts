@@ -319,3 +319,16 @@ describe('connecteurs de catalogues', () => {
     await expect(searchConnector('brico', 'parquet', 10, 'sol')).rejects.toThrow(/non configuré/);
   });
 });
+
+describe('pièces avec des coordonnées non arrondies', () => {
+  it('ferme les pièces même quand les découpes laissent des écarts de l’ordre du dixième de millimètre', () => {
+    const b = empty();
+    // Coordonnées issues d'un retraçage (échelle quelconque) : les jonctions en T tombent à 0,1 mm près
+    const pts: [number, number, number, number, number][] = [
+      [1.16, 1.16, 1.16, 8.9, 0.3], [1.16, 5.52, 6.97, 5.52, 0.1], [6.97, 6, 10.84, 6, 0.1], [1.16, 8.9, 10.84, 8.9, 0.3],
+      [6.97, 1.16, 6.97, 8.9, 0.15], [10.84, 1.16, 10.84, 8.9, 0.3], [1.16, 1.16, 10.84, 1.16, 0.3],
+    ];
+    pts.forEach(([ax, ay, bx, by, t], i) => insertWall(b, { ...w(`t${i}`, ax, ay, bx, by), thickness: t }));
+    expect(detectRooms(b)).toHaveLength(4);
+  });
+});
