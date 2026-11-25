@@ -12,18 +12,21 @@ interface Props {
   onPick: (p: Product) => void;
   placeholder?: string;
   compact?: boolean;
+  /** Ne propose que les produits qui passent ce filtre. */
+  only?: (p: Product) => boolean;
 }
 
 const unitLabel = (p: Product) =>
   p.saleUnit === 'paquet' ? `/ paquet ${p.packSize?.toLocaleString('fr-BE')} m²` : p.saleUnit === 'pot' ? `/ pot ${p.packSize?.toLocaleString('fr-BE')} L` : '';
 
 /** Liste de produits filtrable en langage naturel (« grand, pas trop foncé, moins de 500 € »). */
-export function ProductPicker({ categories, subcategory, currentId, onPick, placeholder, compact }: Props) {
+export function ProductPicker({ categories, subcategory, currentId, onPick, placeholder, compact, only }: Props) {
   const fullCatalog = useStore((s) => s.catalog);
   const step = useStore((s) => s.step);
   // Les matériaux « existants » (papier peint ancien, simple vitrage…) ne servent qu'au relevé.
   const catalog = useMemo(
-    () => (step === 'existant' ? fullCatalog : { ...fullCatalog, products: fullCatalog.products.filter((p) => !p.existingOnly) }),
+    () => ({ ...fullCatalog, products: fullCatalog.products.filter((p) => (step === 'existant' || !p.existingOnly) && (!only || only(p))) }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [fullCatalog, step],
   );
   const [query, setQuery] = useState('');

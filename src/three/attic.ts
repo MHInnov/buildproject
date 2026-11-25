@@ -3,11 +3,9 @@
  * pignons jusqu'au faîtage).
  */
 import * as THREE from 'three';
-import { roofFrame } from '../model/roof';
+import { ROOF_DEPTH, roofFrame } from '../model/roof';
 import type { Building, Wall } from '../model/types';
 
-/** Épaisseur de la toiture (couverture, chevrons, plaques) sous le dessus du pan, mesurée à la verticale. */
-const ROOF_DEPTH = 0.3;
 
 export interface WallProfile {
   /** Hauteur visée avant la pente (le mur s'arrête plus bas s'il touche le rampant). */

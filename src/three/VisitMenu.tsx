@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { addFloorZone, addOpeningAt, moveFurniture, removeFloorZone, removeFurniture, removeOpening, removeWall } from '../actions';
+import { addFloorZone, addOpeningAt, moveFurniture, removeFloorZone, removeFurniture, removeOpening, removeWall, removeRoofWindow } from '../actions';
 import { productById } from '../model/catalog';
 import { detectRooms, newId, wallSideFacingRoom } from '../model/geometry';
 import type { Building } from '../model/types';
@@ -44,6 +44,15 @@ function itemsFor(t: MenuTarget, b: Building): { title: string; items: Item[] } 
         { label: open ? 'Fermer' : 'Ouvrir', run: () => ui.toggle(o.id) },
         { label: 'Remplacer par un autre modèle…', run: () => select(sel) },
         { label: isExisting ? 'Supprimer' : 'Supprimer et reboucher', run: () => removeOpening(o.id), danger: true },
+      ],
+    };
+  }
+  if (sel.kind === 'roofWindow') {
+    return {
+      title: 'Fenêtre de toit',
+      items: [
+        { label: 'Changer de modèle…', run: () => select(sel) },
+        { label: isExisting ? 'Supprimer' : 'Supprimer et refermer le toit', run: () => removeRoofWindow(sel.id), danger: true },
       ],
     };
   }

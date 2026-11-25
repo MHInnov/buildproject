@@ -84,6 +84,11 @@ Ce que fait le retraçage, dans l'ordre :
 - un plancher (dalle) couvre toute l'emprise du niveau du dessous, sous chaque étage, trémies d'escalier comprises ;
 - **jardin** : le plan d'implantation (maison en noir au milieu de sa parcelle) est reconnu ; la maison dessinée est superposée au rez-de-chaussée, ce qui donne l'échelle et l'orientation, et le contour de la parcelle devient le jardin (pelouse et haie en 3D, contour et surface sur le plan du rez-de-chaussée, retirable dans « Ma maison »).
 
+## Chambres sous mansarde et fenêtres de toit
+
+- **Étage aménagé sous la pente** : dans **Toiture** (bouton « ⌂ Toit »), cochez « Étage aménagé sous la pente (chambres mansardées) » et indiquez la hauteur, à l'intérieur, où la pente rencontre les murs extérieurs. Les murs extérieurs de l'étage côté gouttière s'arrêtent sous la pente, les pignons montent jusqu'au faîtage, le rampant fait le plafond en 3D et les zones de moins de 1,80 m sont hachurées sur le plan. Un étage saisi à l'ancienne (hauteur du niveau = murs bas) est converti.
+- **Fenêtres de toit (Velux)** : outil « Fenêtre de toit » sur le niveau qui porte le toit (ou « + Fenêtre de toit » dans Toiture). Un clic pose la fenêtre dans le pan, entre égout et faîtage ; on la glisse pour la déplacer et on choisit le modèle (55 × 98, 78 × 118, 78 × 140, 114 × 118…) dans le panneau, qui indique à quelle hauteur arrivent le bas et le haut de la fenêtre. Dans le projet, l'ajout, le remplacement ou la suppression d'une fenêtre de toit sont chiffrés (ouverture de la toiture, pose et raccord).
+
 ## Avec ou sans IA
 
 Tout fonctionne sans IA : retraçage du plan par analyse d'image, report des éléments d'une photo par géométrie et couleur.

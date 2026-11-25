@@ -14,6 +14,9 @@ import {
   removeWall,
   renameRoom,
   replaceOpening,
+  removeRoofWindow,
+  replaceRoofWindow,
+  editRoofWindow,
   setCondition,
   setRoomFloor,
   setWallFinish,
@@ -23,7 +26,7 @@ import { productById } from '../model/catalog';
 import { euro } from '../model/estimate';
 import { detectRooms, inRoom, newId, wallLength, wallSideFacingRoom } from '../model/geometry';
 import { levelById } from '../model/levels';
-import { areaAboveHeight } from '../model/roof';
+import { areaAboveHeight, placeRoofWindow, ROOF_DEPTH, roofFrame, roofWindowHeight, roofWindowLength } from '../model/roof';
 import type { FloorZone, Room, Wall, WallSide } from '../model/types';
 import { useBuilding, useStore } from '../store';
 import { useUi } from '../uiState';
@@ -69,6 +72,10 @@ export function Inspector() {
     const o = building.openings.find((x) => x.id === selection.id);
     if (!o) return <NoSelection />;
     return <OpeningPanel id={o.id} isExisting={isExisting} />;
+  }
+  if (selection.kind === 'roofWindow') {
+    const w = building.roof?.windows?.find((x) => x.id === selection.id);
+    return w ? <RoofWindowPanel id={w.id} isExisting={isExisting} /> : <NoSelection />;
   }
   if (selection.kind === 'zone') {
     const z = building.floorZones?.find((x) => x.id === selection.id);
@@ -307,7 +314,7 @@ function OpeningPanel({ id, isExisting }: { id: string; isExisting: boolean }) {
       </div>
       {isExisting && <ConditionField value={o.condition} onChange={(c) => setCondition({ kind: 'opening', id: o.id }, c)} />}
       <h4>{isExisting ? 'Modèle actuel' : 'Remplacer par'}</h4>
-      <ProductPicker categories={[o.kind === 'porte' ? 'porte' : 'fenetre']} currentId={o.productId} onPick={(p) => replaceOpening(o.id, p.id)} />
+      <ProductPicker categories={[o.kind === 'porte' ? 'porte' : 'fenetre']} only={(p) => p.subcategory !== 'toit'} currentId={o.productId} onPick={(p) => replaceOpening(o.id, p.id)} />
       <div className="actions">
         <button className="btn btn--danger" onClick={() => removeOpening(o.id)}>
           {isExisting ? 'Supprimer' : 'Supprimer et reboucher'}
@@ -377,6 +384,65 @@ function ZonePanel({ z, rooms, isExisting }: { z: FloorZone; rooms: Room[]; isEx
       <div className="actions">
         <button className="btn btn--danger" onClick={() => removeFloorZone(z.id)}>
           Supprimer la zone
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Fenêtre de toit (Velux) : modèle, dimensions, position dans le pan. */
+function RoofWindowPanel({ id, isExisting }: { id: string; isExisting: boolean }) {
+  const building = useBuilding();
+  const catalog = useStore((s) => s.catalog);
+  const project = useStore((s) => s.project);
+  const roof = building.roof!;
+  const w = roof.windows!.find((x) => x.id === id)!;
+  const product = productById(catalog, w.productId);
+  const added = !isExisting && project.operations.some((o) => o.type === 'addRoofWindow' && o.window.id === id);
+  const editable = isExisting || added;
+  const f = roofFrame(building);
+  const h = roofWindowHeight(roof, w.length);
+  // Hauteur du bas et du haut de la fenêtre au-dessus du plancher (sous le rampant)
+  const heights = (() => {
+    if (!f) return null;
+    const t = Math.tan((roof.pitch * Math.PI) / 180);
+    const alongX = roof.ridge === 'x';
+    const c = alongX ? w.y : w.x;
+    const lo = alongX ? f.minY : f.minX;
+    const hi = alongX ? f.maxY : f.maxX;
+    const loSide = roof.type === 'monopente' || c < (lo + hi) / 2;
+    const d = loSide ? c - lo : hi - c;
+    const base = f.base - f.level.elevation - ROOF_DEPTH / Math.cos((roof.pitch * Math.PI) / 180);
+    return { low: base + (d - w.length / 2) * t, high: base + (d + w.length / 2) * t };
+  })();
+  const resize = (width: number, height: number) =>
+    editRoofWindow(id, (x) => {
+      x.width = width;
+      x.length = roofWindowLength(roof, height);
+      const at = placeRoofWindow(building, x, x.width, x.length);
+      if (at) Object.assign(x, at);
+    });
+  return (
+    <div className="panel">
+      <h3>Fenêtre de toit</h3>
+      <p className="muted">{product ? `${product.name}${product.price ? ` · ${euro(product.price)}` : ''}` : 'Modèle non défini'}</p>
+      <div className="fields">
+        <NumberField label="Largeur (m)" value={w.width} min={0.4} max={2} disabled={!editable} onChange={(v) => resize(v, h)} />
+        <NumberField label="Hauteur dans la pente (m)" value={Math.round(h * 100) / 100} min={0.5} max={2.5} disabled={!editable} onChange={(v) => resize(w.width, v)} />
+      </div>
+      {heights && (
+        <p className="muted small">
+          Bas de la fenêtre à {heights.low.toLocaleString('fr-BE', { maximumFractionDigits: 2 })} m du plancher, haut à {heights.high.toLocaleString('fr-BE', { maximumFractionDigits: 2 })} m
+          {heights.low > 1.3 ? ' : trop haut pour voir dehors assis, rapprochez-la de l\'égout.' : heights.high < 1.85 ? ' : rapprochez-la du faîtage pour voir dehors debout.' : '.'}
+        </p>
+      )}
+      <p className="muted small">{editable ? 'Glissez-la sur le plan pour la déplacer dans le pan.' : 'Fenêtre existante : remplacez-la ou supprimez-la.'}</p>
+      {isExisting && <ConditionField value={w.condition} onChange={(c) => editRoofWindow(id, (x) => void (x.condition = c))} />}
+      <h4>{isExisting ? 'Modèle actuel' : added ? 'Modèle' : 'Remplacer par'}</h4>
+      <ProductPicker categories={['fenetre']} only={(p) => p.subcategory === 'toit'} currentId={w.productId} onPick={(p) => replaceRoofWindow(id, p.id)} placeholder="« velux 78 × 118 », « blanc », « grand »…" />
+      <div className="actions">
+        <button className="btn btn--danger" onClick={() => removeRoofWindow(id)}>
+          {isExisting || added ? 'Supprimer' : 'Supprimer et refermer le toit'}
         </button>
       </div>
     </div>

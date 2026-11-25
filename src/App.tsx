@@ -5,7 +5,8 @@ import { migrateProject } from './model/levels';
 import { euro } from './model/estimate';
 import { detectRooms } from './model/geometry';
 import type { Project, WallKind } from './model/types';
-import { useStore, type Step, type Tool } from './store';
+import { isSloped } from './model/roof';
+import { useBuilding, useStore, type Step, type Tool } from './store';
 import { AdminDialog } from './ui/AdminDialog';
 import { Artisans } from './ui/Artisans';
 import { LevelTabs } from './ui/HousePanels';
@@ -109,6 +110,10 @@ function PlanStep() {
   const setTool = useStore((s) => s.setTool);
   const [wallKind, setWallKind] = useState<WallKind>('porteur');
   const isExisting = step === 'existant';
+  const roof = useBuilding().roof;
+  const levelId = useStore((s) => s.levelId);
+  // Fenêtres de toit : sur le niveau qui porte un toit en pente
+  const underRoof = isSloped(roof) && roof.levelId === levelId;
   const tools: { id: Tool; label: string; hint: string }[] = [
     { id: 'select', label: 'Sélection', hint: 'Cliquer pour choisir, glisser pour déplacer le plan ou un meuble, clic droit pour les actions' },
     { id: 'room', label: 'Pièce', hint: 'Glisser pour tracer une pièce rectangulaire' },
@@ -116,6 +121,7 @@ function PlanStep() {
     { id: 'wall', label: 'Mur', hint: 'Cliquer point par point ; double-clic ou Échap pour terminer ; Maj pour un angle libre' },
     { id: 'door', label: 'Porte', hint: 'Cliquer sur un mur' },
     { id: 'window', label: 'Fenêtre', hint: 'Cliquer sur un mur' },
+    ...(underRoof ? [{ id: 'roofWindow' as Tool, label: 'Fenêtre de toit', hint: 'Cliquer dans un pan du toit pour poser une fenêtre de toit (Velux)' }] : []),
     ...(isExisting ? [{ id: 'viewpoint' as Tool, label: 'Point de vue', hint: 'Cliquer là où la photo a été prise, puis glisser dans la direction visée' }] : []),
   ];
   const current = tools.find((t) => t.id === tool);

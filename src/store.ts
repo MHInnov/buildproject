@@ -8,12 +8,13 @@ import { applyOperations, pushOperation } from './model/operations';
 import type { Building, Operation, Project, WallSide } from './model/types';
 
 export type Step = 'existant' | 'projet' | 'visite' | 'artisans' | 'resume';
-export type Tool = 'select' | 'wall' | 'room' | 'zone' | 'door' | 'window' | 'furniture' | 'viewpoint' | 'calibrate';
+export type Tool = 'select' | 'wall' | 'room' | 'zone' | 'door' | 'window' | 'furniture' | 'viewpoint' | 'calibrate' | 'roofWindow';
 
 export type Selection =
   | { kind: 'wall'; id: string; side?: WallSide }
   | { kind: 'viewpoint'; id: string }
   | { kind: 'roof'; id: 'roof' }
+  | { kind: 'roofWindow'; id: string }
   | { kind: 'level'; id: string }
   | { kind: 'opening'; id: string }
   | { kind: 'room'; id: string }

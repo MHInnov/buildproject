@@ -164,7 +164,23 @@ function gable(poly: V[], center: V, thickness: number): THREE.BufferGeometry {
   return g;
 }
 
-export function RoofMesh({ building, catalog, selected, onClick }: { building: Building; catalog: Catalog; selected: boolean; onClick?: (e: { stopPropagation: () => void; delta: number }) => void }) {
+type Click = (e: { stopPropagation: () => void; delta: number }) => void;
+
+export function RoofMesh({
+  building,
+  catalog,
+  selected,
+  onClick,
+  selectedWindow,
+  onWindowClick,
+}: {
+  building: Building;
+  catalog: Catalog;
+  selected: boolean;
+  onClick?: Click;
+  selectedWindow?: string | null;
+  onWindowClick?: (id: string) => Click;
+}) {
   const roof = building.roof;
   const f = useMemo(() => roofFrame(building), [building]);
   const geo = useMemo(() => {
@@ -192,7 +208,7 @@ export function RoofMesh({ building, catalog, selected, onClick }: { building: B
       {geo.gables.map((g, i) => (
         <mesh key={`g${i}`} geometry={g} material={surfaceMaterial(FACADE, selected)} castShadow receiveShadow userData={ud} onClick={onClick} />
       ))}
-      {f && (roof.windows ?? []).map((w) => <RoofWindowMesh key={w.id} win={w} roof={roof} f={f} selected={selected} onClick={onClick} />)}
+      {f && (roof.windows ?? []).map((w) => <RoofWindowMesh key={w.id} win={w} roof={roof} f={f} selected={selected || selectedWindow === w.id} onClick={onWindowClick ? onWindowClick(w.id) : onClick} />)}
     </group>
   );
 }
@@ -220,7 +236,9 @@ function RoofWindowMesh({ win, roof, f, selected, onClick }: { win: RoofWindow; 
     const sUp = alongX ? v3(0, Math.sin(th), sgn * Math.cos(th)) : v3(sgn * Math.cos(th), Math.sin(th), 0);
     const n = new THREE.Vector3().crossVectors(sUp, u).normalize();
     if (n.y < 0) n.negate();
-    const m = new THREE.Matrix4().makeBasis(u, n, sUp);
+    // Repère direct (sinon, sur le second pan, la rotation est fausse et la fenêtre sort du toit)
+    const ux = new THREE.Vector3().crossVectors(n, sUp).normalize();
+    const m = new THREE.Matrix4().makeBasis(ux, n, sUp);
     const q = new THREE.Quaternion().setFromRotationMatrix(m);
     const center = v3(win.x, h, win.y);
     const L = win.length / Math.cos(th);
@@ -229,7 +247,7 @@ function RoofWindowMesh({ win, roof, f, selected, onClick }: { win: RoofWindow; 
   if (!place) return null;
   const { q, center, n, L } = place;
   const at = (k: number) => center.clone().addScaledVector(n, k).toArray() as [number, number, number];
-  const ud = { sel: { kind: 'roof', id: 'roof' } };
+  const ud = { sel: { kind: 'roofWindow', id: win.id } };
   return (
     <group>
       <mesh position={at(0.03)} quaternion={q} material={selected ? surfaceMaterial({ color: '#3d3f42' }, true) : FRAME} userData={ud} onClick={onClick} castShadow>

@@ -243,7 +243,10 @@ export type Operation =
   | { type: 'removeFurniture'; furnitureId: string }
   | { type: 'moveFurniture'; furnitureId: string; x: number; y: number; rotation: number }
   | { type: 'setRoofCovering'; productId: string }
-  | { type: 'setRoofInsulation'; productId: string };
+  | { type: 'setRoofInsulation'; productId: string }
+  | { type: 'addRoofWindow'; window: RoofWindow }
+  | { type: 'removeRoofWindow'; windowId: string }
+  | { type: 'replaceRoofWindow'; windowId: string; productId: string };
 
 export interface Project {
   version: 2;

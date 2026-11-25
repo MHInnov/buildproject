@@ -258,7 +258,14 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
           );
         })}
       {showRoof && building.roof && (
-        <RoofMesh building={building} catalog={catalog} selected={selection?.kind === 'roof'} onClick={click({ kind: 'roof', id: 'roof' })} />
+        <RoofMesh
+          building={building}
+          catalog={catalog}
+          selected={selection?.kind === 'roof'}
+          onClick={click({ kind: 'roof', id: 'roof' })}
+          selectedWindow={selection?.kind === 'roofWindow' ? selection.id : null}
+          onWindowClick={(id) => click({ kind: 'roofWindow', id })}
+        />
       )}
     </group>
   );

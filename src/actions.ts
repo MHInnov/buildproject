@@ -1,7 +1,8 @@
 import { detectRooms, newId, projectOnSegment, wallLength, wallSideFacingRoom } from './model/geometry';
 import { productById } from './model/catalog';
 import { applyOperations, pushOperation as pushOp } from './model/operations';
-import type { Condition, FloorZone, FurnitureItem, Opening, Point, Room, RoomLabel, Viewpoint, Wall, WallSide } from './model/types';
+import { placeRoofWindow, roofWindowLength } from './model/roof';
+import type { Condition, FloorZone, FurnitureItem, Opening, Point, Room, RoofWindow, RoomLabel, Viewpoint, Wall, WallSide } from './model/types';
 import { useStore } from './store';
 
 /**
@@ -278,4 +279,64 @@ export function addOpeningAt(wall: Wall, p: Point, kind: 'porte' | 'fenetre'): s
   };
   addOpening(o);
   return o.id;
+}
+
+// ----- Fenêtres de toit -----
+
+const DEFAULT_ROOF_WINDOW = 'velux-rotation-78x118';
+
+/** Bâtiment affiché (existant, ou projet avec ses modifications). */
+const currentBuilding = () => (isExisting() ? st().project.existing : applyOperations(st().project.existing, st().project.operations));
+
+/** Pose une fenêtre de toit (type Velux) près du point cliqué, dans le pan du toit. Renvoie son id, ou null hors du toit. */
+export function addRoofWindowAt(p: Point, productId = DEFAULT_ROOF_WINDOW): string | null {
+  const b = currentBuilding();
+  if (!b.roof) return null;
+  const prod = productById(st().catalog, productId);
+  const width = prod?.size?.w ?? 0.78;
+  const length = roofWindowLength(b.roof, prod?.size?.h ?? 1.18);
+  const at = placeRoofWindow(b, p, width, length);
+  if (!at) return null;
+  const win: RoofWindow = { id: newId('rw'), ...at, width, length, productId: isExisting() ? 'ex-fenetre-toit' : productId };
+  if (isExisting()) st().editExisting((x) => void (x.roof && (x.roof.windows ??= []).push(win)));
+  else st().addOperation({ type: 'addRoofWindow', window: win });
+  return win.id;
+}
+
+/** Modifie une fenêtre de toit relevée, ou ajoutée dans le projet (les autres ne se déplacent pas dans le projet). */
+export function editRoofWindow(id: string, fn: (w: RoofWindow) => void) {
+  if (isExisting()) {
+    st().editExisting((b) => {
+      const w = b.roof?.windows?.find((x) => x.id === id);
+      if (w) fn(w);
+    });
+    return;
+  }
+  st().updateProject((p) => {
+    for (const o of p.operations) if (o.type === 'addRoofWindow' && o.window.id === id) fn(o.window);
+  });
+}
+
+/** Change le modèle d'une fenêtre de toit ; ses dimensions suivent celles du modèle. */
+export function replaceRoofWindow(id: string, productId: string) {
+  const b = currentBuilding();
+  const prod = productById(st().catalog, productId);
+  const resize = (w: RoofWindow) => {
+    w.productId = productId;
+    if (prod?.size && b.roof) {
+      w.width = prod.size.w;
+      w.length = roofWindowLength(b.roof, prod.size.h);
+      const at = placeRoofWindow(b, w, w.width, w.length);
+      if (at) Object.assign(w, at);
+    }
+  };
+  const added = !isExisting() && st().project.operations.some((o) => o.type === 'addRoofWindow' && o.window.id === id);
+  if (isExisting() || added) editRoofWindow(id, resize);
+  else st().addOperation({ type: 'replaceRoofWindow', windowId: id, productId });
+}
+
+export function removeRoofWindow(id: string) {
+  if (isExisting()) st().editExisting((b) => void (b.roof && (b.roof.windows = (b.roof.windows ?? []).filter((w) => w.id !== id))));
+  else st().addOperation({ type: 'removeRoofWindow', windowId: id });
+  st().select(null);
 }

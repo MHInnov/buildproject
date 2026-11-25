@@ -8,6 +8,7 @@ export interface ProjectDiff {
   newWallIds: Set<string>;
   newFurnitureIds: Set<string>;
   newOpeningIds: Set<string>;
+  newRoofWindowIds: Set<string>;
 }
 
 const derivesFrom = (id: string, base: Set<string>) => {
@@ -31,6 +32,7 @@ export function projectDiff(project: Project): ProjectDiff {
     newWallIds: new Set(projected.walls.filter((w) => !derivesFrom(w.id, existingWalls)).map((w) => w.id)),
     newFurnitureIds: new Set(project.operations.flatMap((o) => (o.type === 'addFurniture' ? [o.item.id] : []))),
     newOpeningIds: new Set(project.operations.flatMap((o) => (o.type === 'addOpening' ? [o.opening.id] : []))),
+    newRoofWindowIds: new Set(project.operations.flatMap((o) => (o.type === 'addRoofWindow' ? [o.window.id] : []))),
   };
 }
 
@@ -74,5 +76,11 @@ export function describeOperation(op: Operation, catalog: Catalog, roomName: (id
       return `Toiture : ${pn(op.productId)}`;
     case 'setRoofInsulation':
       return `Isolation de toiture : ${pn(op.productId)}`;
+    case 'addRoofWindow':
+      return `Fenêtre de toit : ${pn(op.window.productId)}`;
+    case 'removeRoofWindow':
+      return 'Supprimer une fenêtre de toit';
+    case 'replaceRoofWindow':
+      return `Remplacer une fenêtre de toit : ${pn(op.productId)}`;
   }
 }

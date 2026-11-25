@@ -336,6 +336,56 @@ export function computeEstimate(project: Project, catalog: Catalog): Estimate {
         );
         return;
       }
+      case 'addRoofWindow': {
+        const p = productById(catalog, op.window.productId);
+        const pitch = projected.roof?.pitch ?? 45;
+        const h = op.window.length / Math.cos((pitch * Math.PI) / 180);
+        lines.push(
+          finalize({
+            id: `op-${i}`,
+            lot: 'menuiserie',
+            title: `Nouvelle fenêtre de toit ${Math.round(op.window.width * 100)} × ${Math.round(h * 100)} cm`,
+            subtitle: p?.name ?? 'Modèle à choisir',
+            materials: p ? [{ label: p.name, quantity: 1, unit: 'pièce', unitPrice: p.price, total: p.price }] : [],
+            labor: [labor(taskById(catalog, 'tremie-toit'), 1), labor(taskById(catalog, 'pose-fenetre-toit'), 1)],
+            warnings: ['Une fenêtre de toit sur la façade à rue peut demander un permis : à vérifier à la commune.'],
+          }),
+        );
+        return;
+      }
+      case 'replaceRoofWindow': {
+        const p = productById(catalog, op.productId);
+        const w = stateBefore(i).roof?.windows?.find((x) => x.id === op.windowId);
+        if (!p || !w) return;
+        lines.push(
+          finalize({
+            id: `op-${i}`,
+            lot: 'menuiserie',
+            title: 'Remplacement de fenêtre de toit',
+            subtitle: p.name,
+            materials: [{ label: p.name, quantity: 1, unit: 'pièce', unitPrice: p.price, total: p.price }],
+            labor: [labor(taskById(catalog, 'depose-fenetre-toit'), 1), labor(taskById(catalog, 'pose-fenetre-toit'), 1)],
+            warnings: [],
+          }),
+        );
+        return;
+      }
+      case 'removeRoofWindow': {
+        const w = stateBefore(i).roof?.windows?.find((x) => x.id === op.windowId);
+        if (!w) return;
+        lines.push(
+          finalize({
+            id: `op-${i}`,
+            lot: 'toiture',
+            title: "Suppression d'une fenêtre de toit",
+            subtitle: 'Toiture refermée et isolée',
+            materials: [],
+            labor: [labor(taskById(catalog, 'depose-fenetre-toit'), 1), labor(taskById(catalog, 'rebouchage-toit'), 1)],
+            warnings: [],
+          }),
+        );
+        return;
+      }
       case 'setRoofInsulation': {
         const p = productById(catalog, op.productId);
         const area = roofInsulationArea(projected);

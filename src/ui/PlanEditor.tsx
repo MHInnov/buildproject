@@ -1,10 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { addFloorZone, addFurniture, addOpeningAt, canEditZone, editFloorZone, moveFurniture, removeFloorZone, removeFurniture, removeOpening, removeWall, removeViewpoint, updateViewpoint } from '../actions';
+import {
+  addFloorZone,
+  addFurniture,
+  addOpeningAt,
+  addRoofWindowAt,
+  canEditZone,
+  editFloorZone,
+  editRoofWindow,
+  moveFurniture,
+  removeFloorZone,
+  removeFurniture,
+  removeOpening,
+  removeRoofWindow,
+  removeViewpoint,
+  removeWall,
+  updateViewpoint,
+} from '../actions';
 import { useAsset } from '../assets';
 import { productById, type Product } from '../model/catalog';
 import { levelBelow, levelById, onLevel } from '../model/levels';
 import { groundLevel } from '../traceApply';
-import { roofFrame } from '../model/roof';
+import { isSloped, placeRoofWindow, ROOF_DEPTH, roofFrame, roofWindowHeight, roofWindowRect } from '../model/roof';
 import { patternTile, patternUrl } from '../textures/patterns';
 import { useUi } from '../uiState';
 import { projectDiff } from '../model/diff';
@@ -42,6 +58,7 @@ type Drag =
   | { kind: 'zone'; start: Point; end: Point }
   | { kind: 'zoneMove'; id: string; dx: number; dy: number; x: number; y: number; moved: boolean }
   | { kind: 'zoneSize'; id: string; w: number; h: number }
+  | { kind: 'roofWindow'; id: string; dx: number; dy: number; x: number; y: number; moved: boolean }
   | null;
 
 /** Menu du clic droit. */
@@ -304,6 +321,12 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
       setDrag({ kind: 'zone', start: q, end: q });
     } else if (tool === 'door' || tool === 'window') {
       placeOpening(raw, tool === 'door' ? 'porte' : 'fenetre');
+    } else if (tool === 'roofWindow') {
+      const id = addRoofWindowAt(raw);
+      if (id) {
+        setTool('select');
+        select({ kind: 'roofWindow', id });
+      }
     } else if (tool === 'furniture' && pendingProductId) {
       const id = addFurniture(pendingProductId, Math.round(raw.x * 20) / 20, Math.round(raw.y * 20) / 20);
       setTool('select');
@@ -324,6 +347,10 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
       const x = Math.round((raw.x - drag.dx) * 20) / 20;
       const y = Math.round((raw.y - drag.dy) * 20) / 20;
       setDrag({ ...drag, x, y, moved: true });
+    } else if (drag.kind === 'roofWindow') {
+      const w = full.roof?.windows?.find((x) => x.id === drag.id);
+      const q = w && placeRoofWindow(full, { x: raw.x - drag.dx, y: raw.y - drag.dy }, w.width, w.length);
+      if (q) setDrag({ ...drag, x: q.x, y: q.y, moved: true });
     } else if (drag.kind === 'node') {
       setDrag({ ...drag, to: snapPoint(raw, { ...building, walls: building.walls.filter((w) => !samePoint(w.a, drag.from) && !samePoint(w.b, drag.from)) }) });
     } else if (drag.kind === 'room') {
@@ -346,6 +373,10 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
   const onPointerUp = () => {
     if (!drag) return;
     if (drag.kind === 'furniture' && drag.moved) moveFurniture(drag.id, drag.x, drag.y, drag.rotation);
+    if (drag.kind === 'roofWindow' && drag.moved) {
+      const { x, y } = drag;
+      editRoofWindow(drag.id, (w) => Object.assign(w, { x, y }));
+    }
     if (drag.kind === 'underlay' && (drag.dx || drag.dy)) {
       const { x, y, dx, dy } = drag;
       useStore.getState().editExisting((b) => {
@@ -454,6 +485,13 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
       { label: 'Dupliquer', run: () => select({ kind: 'furniture', id: addFurniture(f.productId, f.x + 0.3, f.y + 0.3, f.rotation) }) },
       { label: 'Remplacer par…', run: () => select({ kind: 'furniture', id }) },
       { label: 'Retirer', run: () => removeFurniture(f.id), danger: true },
+    ]);
+  };
+  const roofWindowMenu = (e: React.MouseEvent, id: string) => {
+    select({ kind: 'roofWindow', id });
+    openMenu(e, 'Fenêtre de toit', [
+      { label: 'Changer de modèle…', run: () => select({ kind: 'roofWindow', id }) },
+      { label: isExisting ? 'Supprimer' : 'Supprimer et refermer le toit', run: () => removeRoofWindow(id), danger: true },
     ]);
   };
   const roomMenu = (e: React.MouseEvent, roomId: string, name: string) => {
@@ -627,9 +665,6 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
       </defs>
       <rect x={view.x} y={view.y} width={view.w} height={viewH} fill="url(#grid)" />
 
-      {/* Combles aménagés : bandes sous les rampants où l'on tient à peine debout (moins de 1,80 m) */}
-      {full.roof && full.roof.levelId === levelId && full.roof.eave != null && <UnderSlope building={full} fs={fs} />}
-
       {/* Jardin (parcelle du plan d'implantation), au rez-de-chaussée */}
       {full.site && groundLevel(full).id === levelId && <SiteOutline parcel={full.site.parcel} fs={fs} />}
 
@@ -729,6 +764,9 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
           </g>
         );
       })}
+
+      {/* Combles aménagés : bandes sous les rampants où l'on tient à peine debout (moins de 1,80 m) */}
+      {full.roof && full.roof.levelId === levelId && full.roof.eave != null && <UnderSlope building={full} fs={fs} />}
 
       {/* Murs démolis (projet) */}
       {diff?.demolished.map((w, i) => (
@@ -867,6 +905,51 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
           </g>
         );
       })}
+
+      {/* Fenêtres de toit (dans le rampant, au-dessus du niveau qui porte le toit) */}
+      {isSloped(full.roof) &&
+        full.roof.levelId === levelId &&
+        (full.roof.windows ?? []).map((w0) => {
+          const roof = full.roof!;
+          const w = drag?.kind === 'roofWindow' && drag.id === w0.id ? { ...w0, x: drag.x, y: drag.y } : w0;
+          const r = roofWindowRect(roof, w);
+          const sel = isSel('roofWindow', w.id);
+          const movable = tool === 'select' && (isExisting || !!diff?.newRoofWindowIds.has(w.id));
+          const isNew = !!diff?.newRoofWindowIds.has(w.id);
+          return (
+            <g
+              key={w.id}
+              onContextMenu={ctx((e) => roofWindowMenu(e, w.id))}
+              onPointerDown={(e) => {
+                if (tool !== 'select' || e.button !== 0) return;
+                e.stopPropagation();
+                select({ kind: 'roofWindow', id: w.id });
+                if (!movable) return;
+                (e.target as Element).setPointerCapture?.(e.pointerId);
+                const raw = toWorld(e);
+                setDrag({ kind: 'roofWindow', id: w.id, dx: raw.x - w.x, dy: raw.y - w.y, x: w.x, y: w.y, moved: false });
+              }}
+              style={{ cursor: movable ? 'move' : tool === 'select' ? 'pointer' : undefined }}
+            >
+              <rect
+                x={r.x}
+                y={r.y}
+                width={r.w}
+                height={r.h}
+                fill="#cfe3f3"
+                fillOpacity={0.75}
+                stroke={sel ? 'var(--accent)' : isNew ? 'var(--new)' : 'var(--ink-soft)'}
+                strokeWidth={sel ? fs * 0.3 : fs * 0.14}
+                strokeDasharray={`${fs * 0.5} ${fs * 0.25}`}
+              />
+              <line x1={r.x} y1={r.y} x2={r.x + r.w} y2={r.y + r.h} stroke="var(--ink-soft)" strokeWidth={fs * 0.06} opacity={0.6} />
+              <line x1={r.x + r.w} y1={r.y} x2={r.x} y2={r.y + r.h} stroke="var(--ink-soft)" strokeWidth={fs * 0.06} opacity={0.6} />
+              <text x={w.x} y={r.y + r.h + fs * 1.1} fontSize={fs * 0.8} textAnchor="middle" fill="var(--ink-soft)" pointerEvents="none">
+                Velux {Math.round(w.width * 100)}×{Math.round(roofWindowHeight(roof, w.length) * 100)}
+              </text>
+            </g>
+          );
+        })}
 
       {/* Étiquettes des pièces (pas pour un interstice entre deux murs collés) */}
       {rooms.filter((r) => r.area >= 0.3 || !r.label.id.startsWith('auto')).map((r) => (
@@ -1139,7 +1222,7 @@ function UnderSlope({ building, fs }: { building: Building; fs: number }) {
   const f = roofFrame(building, roof);
   if (!f || (roof.type !== 'deux-pans' && roof.type !== 'monopente')) return null;
   const t = Math.tan((roof.pitch * Math.PI) / 180);
-  const d = Math.max(0, (1.8 - (roof.eave ?? 0)) / t);
+  const d = Math.max(0, (1.8 - (roof.eave ?? 0) + ROOF_DEPTH / Math.cos((roof.pitch * Math.PI) / 180)) / t);
   if (d < 0.05) return null;
   const alongX = roof.ridge === 'x';
   const strips = (roof.type === 'deux-pans' ? [0, 1] : [0]).map((side) => {

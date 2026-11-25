@@ -5,7 +5,7 @@ import { productById } from '../model/catalog';
 import { euro } from '../model/estimate';
 import { detectRooms, newId } from '../model/geometry';
 import { levelById, removeLevel } from '../model/levels';
-import { areaAboveHeight, roofArea, roofFrame } from '../model/roof';
+import { areaAboveHeight, eaveForKnee, isSloped, kneeHeight, roofArea, roofFrame } from '../model/roof';
 import { CONDITION_LABELS, ROOF_LABELS, type Building, type Condition, type Level, type RoofType } from '../model/types';
 import { useBuilding, useStore } from '../store';
 import { ProductPicker } from './ProductPicker';
@@ -252,7 +252,21 @@ export function RoofPanel() {
             {roof.type !== 'plat' && (
               <label className="field">
                 <span>Pente (°)</span>
-                <NumberInput min={5} max={70} digits={0} value={roof.pitch} onChange={(v) => edit((r) => void (r.pitch = v))} />
+                <NumberInput
+                  min={5}
+                  max={70}
+                  digits={0}
+                  value={roof.pitch}
+                  onChange={(v) =>
+                    editExisting((b) => {
+                      if (!b.roof) return;
+                      // Étage sous combles : les murs extérieurs gardent leur hauteur sous la pente
+                      const knee = kneeHeight(b, b.roof);
+                      b.roof.pitch = v;
+                      if (knee != null) b.roof.eave = eaveForKnee(b, b.roof, knee);
+                    })
+                  }
+                />
               </label>
             )}
             <label className="field">
@@ -269,9 +283,11 @@ export function RoofPanel() {
               </label>
             )}
           </div>
+          {isSloped(roof) && <AtticFields />}
           <ConditionField value={roof.condition} onChange={(c) => setCondition({ kind: 'roof', id: 'roof' }, c)} />
         </>
       )}
+      {isSloped(roof) && <RoofWindowsBlock />}
       <h4>
         {isExisting ? 'Couverture actuelle' : 'Nouvelle couverture'} {covering ? `: ${covering.name}` : ''}
       </h4>
@@ -299,5 +315,98 @@ export function RoofPanel() {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Étage sous combles (chambres mansardées) : le toit part plus bas que le haut des murs de l'étage, les murs
+ * extérieurs côté égout sont en partie sous la pente et le rampant forme le plafond.
+ */
+function AtticFields() {
+  const existing = useStore((s) => s.project.existing);
+  const editExisting = useStore((s) => s.editExisting);
+  const roof = existing.roof!;
+  const knee = kneeHeight(existing, roof);
+  const on = knee != null;
+  const toggle = (v: boolean) =>
+    editExisting((b) => {
+      const r = b.roof;
+      const l = r && levelById(b, r.levelId);
+      if (!r || !l) return;
+      if (!v) {
+        delete r.eave;
+        return;
+      }
+      let k = 1;
+      // Ancienne saisie (niveau aussi haut que ses murs bas) : l'étage reprend une hauteur normale, ses murs bas deviennent la pente
+      if (l.height < 1.8) {
+        k = l.height;
+        const old = l.height;
+        l.height = 2.5;
+        for (const w of b.walls) if (w.levelId === l.id && Math.abs(w.height - old) < 0.01) w.height = l.height;
+      }
+      r.eave = eaveForKnee(b, r, k);
+    });
+  return (
+    <>
+      <label className="toggle">
+        <input type="checkbox" checked={on} onChange={(e) => toggle(e.target.checked)} /> Étage aménagé sous la pente (chambres mansardées)
+      </label>
+      {on && (
+        <>
+          <div className="fields">
+            <label className="field" title="Hauteur, à l'intérieur, où la pente du toit rencontre les murs extérieurs côté gouttière">
+              <span>Murs extérieurs sous la pente (m)</span>
+              <NumberInput
+                min={0}
+                max={2.4}
+                value={knee}
+                onChange={(v) =>
+                  editExisting((b) => {
+                    if (b.roof) b.roof.eave = eaveForKnee(b, b.roof, v);
+                  })
+                }
+              />
+            </label>
+          </div>
+          <p className="muted small">
+            Les murs extérieurs de l'étage côté gouttière s'arrêtent sous la pente, les pignons montent jusqu'au faîtage et le rampant fait le plafond. Les
+            zones de moins de 1,80 m sont hachurées sur le plan. Pour la lumière, posez des fenêtres de toit.
+          </p>
+        </>
+      )}
+    </>
+  );
+}
+
+/** Fenêtres de toit : nombre et bouton pour en poser (outil du plan, sur le niveau sous le toit). */
+function RoofWindowsBlock() {
+  const building = useBuilding();
+  const setTool = useStore((s) => s.setTool);
+  const setLevel = useStore((s) => s.setLevel);
+  const select = useStore((s) => s.select);
+  const roof = building.roof!;
+  const n = roof.windows?.length ?? 0;
+  return (
+    <>
+      <h4>Fenêtres de toit {n ? `(${n})` : ''}</h4>
+      <div className="actions">
+        <button
+          className="btn"
+          onClick={() => {
+            setLevel(roof.levelId);
+            select(null);
+            setTool('roofWindow');
+          }}
+        >
+          + Fenêtre de toit (Velux)
+        </button>
+        {(roof.windows ?? []).map((w, i) => (
+          <button key={w.id} className="btn btn--small" onClick={() => select({ kind: 'roofWindow', id: w.id })}>
+            n° {i + 1}
+          </button>
+        ))}
+      </div>
+    </>
   );
 }

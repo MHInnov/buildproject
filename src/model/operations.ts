@@ -91,6 +91,17 @@ function applyOne(b: Building, op: Operation): void {
     case 'setRoofInsulation':
       if (b.roof) b.roof.insulationId = op.productId;
       return;
+    case 'addRoofWindow':
+      if (b.roof) (b.roof.windows ??= []).push(structuredClone(op.window));
+      return;
+    case 'removeRoofWindow':
+      if (b.roof?.windows) b.roof.windows = b.roof.windows.filter((w) => w.id !== op.windowId);
+      return;
+    case 'replaceRoofWindow': {
+      const w = b.roof?.windows?.find((x) => x.id === op.windowId);
+      if (w) w.productId = op.productId;
+      return;
+    }
   }
 }
 
@@ -115,6 +126,8 @@ function targetKey(op: Operation): string | null {
       return 'roof:covering';
     case 'setRoofInsulation':
       return 'roof:insulation';
+    case 'replaceRoofWindow':
+      return `roofwin:${op.windowId}`;
     default:
       return null;
   }
@@ -158,6 +171,15 @@ export function pushOperation(ops: Operation[], op: Operation): Operation[] {
   if (op.type === 'replaceOpening') {
     const added = next.find((o): o is Extract<Operation, { type: 'addOpening' }> => o.type === 'addOpening' && o.opening.id === op.openingId);
     if (added) return next.map((o) => (o === added ? { ...added, opening: { ...added.opening, productId: op.productId } } : o));
+  }
+  if (op.type === 'removeRoofWindow') {
+    const added = next.find((o) => o.type === 'addRoofWindow' && o.window.id === op.windowId);
+    if (added) return next.filter((o) => o !== added && !(o.type === 'replaceRoofWindow' && o.windowId === op.windowId));
+    next = next.filter((o) => !(o.type === 'replaceRoofWindow' && o.windowId === op.windowId));
+  }
+  if (op.type === 'replaceRoofWindow') {
+    const added = next.find((o): o is Extract<Operation, { type: 'addRoofWindow' }> => o.type === 'addRoofWindow' && o.window.id === op.windowId);
+    if (added) return next.map((o) => (o === added ? { ...added, window: { ...added.window, productId: op.productId } } : o));
   }
   if (op.type === 'setWallHeight') {
     const added = next.find((o): o is Extract<Operation, { type: 'addWall' }> => o.type === 'addWall' && o.wall.id === op.wallId);
