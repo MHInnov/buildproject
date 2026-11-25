@@ -61,14 +61,23 @@ Les projets dessinés restent dans le navigateur (stockage local), pas dans le c
 
 ## Retraçage d'un plan existant
 
-Importez le plan (image, scan ou PDF) dans l'existant : l'application reconnaît seule la façon dont les murs sont dessinés (noirs pleins, gris ou en couleur, hachurés, ou en double trait), leur épaisseur, les portes et les fenêtres, et en déduit l'échelle (murs extérieurs d'environ 30 cm). « Retracer les murs » dessine le tout ; étalonner sur une cote connue reste possible pour plus de précision. L'IA, si elle est activée, nomme en plus les pièces et ajoute les ouvertures oubliées.
+Importez le plan (image, scan ou PDF) dans l'existant : l'application reconnaît seule la façon dont les murs sont dessinés (noirs pleins, encre, gris ou en couleur, hachurés, ou en double trait), leur épaisseur, les portes (par l'arc de débattement) et les fenêtres (traits de vitrage, même un seul trait au cœur du mur), et en déduit l'échelle (largeur des portes intérieures, à défaut épaisseur des façades). « Retracer les murs » dessine le tout ; étalonner sur une cote connue reste possible pour plus de précision. L'IA, si elle est activée, nomme en plus les pièces et ajoute les ouvertures oubliées.
+
+Ce que fait le retraçage, dans l'ordre :
+
+- plusieurs lectures du dessin sont essayées (traits noirs, encre, aplats, double trait à plusieurs largeurs) et la plus cohérente est gardée : celle qui ferme le plus de pièces, avec des murs qui se rejoignent et qui correspondent à du dessin ;
+- les murs creux (deux parois et un vide, doublages) sont réunis en un seul mur ;
+- les murs sont raccordés entre eux (bouts alignés, angles dessinés en retrait, baies contre un angle) pour que les pièces se ferment ;
+- sont écartés : le cadre de la feuille et du cartouche, les cotes, les symboles pleins (repères de pièce), les textes et les pointillés ;
+- un étage sous combles garde ses pignons et ses cloisons même si ses pièces, bordées de rampants, ne se ferment pas.
 
 **Tous les plans d'un coup** (« Importer tous les plans (niveaux et coupes) ») : on dépose ensemble les plans de chaque niveau et les coupes, en images ou en PDF de plusieurs pages. Chaque page est classée d'après son nom, son cartouche et son dessin (modifiable), puis :
 
-- l'échelle est commune aux plans de même format ; sur un PDF, elle est lue dans le cartouche (« 1/50 ») avec le format de la page ;
-- le rez-de-chaussée sert de référence et les autres niveaux sont calés dessus (les marges des pages ne comptent pas) ; les niveaux manquants sont créés ;
+- chaque plan importé remplace ce qui était dessiné sur son niveau (murs, pièces, mobilier, sols) ;
+- sur un PDF, l'échelle est lue dans le cartouche (« 1/50 ») avec le format de la page ; un plan étalonné donne la sienne aux plans de même format ; sinon chaque plan a son estimation (deux feuilles de même format peuvent être à des échelles différentes) ;
+- le rez-de-chaussée sert de référence : les autres niveaux sont calés dessus par leurs murs de façade et de pignon, ce qui corrige aussi leur échelle quand elle n'était qu'estimée (un étage dessiné à une autre échelle retrouve la bonne taille) ; les niveaux manquants sont créés ;
 - les fenêtres ne sont placées que dans les murs extérieurs ;
-- la coupe donne les hauteurs sous plafond, l'épaisseur des planchers et la forme du toit (plat, monopente, deux pans et sa pente).
+- la coupe donne les hauteurs sous plafond, l'épaisseur des planchers et la forme du toit (plat, monopente, deux pans et sa pente) ; avec plusieurs coupes, la première qui donne une hauteur fait foi.
 
 ## Avec ou sans IA
 
@@ -138,7 +147,7 @@ Tout tourne dans le navigateur (« local-first ») : pas de serveur nécessaire 
 
 - **Le catalogue et les prix sont fictifs** (produits génériques). Ils seront remplacés par des flux fournisseurs réels.
 - Les fourchettes de main d'œuvre sont indicatives et à valider avec des artisans.
-- Le retraçage automatique fonctionne bien sur des plans nets (murs pleins ou hachurés foncés) ; un plan photographié de travers ou très annoté demandera des retouches.
+- Le retraçage automatique fonctionne sur des plans nets ou scannés (murs pleins, encre, hachurés, double trait) ; l'échelle estimée peut s'écarter de 10 à 20 % (étalonner sur une cote la rend exacte), et un plan photographié de travers ou très annoté demandera des retouches.
 - Les points de vue servent à placer et reconnaître les éléments, pas à mesurer les pièces : les cotes viennent du plan ou du relevé.
 - Visite 3D : textures photo réelles (≈ 5 Mo au total, chargées à la demande), teintées à la couleur exacte du produit et mises à l'échelle de ses carreaux ou lames. Le plan 2D garde des motifs dessinés, plus lisibles.
 - Rendu « Qualité haute » (occlusion ambiante, antialiasing) prévu pour un ordinateur récent ; « Qualité standard » pour les machines modestes.

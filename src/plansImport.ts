@@ -4,7 +4,7 @@
  * les coupes donnent les hauteurs des niveaux et la forme du toit.
  */
 import { newId } from './model/geometry';
-import { alignWalls, footprint, guessKind, readSection, storeysFromSection, type PlanKind, type SectionReading } from './model/plans';
+import { alignFacades, alignWalls, footprint, guessKind, readSection, storeysFromSection, type PlanKind, type SectionReading } from './model/plans';
 import type { Building, Level } from './model/types';
 import { autoVectorize, type AutoVectorizeResult, type Bitmap } from './model/vectorize';
 import { applyStoreys, applyTrace, groundLevel } from './traceApply';
@@ -132,8 +132,9 @@ const median = (xs: number[]) => {
 
 /**
  * Retrace tous les plans et lit les coupes. Modifie `b` (à appeler dans editExisting).
- * Les plans au même format d'image partagent une échelle : celle déjà mesurée sur un niveau, sinon
- * la médiane des estimations (plus sûre qu'une estimation isolée).
+ * Les plans au même format d'image partagent une échelle mesurée ou lue sur le PDF ; à défaut, chacun a
+ * son estimation (mise en commun si elles concordent), et les étages se recalent en taille sur le
+ * rez-de-chaussée.
  */
 export function importPlans(b: Building, items: PlanInput[]): ImportReport {
   const lines: string[] = [];
@@ -162,9 +163,16 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
     if (trusted(p)) return trusted(p);
     const known = plans.filter((q) => sameSize(q, p) && trusted(q)).map((q) => trusted(q)!);
     if (known.length) return median(known);
+    // Des feuilles de même format ne sont pas forcément à la même échelle (un plan scanné à 1/50, l'autre
+    // à 1/100, ou une maison réduite pour tenir sur la page) : on ne met en commun que des estimations qui
+    // se confirment entre elles.
+    const e = estimate.get(p);
+    if (e == null) return null;
     const group = plans.filter((q) => sameSize(q, p) && estimate.has(q)).map((q) => estimate.get(q)!);
-    return group.length ? median(group) : null;
+    return group.every((x) => Math.abs(x / e - 1) < 0.15) ? median(group) : e;
   };
+  /** Échelle sûre (mesurée ou lue sur le PDF) : le calage sur le rez-de-chaussée ne la corrige pas. */
+  const sure = (p: PlanInput) => !!calibrated.find((u) => sameSize(u, p)) || !!trusted(p) || plans.some((q) => sameSize(q, p) && trusted(q));
 
   // Rez-de-chaussée d'abord (référence de calage), puis les autres du bas vers le haut
   const order: PlanKind[] = ['rdc', 'cave', 'etage1', 'etage2', 'etage3', 'combles'];
@@ -179,38 +187,56 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
       continue;
     }
     const scale = scaleOf(p);
-    const r = autoVectorize(p.bmp, { scale: scale ? scale / p.k : null });
+    let r = autoVectorize(p.bmp, { scale: scale ? scale / p.k : null });
     if (!r || !r.walls.length) {
       warnings.push(`${p.name} : aucun mur reconnu, plan seulement affiché sous ${level.name}.`);
       continue;
     }
-    const s = scale ?? r.scale * p.k;
+    let s = scale ?? r.scale * p.k;
     // Référence : le rez-de-chaussée (tel qu'il vient d'être retracé, ou déjà dessiné), sinon les murs déjà là
+    // Les plans importés remplacent ce qui était dessiné sur leur niveau (murs, pièces, mobilier, sols) :
+    // on ne se cale donc jamais sur les anciens murs du niveau lui-même, seulement sur un niveau déjà
+    // retracé dans cet import (le rez-de-chaussée d'abord).
     const g = groundLevel(b);
-    const groundHasWalls = b.walls.some((w) => w.levelId === g.id);
-    const refLevel = level.id === g.id ? g.id : groundHasWalls ? g.id : (anchorId ?? g.id);
-    const ref = b.walls.filter((w) => w.levelId === refLevel);
-    const ownRef = level.id !== refLevel && !ref.length ? b.walls.filter((w) => w.levelId === level.id) : [];
-    const target = ref.length ? ref : ownRef;
+    const refLevel = done.has(g.id) ? g.id : anchorId;
+    const target = refLevel && refLevel !== level.id ? b.walls.filter((w) => w.levelId === refLevel) : [];
+    b.rooms = b.rooms.filter((x) => x.levelId !== level.id);
+    b.furniture = b.furniture.filter((x) => x.levelId !== level.id);
+    if (b.floorZones) b.floorZones = b.floorZones.filter((x) => x.levelId !== level.id);
     let dx: number;
     let dy: number;
     let k = 1;
     let note = '';
     if (target.length) {
-      const fixedScale = !!calibrated.find((u) => sameSize(u, p)) || plans.some((q) => q !== p && sameSize(q, p));
-      const al = alignWalls(r.walls, target, !fixedScale);
+      // Échelle seulement estimée : on la déduit du calage des façades sur le niveau de référence
+      const fa = sure(p) ? null : alignFacades(r.walls, target);
+      let al = fa && fa.fit >= 0.3 ? fa : alignWalls(r.walls, target, false);
+      let rescaled = false;
+      if (al.fit > 0.2 && al.k !== 1) {
+        // Nouvelle échelle : on relit le plan à cette échelle (portes, épaisseurs, raccords en dépendent)
+        const again = autoVectorize(p.bmp, { scale: (s * al.k) / p.k });
+        if (again?.walls.length) {
+          const fine = alignWalls(again.walls, target, false);
+          if (fine.fit >= al.fit * 0.8) {
+            r = again;
+            s *= al.k;
+            al = { ...fine, k: al.k };
+            rescaled = true;
+          }
+        }
+      }
       if (al.fit > 0.2) {
         dx = al.dx;
         dy = al.dy;
-        k = al.k;
-        note = ` calé sur ${level.id === refLevel ? 'les murs déjà dessinés' : (b.levels.find((l) => l.id === refLevel)?.name ?? 'le rez-de-chaussée')} (${Math.round(al.fit * 100)} % des murs se superposent)`;
+        k = rescaled ? 1 : al.k;
+        note = ` calé sur ${b.levels.find((l) => l.id === refLevel)?.name ?? 'le rez-de-chaussée'} (${Math.round(al.fit * 100)} % des murs se superposent)${al.k !== 1 ? `, échelle ajustée de ${al.k > 1 ? '+' : ''}${Math.round((al.k - 1) * 100)} %` : ''}`;
       } else {
         // Rien ne correspond : on superpose au moins les emprises par leur centre
         const fb = footprint(r.walls)!;
         const rb = footprint(target)!;
         dx = (rb.x0 + rb.x1) / 2 - (fb.x0 + fb.x1) / 2;
         dy = (rb.y0 + rb.y1) / 2 - (fb.y0 + fb.y1) / 2;
-        warnings.push(`${p.name} : ${level.name} ne se superpose pas bien au rez-de-chaussée ; centré dessus, à vérifier (case « Déplacer le plan »).`);
+        warnings.push(`${p.name} : ${level.name} ne se superpose pas bien à ${b.levels.find((l) => l.id === refLevel)?.name ?? 'au rez-de-chaussée'} ; centré dessus, à vérifier (case « Déplacer le plan »).`);
       }
     } else {
       const fb = footprint(r.walls)!;
@@ -233,6 +259,8 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
   const g = groundLevel(b);
   const gw = b.walls.filter((w) => w.levelId === g.id);
   const fp = footprint(gw);
+  const fixedLevels = new Set<string>();
+  let roofRead = false;
   for (const c of sections) {
     const sec = readSection(c.bmp);
     if (!sec) {
@@ -252,15 +280,26 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
     const levels = [...b.levels].sort((m, n) => m.elevation - n.elevation);
     // La coupe commence à la cave si elle a autant de niveaux que la maison, sinon au rez-de-chaussée
     const first = storeys.length >= levels.length ? levels[0] : g;
-    const changed = applyStoreys(b, storeys, first.id);
+    // Plusieurs coupes : la première qui donne la hauteur d'un niveau fait foi (une coupe transversale lit
+    // mal un niveau qu'elle ne traverse pas en entier)
+    const kept = b.levels.filter((l) => fixedLevels.has(l.id)).map((l) => ({ l, height: l.height, slab: l.slab }));
+    const changed = applyStoreys(b, storeys, first.id).filter((id) => !fixedLevels.has(id));
+    for (const { l, height, slab } of kept) {
+      for (const w of b.walls) if (w.levelId === l.id && Math.abs(w.height - l.height) < 0.01) w.height = height;
+      l.height = height;
+      l.slab = slab;
+    }
+    if (kept.length) restack(b);
     if (changed.length) {
-      const names = changed.map((id, i) => {
+      const names = changed.map((id) => {
         const l = b.levels.find((x) => x.id === id)!;
-        return `${l.name} ${storeys[i].height.toFixed(2).replace('.', ',')} m`;
+        return `${l.name} ${l.height.toFixed(2).replace('.', ',')} m`;
       });
       lines.push(`${c.name} : hauteurs sous plafond ${names.join(', ')}.`);
+      for (const id of changed) fixedLevels.add(id);
     }
-    if (sec.roof) {
+    if (sec.roof && !roofRead) {
+      roofRead = true;
       const top = [...b.levels].sort((m, n) => n.elevation - m.elevation)[0];
       const ridge: 'x' | 'y' = fp && fp.x1 - fp.x0 >= fp.y1 - fp.y0 ? 'x' : 'y';
       if (b.roof) {

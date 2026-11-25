@@ -21,7 +21,7 @@ export function applyTrace(b: Building, levelId: string, r: VectorizeResult, dx:
       levelId,
       a: P(tw.a),
       b: P(tw.b),
-      thickness: tw.thickness,
+      thickness: Math.round(tw.thickness * k * 100) / 100,
       height: level.height,
       kind: tw.thickness >= 0.2 ? 'porteur' : 'cloison',
       finish: { gauche: null, droite: null },

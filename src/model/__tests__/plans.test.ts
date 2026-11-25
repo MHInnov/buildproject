@@ -156,3 +156,25 @@ describe('niveaux créés par l’import', () => {
     expect(levelFor(b, 'etage1').id).toBe(e1.id);
   });
 });
+
+describe('calage d’un étage à une autre échelle', () => {
+  it('retrouve l’échelle et la position par les façades', async () => {
+    const { alignFacades } = await import('../plans');
+    const W = (ax: number, ay: number, bx: number, by: number, t: number) => ({ a: { x: ax, y: ay }, b: { x: bx, y: by }, thickness: t });
+    // Rez-de-chaussée 10 × 14 m, une aile de plain-pied au sud (y > 10)
+    const rdc = [W(0, 0, 10, 0, 0.3), W(0, 14, 10, 14, 0.3), W(0, 0, 0, 14, 0.3), W(10, 0, 10, 14, 0.3), W(0, 10, 10, 10, 0.2), W(4, 0, 4, 10, 0.1)];
+    // Étage sous combles sur les 10 premiers mètres : deux pignons et des cloisons, dessiné 1,6 fois trop grand et décalé
+    const k = 1.6;
+    const up = [W(0, 0, 10, 0, 0.3), W(0, 10, 10, 10, 0.3), W(5, 0, 5, 10, 0.1), W(5, 4, 10, 4, 0.1)].map((w) => ({
+      ...w,
+      a: { x: w.a.x * k + 3, y: w.a.y * k + 2 },
+      b: { x: w.b.x * k + 3, y: w.b.y * k + 2 },
+      thickness: w.thickness * k,
+    }));
+    const al = alignFacades(up, rdc);
+    expect(al.k).toBeCloseTo(1 / k, 1);
+    expect(al.dx + 3 * al.k).toBeCloseTo(0, 0);
+    expect(al.dy + 2 * al.k).toBeCloseTo(0, 0);
+    expect(al.fit).toBeGreaterThan(0.6);
+  });
+});

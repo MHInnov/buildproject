@@ -70,7 +70,15 @@ export function alignWalls(walls: TracedWall[], ref: Seg[], allowScale = false):
   if (allowScale) {
     const kx = (rb.x1 - rb.x0) / Math.max(0.01, fb.x1 - fb.x0);
     const ky = (rb.y1 - rb.y0) / Math.max(0.01, fb.y1 - fb.y0);
-    if (Math.abs(kx - ky) / Math.max(kx, ky) < 0.04 && kx > 0.6 && kx < 1.6) scales.push((kx + ky) / 2);
+    const ok = (k: number) => k > 0.5 && k < 2 && Math.abs(k - 1) > 0.02;
+    if (Math.abs(kx - ky) / Math.max(kx, ky) < 0.04) {
+      if (ok((kx + ky) / 2)) scales.push((kx + ky) / 2);
+    } else {
+      // Un étage peut couvrir une partie seulement du rez-de-chaussée (combles sur une aile) : une seule
+      // des deux dimensions donne alors l'échelle ; le recouvrement des murs départage.
+      if (ok(kx)) scales.push(kx);
+      if (ok(ky)) scales.push(ky);
+    }
   }
   let best: Alignment = { dx: rb.x0 - fb.x0, dy: rb.y0 - fb.y0, k: 1, fit: -1 };
   for (const k of scales) {
@@ -105,6 +113,71 @@ export function alignWalls(walls: TracedWall[], ref: Seg[], allowScale = false):
     }
   }
   return best;
+}
+
+/**
+ * Calage d'un étage dont l'échelle n'est qu'estimée : ses murs épais (façades, pignons) doivent retomber sur
+ * des murs du niveau de référence. On cherche ensemble le facteur d'échelle (de 0,5 à 2) et la position, en
+ * essayant de faire coïncider chaque mur épais avec chaque mur de même orientation de la référence.
+ * Les cloisons de l'étage, qui ne suivent pas celles du dessous, n'interviennent pas.
+ */
+export function alignFacades(walls: TracedWall[], ref: Seg[]): Alignment {
+  const none: Alignment = { dx: 0, dy: 0, k: 1, fit: 0 };
+  if (!walls.length || !ref.length) return none;
+  const len = (w: Seg) => Math.hypot(w.b.x - w.a.x, w.b.y - w.a.y);
+  // « Épais » : au moins 60 % de l'épaisseur des murs les plus épais (75e centile en longueur, pour ne pas
+  // dépendre d'un seul mur surépais)
+  const q75 = (ws: Seg[]) => {
+    const xs = ws.map((w) => ({ t: w.thickness ?? 0, l: len(w) })).sort((m, n) => m.t - n.t);
+    const tot = xs.reduce((s, x) => s + x.l, 0);
+    let acc = 0;
+    return xs.find((x) => (acc += x.l) >= 0.75 * tot)?.t ?? 0;
+  };
+  const tw = q75(walls);
+  const thick = walls.filter((w) => w.thickness >= 0.6 * tw && len(w) >= 1);
+  const total = thick.reduce((s, w) => s + len(w), 0);
+  if (total <= 0) return none;
+  const tr = q75(ref);
+  const refThick = ref.filter((r) => (r.thickness ?? 0) >= 0.6 * tr && len(r) >= 1);
+  const refTotal = refThick.reduce((s, w) => s + len(w), 0) || 1;
+  const ax = (w: Seg) => (horizontal(w) ? w.a.y : w.a.x);
+  const ends = (w: Seg) => (horizontal(w) ? [Math.min(w.a.x, w.b.x), Math.max(w.a.x, w.b.x)] : [Math.min(w.a.y, w.b.y), Math.max(w.a.y, w.b.y)]);
+  // Les décalages candidats viennent des plus longs murs (assez pour fixer la position, sans tout essayer)
+  const seeds = [...thick].sort((m, n) => len(n) - len(m)).slice(0, 6);
+  const refH = ref.filter((r) => horizontal(r) && len(r) >= 1);
+  const refV = ref.filter((r) => !horizontal(r) && len(r) >= 1);
+  let best = none;
+  for (let k = 0.5; k <= 2.0001; k *= 1.02) {
+    // Décalages candidats sur chaque axe : axe contre axe (murs parallèles), ou bout contre bout
+    const dys = new Set<number>();
+    const dxs = new Set<number>();
+    for (const w of seeds) {
+      const h = horizontal(w);
+      for (const r of h ? refH : refV) {
+        const d = Math.round((ax(r) - ax(w) * k) * 20) / 20;
+        (h ? dys : dxs).add(d);
+      }
+      const [w0, w1] = ends(w);
+      for (const r of h ? refH : refV) {
+        const [r0, r1] = ends(r);
+        (h ? dxs : dys).add(Math.round((r0 - w0 * k) * 20) / 20);
+        (h ? dxs : dys).add(Math.round((r1 - w1 * k) * 20) / 20);
+      }
+    }
+    for (const dx of dxs)
+      for (const dy of dys) {
+        const fe = overlap(thick, ref, dx, dy, k, 0.12) / (total * k);
+        if (fe < 0.5 || fe < best.fit * 0.8) continue;
+        // … et réciproquement, les façades du dessous retrouvent celles de l'étage (sinon n'importe quelle
+        // paire de murs à la bonne distance ferait l'affaire)
+        const moved = thick.map((w) => ({ a: { x: w.a.x * k + dx, y: w.a.y * k + dy }, b: { x: w.b.x * k + dx, y: w.b.y * k + dy } }));
+        const fr = overlap(refThick, moved, 0, 0, 1, 0.12) / refTotal;
+        const fit = fe * (0.4 + 0.6 * fr);
+        // à recouvrement égal, l'échelle la plus proche de l'estimation l'emporte
+        if (fit > best.fit + 0.02 || (fit > best.fit - 0.02 && Math.abs(Math.log(k)) < Math.abs(Math.log(best.k)) && fit >= best.fit)) best = { dx, dy, k, fit };
+      }
+  }
+  return { ...best, k: Math.round(best.k * 1000) / 1000 };
 }
 
 // ---------------------------------------------------------------------------
