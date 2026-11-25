@@ -13,7 +13,7 @@
  *
  * Les plans en biais ou les murs courbes ne sont pas gérés : ils se reprennent à la main.
  */
-import { detectRooms, insertWall } from './geometry';
+import { detectRooms, insertWall, pointInPolygon } from './geometry';
 import { defaultLevel } from './levels';
 import type { Building } from './types';
 
@@ -45,6 +45,8 @@ export interface TracedOpening {
   /** Centre de l'ouverture le long du mur, en mètres depuis a. */
   offset: number;
   width: number;
+  /** Comment elle a été trouvée : un trou dans le mur, ou des traits de vitrage dans un mur continu. */
+  source?: 'trou' | 'vitrage';
 }
 
 export interface VectorizeResult {
@@ -139,7 +141,7 @@ export function open(mask: Uint8Array, w: number, h: number, r: number): Uint8Ar
   return out;
 }
 
-interface Band {
+export interface Band {
   /** Axe le long du mur (x pour un mur horizontal) */
   s: number;
   e: number;
@@ -149,7 +151,7 @@ interface Band {
 }
 
 /** Regroupe les plages longues de lignes consécutives en bandes (murs). */
-function bands(mask: Uint8Array, w: number, h: number, horizontal: boolean, minLen: number): Band[] {
+export function bands(mask: Uint8Array, w: number, h: number, horizontal: boolean, minLen: number): Band[] {
   const lines = horizontal ? h : w;
   const len = horizontal ? w : h;
   const at = (line: number, k: number) => (horizontal ? mask[line * w + k] : mask[k * w + line]);
@@ -213,7 +215,7 @@ function traceMask(source: Uint8Array, ink: Uint8Array, w: number, h: number, sc
   }
 
   // Trous entre deux tronçons alignés : portes et fenêtres.
-  const openingsPx: { seg: Seg; at: number; width: number; kind: 'porte' | 'fenetre' }[] = [];
+  const openingsPx: { seg: Seg; at: number; width: number; kind: 'porte' | 'fenetre'; source: 'trou' | 'vitrage' }[] = [];
   const maxGap = 3.2 / scale;
   const minGap = 0.45 / scale;
   let merged = true;
@@ -247,7 +249,7 @@ function traceMask(source: Uint8Array, ink: Uint8Array, w: number, h: number, sc
         const kind: 'porte' | 'fenetre' = glazing ? 'fenetre' : 'porte';
         const joined: Seg = { horizontal: A.horizontal, s: A.s, e: B.e, c: (A.c * (A.e - A.s) + B.c * (B.e - B.s)) / (A.e - A.s + B.e - B.s), th };
         for (const o of openingsPx) if (o.seg === A || o.seg === B) o.seg = joined;
-        openingsPx.push({ seg: joined, at: (A.e + B.s) / 2, width: gap, kind });
+        openingsPx.push({ seg: joined, at: (A.e + B.s) / 2, width: gap, kind, source: 'trou' });
         segs.splice(segs.indexOf(A), 1);
         segs.splice(segs.indexOf(B), 1);
         segs.push(joined);
@@ -276,6 +278,7 @@ function traceMask(source: Uint8Array, ink: Uint8Array, w: number, h: number, sc
       const ones = [...sig].filter((c) => c === '1').length;
       if (ones > span * 0.6) return false; // mur plein
       const m = Math.max(2, Math.round(span * 0.2));
+      // Un ou plusieurs traits de vitrage, au cœur de l'épaisseur du mur
       return sig.slice(m, span - m).includes('1') && sig.slice(m, span - m).includes('0');
     };
     const glass: boolean[] = [];
@@ -300,8 +303,10 @@ function traceMask(source: Uint8Array, ink: Uint8Array, w: number, h: number, sc
       const len = i - a + 3; // les 3 premiers pixels servent de référence
       const at = Math.ceil(S.s) + a - 3 + len / 2;
       if (len < 0.4 / scale || len > 3.2 / scale) continue;
+      // Une baie est encadrée de mur des deux côtés : pas collée à un bout du mur (angle, jonction)
+      if (at - len / 2 - S.s < 0.1 / scale || S.e - (at + len / 2) < 0.1 / scale) continue;
       if (openingsPx.some((o) => o.seg === S && Math.abs(o.at - at) < (o.width + len) / 2)) continue;
-      openingsPx.push({ seg: S, at, width: len, kind: 'fenetre' });
+      openingsPx.push({ seg: S, at, width: len, kind: 'fenetre', source: 'vitrage' });
     }
   }
 
@@ -334,7 +339,7 @@ function traceMask(source: Uint8Array, ink: Uint8Array, w: number, h: number, sc
   const openings: TracedOpening[] = openingsPx.flatMap((o) => {
     const i = segs.indexOf(o.seg);
     if (i < 0) return [];
-    return [{ wall: i, kind: o.kind, offset: Math.round((o.at - o.seg.s) * scale * 100) / 100, width: Math.round(o.width * scale * 100) / 100 }];
+    return [{ wall: i, kind: o.kind, offset: Math.round((o.at - o.seg.s) * scale * 100) / 100, width: Math.round(o.width * scale * 100) / 100, source: o.source }];
   });
   return { walls, openings, mask };
 }
@@ -411,7 +416,7 @@ export function close(mask: Uint8Array, w: number, h: number, r: number): Uint8A
 }
 
 /** Couleur du papier : la luminance la plus fréquente. */
-function background(lum: Uint8Array): number {
+export function background(lum: Uint8Array): number {
   const hist = new Array<number>(256).fill(0);
   for (const v of lum) hist[v]++;
   let best = 255;
@@ -660,5 +665,75 @@ export function autoVectorize(bmp: Bitmap, opts: { scale?: number | null } = {})
   }
   if (!best) return null;
   const { score: _score, ...res } = best;
-  return res;
+  return refine(res);
+}
+
+/** Regroupe des valeurs proches (à `tol` près) et renvoie la valeur commune de chacune. */
+function clusterValues(values: { v: number; weight: number }[], tol: number): (v: number) => number {
+  const sorted = [...values].sort((m, n) => m.v - n.v);
+  const groups: { sum: number; weight: number; min: number; max: number }[] = [];
+  for (const x of sorted) {
+    const g = groups[groups.length - 1];
+    if (g && x.v - g.max <= tol) {
+      g.sum += x.v * x.weight;
+      g.weight += x.weight;
+      g.max = x.v;
+    } else groups.push({ sum: x.v * x.weight, weight: x.weight, min: x.v, max: x.v });
+  }
+  const centers = groups.map((g) => ({ c: Math.round((g.sum / g.weight) * 100) / 100, min: g.min - tol, max: g.max + tol }));
+  return (v: number) => centers.find((c) => v >= c.min && v <= c.max)?.c ?? v;
+}
+
+/**
+ * Finitions : murs alignés sur les mêmes axes (à 4 cm près), extrémités recalées sur ces axes,
+ * et ouvertures vérifiées : une fenêtre n'est retenue que dans un mur de façade (un trou dans un mur
+ * intérieur est une porte, des « traits de vitrage » dans un mur intérieur sont du mobilier).
+ */
+export function refine<T extends VectorizeResult>(r: T): T {
+  const walls = r.walls.map((w) => ({ ...w, a: { ...w.a }, b: { ...w.b } }));
+  const horiz = (w: TracedWall) => Math.abs(w.a.y - w.b.y) < 1e-6;
+  const len = (w: TracedWall) => Math.hypot(w.b.x - w.a.x, w.b.y - w.a.y);
+  const xs = clusterValues(walls.filter((w) => !horiz(w)).map((w) => ({ v: w.a.x, weight: len(w) })), 0.04);
+  const ys = clusterValues(walls.filter(horiz).map((w) => ({ v: w.a.y, weight: len(w) })), 0.04);
+  // Les ouvertures gardent leur position absolue pendant le recalage
+  const abs = r.openings.map((o) => {
+    const w = r.walls[o.wall];
+    const L = len(w) || 1;
+    return { x: w.a.x + ((w.b.x - w.a.x) * o.offset) / L, y: w.a.y + ((w.b.y - w.a.y) * o.offset) / L };
+  });
+  for (const w of walls) {
+    w.a = { x: xs(w.a.x), y: ys(w.a.y) };
+    w.b = { x: xs(w.b.x), y: ys(w.b.y) };
+  }
+  // Façades : un point juste à côté du mur, d'un côté, n'est dans aucune pièce
+  const b: Building = { levels: [defaultLevel()], walls: [], openings: [], rooms: [], furniture: [], roof: null };
+  walls.forEach((x, i) => insertWall(b, { id: `t${i}`, levelId: b.levels[0].id, a: x.a, b: x.b, thickness: x.thickness, height: 2.5, kind: 'cloison', finish: { gauche: null, droite: null } }));
+  const rooms = detectRooms(b);
+  const inside = (p: { x: number; y: number }) => rooms.some((room) => pointInPolygon(p, room.polygon));
+  const exterior = (w: TracedWall, along: number) => {
+    const L = len(w) || 1;
+    const ux = (w.b.x - w.a.x) / L;
+    const uy = (w.b.y - w.a.y) / L;
+    const d = w.thickness / 2 + 0.25;
+    const p = { x: w.a.x + ux * along, y: w.a.y + uy * along };
+    return !rooms.length || !inside({ x: p.x - uy * d, y: p.y + ux * d }) || !inside({ x: p.x + uy * d, y: p.y - ux * d });
+  };
+  const openings: TracedOpening[] = [];
+  r.openings.forEach((o, i) => {
+    const w = walls[o.wall];
+    const L = len(w) || 1;
+    const p = abs[i];
+    const offset = Math.round(Math.hypot(p.x - w.a.x, p.y - w.a.y) * 100) / 100;
+    // L'ouverture doit tenir dans son mur
+    if (offset - o.width / 2 < -0.05 || offset + o.width / 2 > L + 0.05) return;
+    let kind = o.kind;
+    if (kind === 'fenetre' && !exterior(w, offset)) {
+      if (o.source === 'vitrage') return;
+      kind = 'porte';
+    }
+    // Pas deux ouvertures qui se chevauchent sur le même mur
+    if (openings.some((x) => x.wall === o.wall && Math.abs(x.offset - offset) < (x.width + o.width) / 2)) return;
+    openings.push({ ...o, kind, offset });
+  });
+  return { ...r, walls, openings };
 }

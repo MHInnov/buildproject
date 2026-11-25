@@ -63,6 +63,13 @@ Les projets dessinés restent dans le navigateur (stockage local), pas dans le c
 
 Importez le plan (image, scan ou PDF) dans l'existant : l'application reconnaît seule la façon dont les murs sont dessinés (noirs pleins, gris ou en couleur, hachurés, ou en double trait), leur épaisseur, les portes et les fenêtres, et en déduit l'échelle (murs extérieurs d'environ 30 cm). « Retracer les murs » dessine le tout ; étalonner sur une cote connue reste possible pour plus de précision. L'IA, si elle est activée, nomme en plus les pièces et ajoute les ouvertures oubliées.
 
+**Tous les plans d'un coup** (« Importer tous les plans (niveaux et coupes) ») : on dépose ensemble les plans de chaque niveau et les coupes, en images ou en PDF de plusieurs pages. Chaque page est classée d'après son nom, son cartouche et son dessin (modifiable), puis :
+
+- l'échelle est commune aux plans de même format ; sur un PDF, elle est lue dans le cartouche (« 1/50 ») avec le format de la page ;
+- le rez-de-chaussée sert de référence et les autres niveaux sont calés dessus (les marges des pages ne comptent pas) ; les niveaux manquants sont créés ;
+- les fenêtres ne sont placées que dans les murs extérieurs ;
+- la coupe donne les hauteurs sous plafond, l'épaisseur des planchers et la forme du toit (plat, monopente, deux pans et sa pente).
+
 ## Avec ou sans IA
 
 Tout fonctionne sans IA : retraçage du plan par analyse d'image, report des éléments d'une photo par géométrie et couleur.
