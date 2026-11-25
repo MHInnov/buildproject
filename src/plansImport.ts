@@ -250,6 +250,8 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
   const placedOn = new Map<string, Placement>();
   /** Échelle retenue pour chaque niveau retracé, et son plan. */
   const scaleUsed = new Map<string, { s: number; p: PlanInput }>();
+  /** Niveaux dont les façades ont été reprises du niveau de référence (plan illisible). */
+  const fromRef = new Set<string>();
   const done = new Set<string>();
   for (const p of sorted) {
     const level = levelFor(b, p.kind);
@@ -285,20 +287,39 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
       // Échelle seulement estimée et plan qui se superpose mal : l'estimation a pu se tromper nettement (plan
       // de combles fait surtout de pignons et de murs bas, page réduite). On relit le plan à d'autres échelles,
       // dont celle du niveau de référence, et on garde celle qui se superpose le mieux.
-      if (!sure(p) && al.fit < 0.35) {
+      // Emprise plausible : un étage couvre une bonne part du niveau de référence (des combles toute sa
+      // longueur), jamais une petite fraction ni le double. Une lecture à la mauvaise échelle donne un étage
+      // minuscule où le personnage paraît géant.
+      const rb = footprint(target)!;
+      const cover = (walls: NonNullable<typeof r>["walls"], kk: number) => {
+        const fb = footprint(walls);
+        return fb ? ((fb.x1 - fb.x0) * (fb.y1 - fb.y0) * kk * kk) / Math.max(1, (rb.x1 - rb.x0) * (rb.y1 - rb.y0)) : 0;
+      };
+      const implausible = (walls: NonNullable<typeof r>["walls"], kk: number) => {
+        const c = cover(walls, kk);
+        return c < 0.35 || c > 2.2;
+      };
+      if (!sure(p) && (al.fit < 0.35 || implausible(r.walls, al.k))) {
         const ref = refLevel ? scaleUsed.get(refLevel) : undefined;
         const tries = [s * 0.62, s * 1.6, ...(ref && sameSize(ref.p, p) ? [ref.s] : [])];
+        // Échelle qui donnerait la même emprise que le niveau de référence
+        const c0 = cover(r.walls, 1);
+        if (c0 > 0 && implausible(r.walls, al.k)) tries.push(s * Math.sqrt(c0));
+        // à superposition égale, on préfère la lecture qui n'a pas besoin d'être remise à l'échelle et dont
+        // l'emprise est plausible
+        const q = (x: { fit: number; k: number }, walls: NonNullable<typeof r>["walls"]) => x.fit - 0.15 * Math.abs(Math.log(x.k)) - (implausible(walls, x.k) ? 0.5 : 0);
+        let qBest = q(al, r.walls);
         for (const sc of tries) {
           const alt = autoVectorize(p.bmp, { scale: sc / p.k });
           if (!alt?.walls.length) continue;
           const fa2 = alignFacades(alt.walls, target);
           const al2 = fa2 && fa2.fit >= 0.3 ? fa2 : alignWalls(alt.walls, target, false);
-          // à superposition égale, on préfère la lecture qui n'a pas besoin d'être remise à l'échelle
-          const q = (x: { fit: number; k: number }) => x.fit - 0.15 * Math.abs(Math.log(x.k));
-          if (al2.fit > 0.25 && q(al2) > Math.max(q(al), 0.2) + 0.03) {
+          const q2 = q(al2, alt.walls);
+          if (al2.fit > 0.15 && q2 > Math.max(qBest, -0.3) + 0.03) {
             r = alt;
             s = sc;
             al = al2;
+            qBest = q2;
           }
         }
       }
@@ -336,8 +357,25 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
     }
     const scaled = r;
     scaleUsed.set(level.id, { s: s * k, p });
-    applyTrace(b, level.id, r, dx, dy, k);
-    placedOn.set(level.id, { bmp: p.bmp, scale: r.scale, k, dx, dy });
+    // Étage lu beaucoup plus petit que le niveau de référence (page réduite, trait trop chargé) : plutôt qu'un
+    // étage minuscule où le personnage paraît géant, on reprend les façades du niveau de référence ; le plan
+    // reste affiché dessous pour tracer les cloisons.
+    const fbr = footprint(r.walls);
+    const rbr = target.length ? footprint(target) : null;
+    const coverRef = fbr && rbr ? ((fbr.x1 - fbr.x0) * (fbr.y1 - fbr.y0) * k * k) / Math.max(1, (rbr.x1 - rbr.x0) * (rbr.y1 - rbr.y0)) : 1;
+    if (target.length && coverRef < 0.5 && target.some((w) => w.thickness >= 0.2)) {
+      const old = new Set(b.walls.filter((w) => w.levelId === level.id).map((w) => w.id));
+      b.walls = b.walls.filter((w) => !old.has(w.id));
+      b.openings = b.openings.filter((o) => !old.has(o.wallId));
+      for (const w of target.filter((x) => x.thickness >= 0.2)) {
+        b.walls.push({ ...structuredClone(w), id: newId('w'), levelId: level.id, height: level.height, finish: { gauche: null, droite: null }, condition: undefined });
+      }
+      fromRef.add(level.id);
+      warnings.push(`${p.name} : ${level.name} mal lu (${Math.round(coverRef * 100)} % de l'emprise du niveau du dessous) ; façades reprises du rez-de-chaussée, cloisons à tracer sur le plan affiché dessous (ou importez le plan de l'étage seul).`);
+    } else {
+      applyTrace(b, level.id, r, dx, dy, k);
+      placedOn.set(level.id, { bmp: p.bmp, scale: r.scale, k, dx, dy });
+    }
     level.underlay = { assetId: p.assetId, x: dx, y: dy, scale: s * k, width: p.width, height: p.height, opacity: 0.35, visible: true, calibrated: !!calibrated.find((u) => sameSize(u, p)) };
     done.add(level.id);
     if (level.id === g.id) groundId = level.id;
@@ -462,6 +500,15 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
     if (top.id !== groundLevel(b).id && b.roof.levelId === top.id) {
       b.roof.eave = eaveForKnee(b, b.roof, sectionKnee);
       lines.push(`${top.name} : étage sous la pente, murs extérieurs à ${sectionKnee.toFixed(2).replace('.', ',')} m sous le toit (lu sur la coupe).`);
+    }
+  }
+  // Dernier niveau repris des façades sous un toit en pente : étage sous combles (murs bas de 1 m par défaut)
+  if (b.roof && b.roof.type !== 'plat' && b.roof.eave == null) {
+    const top = [...b.levels].sort((m, n) => n.elevation - m.elevation)[0];
+    if (fromRef.has(top.id) && b.roof.levelId === top.id) {
+      b.roof.eave = eaveForKnee(b, b.roof, 1);
+      if (top.name === '1er étage') top.name = 'Étage sous combles';
+      lines.push(`${top.name} : étage sous la pente, murs extérieurs à 1 m sous le toit (à ajuster dans Toiture).`);
     }
   }
 

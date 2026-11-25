@@ -475,7 +475,9 @@ export function storeysFromSection(sec: SectionReading, planSizes: number[], fal
   let best = { scale: scales[0] ?? 0.01, storeys: storeysAt(scales[0] ?? 0.01), score: -Infinity };
   for (const k of scales) {
     const st = storeysAt(k);
-    const score = st.reduce((s, x) => s - Math.max(0, 2.2 - x.height) - Math.max(0, x.height - 3.4) - Math.max(0, x.slab - 0.45), 0);
+    // Un premier niveau très bas (vide sanitaire) et un dernier très bas (bas de mansarde) ne jugent pas l'échelle
+    const judged = st.filter((x, i) => !(st.length >= 2 && ((i === 0 && x.height * 1.6 < st[1]?.height) || (i === st.length - 1 && i > 0 && x.height < 0.6 * st[i - 1].height))));
+    const score = judged.reduce((s, x) => s - Math.max(0, 2.2 - x.height) - Math.max(0, x.height - 3.2) - Math.max(0, x.slab - 0.45), 0);
     if (score > best.score) best = { scale: k, storeys: st, score };
   }
   return { scale: best.scale, storeys: best.storeys };
