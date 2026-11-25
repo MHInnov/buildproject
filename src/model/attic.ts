@@ -108,10 +108,14 @@ export function fitAttic(b: Building, levelId: string, knees: KneeLine[], kneeHe
     const v = across(k) ? p.y : p.x;
     return k.side === 'x0' || k.side === 'y0' ? v < k.at - 0.02 : v > k.at + 0.02;
   };
+  // Pignon : mur épais en travers des murs bas, sur l'une des deux lignes de pignon (pas une cloison épaisse)
+  const alongRidge = (p: Point) => (knees.some((k) => across(k)) ? p.x : p.y);
+  const isGable = (w: Wall) =>
+    w.thickness >= 0.15 && knees.some((k) => isH(w) !== across(k)) && Math.min(Math.abs(alongRidge(w.a) - gable.lo), Math.abs(alongRidge(w.a) - gable.hi)) < 0.6;
   const kept: Wall[] = [];
   for (const w0 of own) {
     const w: Wall = { ...w0, a: { ...w0.a }, b: { ...w0.b } };
-    const gableWall = w.thickness >= 0.15 && knees.some((k) => isH(w) !== across(k));
+    const gableWall = isGable(w);
     let drop = false;
     for (const k of knees) {
       const parallel = isH(w) === across(k);
@@ -157,7 +161,7 @@ export function fitAttic(b: Building, levelId: string, knees: KneeLine[], kneeHe
     });
     if (!host) continue;
     // Pas de fenêtre ailleurs que dans un pignon : sous les rampants, la lumière vient des fenêtres de toit
-    if (o.kind === 'fenetre' && host.thickness < 0.15) continue;
+    if (o.kind === 'fenetre' && !isGable(host)) continue;
     if (knees.some((k) => outside(k, at))) continue;
     const op: Opening = { ...o, id: o.id, wallId: host.id, offset: Math.round(dist(host.a, at) * 100) / 100 };
     if (op.offset - op.width / 2 < -0.05 || op.offset + op.width / 2 > dist(host.a, host.b) + 0.05) continue;

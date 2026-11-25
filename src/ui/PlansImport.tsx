@@ -29,6 +29,7 @@ interface Item {
   note?: string;
   walls: TracedWall[];
   rooms: number;
+  doors: number;
   section: SectionReading | null;
 }
 
@@ -84,6 +85,7 @@ export function PlansImport({ onClose }: { onClose: () => void }) {
             hinted: !!a.hint && a.hint === a.kind,
             walls: t?.walls ?? [],
             rooms: t?.rooms ?? 0,
+            doors: t?.openings.filter((o) => o.kind === 'porte').length ?? 0,
             section: a.section,
             summary:
               a.kind === 'coupe' && a.section
@@ -98,7 +100,7 @@ export function PlansImport({ onClose }: { onClose: () => void }) {
       setBusy('Comparaison des pages…');
       await nextFrame();
       const all = [...items, ...added];
-      const sorted = classifyPages(all.map((x) => ({ kind: x.kind, hinted: x.hinted || items.includes(x), name: x.label, walls: x.walls, rooms: x.rooms, section: x.section })));
+      const sorted = classifyPages(all.map((x) => ({ kind: x.kind, hinted: x.hinted || items.includes(x), name: x.label, walls: x.walls, rooms: x.rooms, doors: x.doors, section: x.section })));
       setItems(all.map((x, i) => ({ ...x, kind: sorted[i].kind, note: sorted[i].note ?? (items.includes(x) ? x.note : undefined) })));
     } catch (e) {
       setError(`Impossible de lire ce fichier (${(e as Error).message}).`);

@@ -371,7 +371,7 @@ function PersoRig({ world, levelId, onHint }: { world: WalkWorld; levelId: strin
     const ui = useUi.getState();
     const isOpen = (id: string) => {
       const o = worldRef.current.b.openings.find((x) => x.id === id);
-      return o?.kind === 'porte' ? !ui.toggled[id] : !!ui.toggled[id];
+      return o?.kind === 'porte' && !o.productId?.includes('garage') ? !ui.toggled[id] : !!ui.toggled[id];
     };
     let moving = false;
     // Gauche / droite : le personnage tourne sur lui-même ; avancer / reculer : dans le sens où il regarde.
@@ -542,7 +542,7 @@ function WalkRig({ world, levelId, onPick, onUnlock, onMenu }: { world: WalkWorl
     const ui = useUi.getState();
     const isOpen = (id: string) => {
       const o = worldRef.current.b.openings.find((x) => x.id === id);
-      return o?.kind === 'porte' ? !ui.toggled[id] : !!ui.toggled[id];
+      return o?.kind === 'porte' && !o.productId?.includes('garage') ? !ui.toggled[id] : !!ui.toggled[id];
     };
     const k = keys.current;
     // Tourner et regarder au clavier : pas besoin de la souris en marchant (pavé tactile bloqué pendant la frappe).

@@ -51,6 +51,7 @@ export function analysePlan(bmp: Bitmap, fileName: string, pageText = ''): PlanA
 
 export { looksLikeSection };
 
+
 const FLOOR_ORDER: PlanKind[] = ['rdc', 'etage1', 'etage2', 'etage3'];
 
 /** Les plans sans indication de niveau sont pris dans l'ordre : rez-de-chaussée, puis 1er étage, etc. */
@@ -71,6 +72,8 @@ export interface PageInfo {
   name: string;
   walls: TracedWall[];
   rooms: number;
+  /** Portes reconnues (arcs de débattement) : un plan d'étage en a, une coupe presque pas. */
+  doors?: number;
   section: SectionReading | null;
 }
 
@@ -92,6 +95,9 @@ export function evenStoreys(sec: SectionReading): boolean {
  * trop par rapport aux niveaux que montrent les coupes. Renvoie le classement et, s'il y a lieu, pourquoi
  * une page est écartée.
  */
+/** Vraisemblance d'un plan d'étage : pièces fermées et portes reconnues. */
+const plausible = (p: PageInfo) => p.rooms + (p.doors ?? 0) / 2;
+
 export function classifyPages(pages: PageInfo[]): { kind: PlanKind; note?: string }[] {
   const out: { kind: PlanKind; note?: string }[] = pages.map((p) => ({ kind: p.kind }));
   const isPlan = isFloorKind;
@@ -115,7 +121,7 @@ export function classifyPages(pages: PageInfo[]): { kind: PlanKind; note?: strin
   const expected = sure.length ? Math.max(...sure.map(storeysOnSection)) : secs.length ? Math.min(...secs.map(storeysOnSection)) : 0;
   const plans = pages.map((_, i) => i).filter((i) => isPlan(out[i].kind));
   if (expected > 0 && plans.length > expected) {
-    const loose = plans.filter((i) => !pages[i].hinted).sort((i, j) => pages[i].rooms - pages[j].rooms);
+    const loose = plans.filter((i) => !pages[i].hinted).sort((i, j) => plausible(pages[i]) - plausible(pages[j]));
     for (const i of loose.slice(0, plans.length - expected)) out[i] = { kind: 'ignorer', note: `en trop : les coupes montrent ${expected} niveau${expected > 1 ? 'x' : ''}` };
   }
   // Un seul plan d'implantation : le premier

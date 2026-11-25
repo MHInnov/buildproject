@@ -4,6 +4,7 @@ import { useAsset } from '../assets';
 import { productById, type Product } from '../model/catalog';
 import { levelBelow, levelById, onLevel } from '../model/levels';
 import { groundLevel } from '../traceApply';
+import { roofFrame } from '../model/roof';
 import { patternTile, patternUrl } from '../textures/patterns';
 import { useUi } from '../uiState';
 import { projectDiff } from '../model/diff';
@@ -613,6 +614,9 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
         <pattern id="hatch" width="0.15" height="0.15" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
           <line x1="0" y1="0" x2="0" y2="0.15" stroke="var(--danger)" strokeWidth="0.03" />
         </pattern>
+        <pattern id="slope" width="0.25" height="0.25" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <line x1="0" y1="0" x2="0" y2="0.25" stroke="var(--ink-soft)" strokeOpacity={0.35} strokeWidth="0.02" />
+        </pattern>
         <pattern id="zone-empty" width="0.2" height="0.2" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
           <rect width="0.2" height="0.2" fill="var(--paper)" fillOpacity={0.7} />
           <line x1="0" y1="0" x2="0" y2="0.2" stroke="var(--accent)" strokeOpacity={0.5} strokeWidth="0.03" />
@@ -622,6 +626,9 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
         ))}
       </defs>
       <rect x={view.x} y={view.y} width={view.w} height={viewH} fill="url(#grid)" />
+
+      {/* Combles aménagés : bandes sous les rampants où l'on tient à peine debout (moins de 1,80 m) */}
+      {full.roof && full.roof.levelId === levelId && full.roof.eave != null && <UnderSlope building={full} fs={fs} />}
 
       {/* Jardin (parcelle du plan d'implantation), au rez-de-chaussée */}
       {full.site && groundLevel(full).id === levelId && <SiteOutline parcel={full.site.parcel} fs={fs} />}
@@ -796,7 +803,7 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
           const n = wallNormal(w);
           const mid = lerp(w.a, w.b, 0.5);
           const out = (mid.x + n.x - center.x) ** 2 + (mid.y + n.y - center.y) ** 2 > (mid.x - n.x - center.x) ** 2 + (mid.y - n.y - center.y) ** 2 ? 1 : -1;
-          const label = `${o.kind === 'porte' ? 'P' : 'F'} ${Math.round(o.width * 100)}${o.kind === 'fenetre' ? ` × ${Math.round(o.height * 100)}` : ''}`;
+          const label = `${o.productId?.includes('garage') ? 'Garage' : o.kind === 'porte' ? 'P' : 'F'} ${Math.round(o.width * 100)}${o.kind === 'fenetre' ? ` × ${Math.round(o.height * 100)}` : ''}`;
           return <Dimension key={`od-${o.id}`} a={p1} b={p2} offset={-out * (Math.max(w.thickness, 0.06) / 2 + fs * 0.7)} fs={fs * 0.8} text={label} opening />;
         })}
 
@@ -861,8 +868,8 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
         );
       })}
 
-      {/* Étiquettes des pièces */}
-      {rooms.map((r) => (
+      {/* Étiquettes des pièces (pas pour un interstice entre deux murs collés) */}
+      {rooms.filter((r) => r.area >= 0.3 || !r.label.id.startsWith('auto')).map((r) => (
         <g key={`l-${r.label.id}`} className="plan__label" pointerEvents="none">
           <text x={r.label.at.x} y={r.label.at.y} fontSize={fs * 1.1} textAnchor="middle" fontWeight={600}>
             {r.label.name}
@@ -1020,6 +1027,23 @@ function OpeningShape({ o, w, selected, isNew, onSelect, onMenu }: { o: Opening;
       </g>
     );
   }
+  // Porte de garage : tablier dessiné en tirets (il remonte au plafond), sans arc
+  if (o.productId?.includes('garage')) {
+    const off = th / 2 + 0.04;
+    const q1 = { x: p1.x - n.x * off, y: p1.y - n.y * off };
+    const q2 = { x: p2.x - n.x * off, y: p2.y - n.y * off };
+    const r1 = { x: p1.x + n.x * off, y: p1.y + n.y * off };
+    const r2 = { x: p2.x + n.x * off, y: p2.y + n.y * off };
+    return (
+      <g onPointerDown={onSelect} onContextMenu={onMenu} style={{ cursor: 'pointer' }}>
+        <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke="var(--paper)" strokeWidth={th + 0.01} />
+        <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke={stroke} strokeWidth={sw * 2} />
+        <line x1={q1.x} y1={q1.y} x2={q2.x} y2={q2.y} stroke={stroke} strokeWidth={sw * 0.6} strokeDasharray="0.12 0.08" />
+        <line x1={r1.x} y1={r1.y} x2={r2.x} y2={r2.y} stroke={stroke} strokeWidth={sw * 0.6} strokeDasharray="0.12 0.08" />
+        <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke="transparent" strokeWidth={th + 0.15} />
+      </g>
+    );
+  }
   // Porte : vantail + arc d'ouverture
   const leaf = { x: p1.x + n.x * o.width, y: p1.y + n.y * o.width };
   return (
@@ -1105,6 +1129,45 @@ function SiteOutline({ parcel, fs }: { parcel: Point[]; fs: number }) {
       <text x={at.x} y={at.y} fontSize={fs} textAnchor="middle" fill="#4f7a2e">
         Jardin · {Math.round(area).toLocaleString('fr-FR')} m²
       </text>
+    </g>
+  );
+}
+
+/** Zones des combles de moins de 1,80 m sous le rampant (convention des plans), le long des égouts. */
+function UnderSlope({ building, fs }: { building: Building; fs: number }) {
+  const roof = building.roof!;
+  const f = roofFrame(building, roof);
+  if (!f || (roof.type !== 'deux-pans' && roof.type !== 'monopente')) return null;
+  const t = Math.tan((roof.pitch * Math.PI) / 180);
+  const d = Math.max(0, (1.8 - (roof.eave ?? 0)) / t);
+  if (d < 0.05) return null;
+  const alongX = roof.ridge === 'x';
+  const strips = (roof.type === 'deux-pans' ? [0, 1] : [0]).map((side) => {
+    if (alongX) {
+      const y0 = side ? f.maxY - d : f.minY;
+      return { x: f.minX, y: y0, w: f.maxX - f.minX, h: d, line: side ? [f.minX, y0, f.maxX, y0] : [f.minX, y0 + d, f.maxX, y0 + d] };
+    }
+    const x0 = side ? f.maxX - d : f.minX;
+    return { x: x0, y: f.minY, w: d, h: f.maxY - f.minY, line: side ? [x0, f.minY, x0, f.maxY] : [x0 + d, f.minY, x0 + d, f.maxY] };
+  });
+  return (
+    <g pointerEvents="none">
+      {strips.map((r, i) => (
+        <g key={i}>
+          <rect x={r.x} y={r.y} width={r.w} height={r.h} fill="url(#slope)" />
+          <line x1={r.line[0]} y1={r.line[1]} x2={r.line[2]} y2={r.line[3]} stroke="var(--ink-soft)" strokeWidth={fs * 0.1} strokeDasharray={`${fs * 0.6} ${fs * 0.3}`} />
+          <text
+            x={r.x + r.w / 2}
+            y={r.y + r.h / 2}
+            fontSize={fs * 0.85}
+            textAnchor="middle"
+            fill="var(--ink-soft)"
+            transform={alongX ? undefined : `rotate(-90 ${r.x + r.w / 2} ${r.y + r.h / 2})`}
+          >
+            sous rampant · moins de 1,80 m
+          </text>
+        </g>
+      ))}
     </g>
   );
 }

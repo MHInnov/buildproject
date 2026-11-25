@@ -15,7 +15,12 @@ export function applyTrace(b: Building, levelId: string, r: VectorizeResult, dx:
   b.openings = b.openings.filter((o) => !old.has(o.wallId));
   const P = (p: { x: number; y: number }) => ({ x: Math.round((p.x * k + dx) * 100) / 100, y: Math.round((p.y * k + dy) * 100) / 100 });
   const placed: { wall: Wall; openings: VectorizeResult['openings'] }[] = [];
+  // Un même mur lu deux fois (mêmes bouts à 3 cm près) : un seul est posé, avec les ouvertures des deux
+  const same = (m: { a: { x: number; y: number }; b: { x: number; y: number } }, n: typeof m) =>
+    (dist(m.a, n.a) < 0.03 && dist(m.b, n.b) < 0.03) || (dist(m.a, n.b) < 0.03 && dist(m.b, n.a) < 0.03);
+  const canon = r.walls.map((tw, i) => r.walls.findIndex((x, j) => j <= i && same(x, tw)));
   r.walls.forEach((tw, i) => {
+    if (canon[i] !== i) return;
     const wall: Wall = {
       id: newId('w'),
       levelId,
@@ -27,8 +32,20 @@ export function applyTrace(b: Building, levelId: string, r: VectorizeResult, dx:
       finish: { gauche: null, droite: null },
     };
     insertWall(b, wall);
-    placed.push({ wall, openings: r.openings.filter((o) => o.wall === i) });
+    placed.push({ wall, openings: r.openings.filter((o) => canon[o.wall] === i) });
   });
+  // Façade d'une porte de garage : la baie et son poteau sont lus minces, le mur reste une façade
+  const thick = placed.map((p) => p.wall.thickness).filter((t) => t >= 0.2).sort((m, n) => m - n);
+  const facade = thick.length ? thick[Math.floor(thick.length / 2)] : 0.3;
+  for (const p of placed) {
+    if (!p.openings.some((o) => o.garage) || p.wall.thickness >= 0.2) continue;
+    for (const w of b.walls.filter((x) => x.levelId === levelId && dist(x.a, x.b) > 0 && onSegment(x, p.wall))) {
+      w.thickness = facade;
+      w.kind = 'porteur';
+    }
+    p.wall.thickness = facade;
+    p.wall.kind = 'porteur';
+  }
   // Les ouvertures sont rattachées au tronçon de mur qui les contient après découpe.
   for (const { wall, openings } of placed) {
     const L = dist(wall.a, wall.b);
@@ -50,6 +67,11 @@ export function applyTrace(b: Building, levelId: string, r: VectorizeResult, dx:
       b.openings.push(op);
     }
   }
+}
+
+/** Tronçon `x` pris sur le mur `w` (découpé à l'insertion). */
+function onSegment(x: Wall, w: Wall): boolean {
+  return projectOnSegment(x.a, w.a, w.b).d < 0.02 && projectOnSegment(x.b, w.a, w.b).d < 0.02;
 }
 
 /** Niveau du rez-de-chaussée : celui dont le sol est le plus proche de 0. */

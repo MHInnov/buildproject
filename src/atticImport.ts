@@ -190,6 +190,21 @@ export function findRoofWindows(f: Frame, box: Record<Side, number>, side: Side,
  * Reconnaît des combles aménagés sur le plus haut niveau retracé et les met en forme : toit posé sur ce
  * niveau, murs bas, pièces fermées, fenêtres de toit. Renvoie la ligne du compte rendu, ou null.
  */
+/** Raccourcit un mur (perpendiculaire au faîtage) à l'intervalle [lo, hi] en travers ; ses ouvertures suivent. */
+function clipAcross(b: Building, w: Building['walls'][number], ridge: 'x' | 'y', lo: number, hi: number): void {
+  const get = (p: { x: number; y: number }) => (ridge === 'x' ? p.y : p.x);
+  const set = (p: { x: number; y: number }, v: number) => (ridge === 'x' ? (p.y = v) : (p.x = v));
+  const a0 = get(w.a);
+  const na = Math.max(lo, Math.min(hi, a0));
+  const nb = Math.max(lo, Math.min(hi, get(w.b)));
+  set(w.a, na);
+  set(w.b, nb);
+  const L = Math.abs(nb - na);
+  const shift = Math.abs(na - a0);
+  for (const o of b.openings.filter((x) => x.wallId === w.id)) o.offset = Math.round((o.offset - shift) * 100) / 100;
+  b.openings = b.openings.filter((o) => o.wallId !== w.id || (o.offset - o.width / 2 > -0.05 && o.offset + o.width / 2 < L + 0.05));
+}
+
 export function fitImportedAttic(b: Building, placed: Map<string, Placement>, sectionEave: number | null, noSection: boolean): string | null {
   const g = groundLevel(b);
   const ups = b.levels.filter((l) => placed.has(l.id) && l.elevation > g.elevation + 0.5).sort((m, n) => n.elevation - m.elevation);
@@ -229,8 +244,30 @@ export function fitImportedAttic(b: Building, placed: Map<string, Placement>, se
     const main = on.sort((m, n) => lenOf(n) - lenOf(m))[0];
     return [Math.min(...on.map((w) => c(w, false))), Math.max(...on.map((w) => c(w, true))), along(main), main.thickness];
   };
+  // Pignons calés sur les façades du dessous : même nu extérieur, et pas plus larges qu'elles (un pignon
+  // qui dépasse dans le vide trahit un léger décalage de calage, pas la maison)
+  const under = b.walls.filter((w) => w.levelId === below.id && w.thickness >= 0.15 && across(w));
+  for (const end of ['lo', 'hi'] as const) {
+    const side = end === 'lo' ? lo0 : hi0;
+    const mine = gables.filter((w) => (end === 'lo' ? along(w) - lo0 < 0.8 : hi0 - along(w) < 0.8));
+    const fac = under.filter((w) => Math.abs(along(w) + (end === 'lo' ? -w.thickness / 2 : w.thickness / 2) - side) < 0.3);
+    if (!mine.length || !fac.length) continue;
+    const f0 = Math.min(...fac.map((w) => c(w, false) - w.thickness / 2));
+    const f1 = Math.max(...fac.map((w) => c(w, true) + w.thickness / 2));
+    for (const w of mine) {
+      const outer = along(w) + (end === 'lo' ? -w.thickness / 2 : w.thickness / 2);
+      const d = side - outer;
+      if (Math.abs(d) < 0.6) for (const p of [w.a, w.b]) ridge === 'x' ? (p.x += d) : (p.y += d);
+      clipAcross(b, w, ridge, f0, f1);
+    }
+    b.walls = b.walls.filter((w) => w.levelId !== top.id || Math.hypot(w.b.x - w.a.x, w.b.y - w.a.y) > 0.05);
+  }
+  gables.splice(0, gables.length, ...gables.filter((w) => b.walls.includes(w)));
   const e0 = extent((w) => along(w) - lo0 < 0.8);
   const e1 = extent((w) => hi0 - along(w) < 0.8);
+  // Les murs bas vont d'un pignon à l'autre : axes des pignons (après calage), pas un conduit qui dépasse
+  if (e0) span[0] = e0[2];
+  if (e1) span[1] = e1[2];
   const ex = [e0, e1].filter((e): e is number[] => !!e);
   if (ex.length) {
     const k0 = ridge === 'x' ? 'y0' : 'x0';

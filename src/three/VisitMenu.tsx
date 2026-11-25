@@ -37,7 +37,7 @@ function itemsFor(t: MenuTarget, b: Building): { title: string; items: Item[] } 
   if (sel.kind === 'opening') {
     const o = b.openings.find((x) => x.id === sel.id);
     if (!o) return { title: 'Ouverture', items: [] };
-    const open = o.kind === 'porte' ? !ui.toggled[o.id] : !!ui.toggled[o.id];
+    const open = o.kind === 'porte' && !o.productId?.includes('garage') ? !ui.toggled[o.id] : !!ui.toggled[o.id];
     return {
       title: o.kind === 'porte' ? 'Porte' : 'Fenêtre',
       items: [

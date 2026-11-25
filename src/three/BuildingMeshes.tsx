@@ -482,7 +482,8 @@ function WallMesh({ wall, elevation, openings, catalog, facing, profile, selecte
           }),
       )}
       {openings.map((o) => {
-        const isOpen = o.kind === 'porte' ? !toggled[o.id] : !!toggled[o.id];
+        // Portes ouvertes par défaut, sauf les portes de garage (fermées : on les voit de dehors)
+        const isOpen = o.kind === 'porte' && !isGarage(o) ? !toggled[o.id] : !!toggled[o.id];
         const handle = onOpeningClick(o.id);
         return (
           <OpeningMesh
@@ -498,6 +499,23 @@ function WallMesh({ wall, elevation, openings, catalog, facing, profile, selecte
           />
         );
       })}
+    </group>
+  );
+}
+
+const isGarage = (o: Opening) => !!o.productId?.includes('garage');
+
+/** Tablier qui monte ou descend en douceur. */
+function Lift({ target, children }: { target: number; children: React.ReactNode }) {
+  const ref = useRef<THREE.Group>(null);
+  useFrame((_, dt) => {
+    const g = ref.current;
+    if (!g) return;
+    g.position.y += (target - g.position.y) * Math.min(1, dt * 4);
+  });
+  return (
+    <group ref={ref} position-y={target}>
+      {children}
     </group>
   );
 }
@@ -542,6 +560,36 @@ function OpeningMesh({ o, th, product, selected, open, inward, onClick, onToggle
       onToggle();
     },
   };
+
+  if (o.kind === 'porte' && isGarage(o)) {
+    // Porte sectionnelle : tablier à panneaux horizontaux, qui remonte sous le plafond quand on l'ouvre
+    const panels = Math.max(3, Math.round(o.height / 0.5));
+    const ph = (o.height - 0.04) / panels;
+    return (
+      <group>
+        {[1, -1].map((side) => (
+          <group key={side} position-z={side * (th / 2 + 0.008)}>
+            <mesh position={[s - 0.035, o.height / 2, 0]} material={casing}>
+              <boxGeometry args={[0.07, o.height + 0.07, 0.016]} />
+            </mesh>
+            <mesh position={[s + o.width + 0.035, o.height / 2, 0]} material={casing}>
+              <boxGeometry args={[0.07, o.height + 0.07, 0.016]} />
+            </mesh>
+            <mesh position={[o.offset, o.height + 0.035, 0]} material={casing}>
+              <boxGeometry args={[o.width + 0.14, 0.07, 0.016]} />
+            </mesh>
+          </group>
+        ))}
+        <Lift target={open ? o.height - 0.25 : 0}>
+          {Array.from({ length: panels }, (_, i) => (
+            <mesh key={i} position={[o.offset, 0.02 + ph * (i + 0.5), 0]} material={frame} castShadow receiveShadow {...events}>
+              <boxGeometry args={[o.width - 0.02, ph - 0.015, 0.045]} />
+            </mesh>
+          ))}
+        </Lift>
+      </group>
+    );
+  }
 
   if (o.kind === 'porte') {
     const leafW = o.width - 0.02;
