@@ -1,3 +1,4 @@
+import { create } from 'zustand';
 import type { Catalog, Category, PatternKind, Product, Tone } from './model/catalog';
 
 /**
@@ -30,6 +31,9 @@ export function saveImported(list: ImportedCatalog[]): string | null {
     return 'Stockage du navigateur plein : le catalogue est utilisable maintenant mais ne sera pas conservé.';
   }
 }
+
+/** Liste des catalogues importés, partagée par les écrans d'administration. */
+export const useImported = create<{ list: ImportedCatalog[] }>(() => ({ list: loadImported() }));
 
 export function mergeCatalogs(base: Catalog, list: ImportedCatalog[]): Catalog {
   const ids = new Set(base.products.map((p) => p.id));

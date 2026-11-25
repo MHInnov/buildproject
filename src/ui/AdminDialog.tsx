@@ -1,23 +1,18 @@
 import { useRef, useState } from 'react';
 import { aiCheck } from '../ai';
-import { CSV_TEMPLATE, loadImported, mergeCatalogs, parseCatalogFile, saveImported, type ImportedCatalog } from '../catalogImport';
-import { DEMO_CATALOG } from '../data/catalog';
+import { CSV_TEMPLATE, parseCatalogFile, useImported } from '../catalogImport';
+import { commitImported } from './catalogs';
+import { ConnectorsPanel } from './ConnectorsPanel';
 import { newId } from '../model/geometry';
 import { AI_MODELS, useSettings } from '../settings';
-import { useStore } from '../store';
 
 /** Catalogues fournisseurs : import d'un fichier CSV ou JSON. */
 function CatalogImport() {
-  const [list, setList] = useState<ImportedCatalog[]>(loadImported);
+  const list = useImported((s) => s.list);
   const [report, setReport] = useState<string[]>([]);
   const [brand, setBrand] = useState('');
   const file = useRef<HTMLInputElement>(null);
-  const commit = (next: ImportedCatalog[]) => {
-    const warn = saveImported(next);
-    setList(next);
-    useStore.setState({ catalog: mergeCatalogs(DEMO_CATALOG, next) });
-    return warn;
-  };
+  const commit = commitImported;
   return (
     <section>
       <h3>Catalogues fournisseurs</h3>
@@ -150,6 +145,7 @@ export function AdminDialog({ onClose }: { onClose: () => void }) {
           )}
         </section>
         <CatalogImport />
+        <ConnectorsPanel />
         <div className="actions">
           <button className="btn btn--primary" onClick={onClose}>
             Fermer

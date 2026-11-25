@@ -83,6 +83,16 @@ Dans l'existant, on place un point de vue sur le plan et on y joint la photo pri
 
 **Menu > Administration** permet d'importer le catalogue d'une marque au format CSV (Excel) ou JSON ; un modèle CSV est téléchargeable au même endroit. Les produits importés s'ajoutent aux choix de l'application et restent dans le navigateur. IKEA et Quick-Step ne publient pas de catalogue ouvert ni d'API publique : il faut obtenir le fichier produits auprès de la marque ou d'un distributeur partenaire.
 
+Des **connecteurs** permettent aussi de rechercher des produits en ligne et de les ajouter au catalogue, avec votre propre compte :
+
+| Source | Service | Ce qu'il faut |
+| --- | --- | --- |
+| IKEA | acteur Apify `mynewhome/ikea` (communautaire, non officiel) | jeton API Apify |
+| Brico.be | recherche Brico de la place de marché Writ (non affiliée à Brico) | clé API Writ `wt_…` (offre Pro) |
+| Diffusion Menuiserie (Quick-Step) | aucun : pas d'API ni d'export, reprise automatique du site non autorisée | demander le fichier produits et l'importer en CSV |
+
+Rien n'est appelé tant que la clé d'un connecteur n'est pas renseignée. Les clés restent dans le navigateur. Les appels passent par le serveur de l'application (`/connecteurs/…` dans `nginx.conf`, et le même relais en `npm run dev`), car ces services ne peuvent pas être appelés directement depuis une page web.
+
 ## Raccourcis du plan
 
 | Action | Geste |

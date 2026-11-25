@@ -296,3 +296,26 @@ describe('import de catalogue fournisseur', () => {
     expect(r.products[0]).toMatchObject({ category: 'meuble', subcategory: 'chaise', price: 45, brand: 'B' });
   });
 });
+
+describe('connecteurs de catalogues', () => {
+  it('reconnaît les résultats emballés et en tire des produits', async () => {
+    const { findItems, toFound, foundToProducts, parseDimensions } = await import('../../connectors');
+    expect(parseDimensions('Largeur: 80 cm, Profondeur: 28 cm, Hauteur: 202 cm')).toEqual({ w: 80, d: 28, h: 202 });
+    expect(parseDimensions('BILLY 80x28x202 cm')).toEqual({ w: 80, d: 28, h: 202 });
+    const ikea = [{ name: 'BILLY', typeName: 'Bibliothèque, blanc', price: { currentPrice: 59.99 }, measurements: '80x28x202 cm', url: 'https://example.test/billy', image: 'https://example.test/billy.jpg', id: '00263850' }];
+    const found = toFound(findItems(ikea), 'IKEA', 'meuble');
+    expect(found[0]).toMatchObject({ name: 'BILLY Bibliothèque, blanc', price: 59.99, brand: 'IKEA' });
+    const { products, errors } = foundToProducts(found);
+    expect(errors).toEqual([]);
+    expect(products[0]).toMatchObject({ category: 'meuble', subcategory: 'rangement', color: '#f2f1ec', size: { w: 0.8, d: 0.28, h: 2.02 } });
+    const brico = { success: true, data: { products: [{ title: 'Stratifié chêne naturel 8 mm', price: '24,95 €/m²', brand: 'Quick-Step', url: 'https://example.test/s' }] } };
+    const sol = foundToProducts(toFound(findItems(brico), 'Brico', 'sol')).products[0];
+    expect(sol).toMatchObject({ category: 'sol', brand: 'Quick-Step', saleUnit: 'paquet', packSize: 1, price: 24.95 });
+  });
+
+  it("n'appelle rien sans clé", async () => {
+    const { searchConnector } = await import('../../connectors');
+    await expect(searchConnector('ikea', 'billy', 10, 'meuble')).rejects.toThrow(/non configuré/);
+    await expect(searchConnector('brico', 'parquet', 10, 'sol')).rejects.toThrow(/non configuré/);
+  });
+});

@@ -217,7 +217,7 @@ function FileMenu() {
           <button onClick={() => { resetDemo(); setOpen(false); }}>Recharger la maison de démo</button>
           <button onClick={exportJson}>Exporter le projet (.json)</button>
           <button onClick={() => input.current?.click()}>Importer un projet…</button>
-          <button onClick={() => { setAdmin(true); setOpen(false); }}>Administration (IA, catalogues)…</button>
+          <button onClick={() => { setAdmin(true); setOpen(false); }}>Administration (IA, catalogues, connecteurs)…</button>
           <input
             ref={input}
             type="file"
