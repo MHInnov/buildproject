@@ -69,6 +69,8 @@ export function photoSize(key: PhotoKey, p: Pattern): [number, number] {
   const h = p.h ?? w;
   const a = INFO[key].aspect;
   const uniform = (W: number): [number, number] => [W, W * a];
+  const fixed = SIZES[key];
+  if (fixed) return uniform(fixed(w));
   switch (key) {
     case 'oak-planks':
       return uniform(10 * w); // ≈ 10 lames sur la photo
@@ -115,14 +117,65 @@ export function photoSize(key: PhotoKey, p: Pattern): [number, number] {
       return uniform(0.5);
     case 'wood':
       return uniform(1);
+    default:
+      return uniform(1);
   }
 }
 
+/**
+ * Photos de matériaux précis (relevé de l'existant, façades, toitures, extérieurs) : largeur couverte
+ * par la photo en mètres, selon la taille d'élément du produit (w) quand elle compte.
+ */
+const SIZES: Partial<Record<PhotoKey, (w: number) => number>> = {
+  'tuiles-canal': (w) => 7 * w,
+  'tuiles-canal-anciennes': (w) => 7 * w,
+  'tuiles-plates': (w) => 8 * w,
+  'tuiles-plates-anciennes': (w) => 8 * w,
+  'tuiles-beton': (w) => 6 * w,
+  'ardoise-ecailles': (w) => 10 * w,
+  'ardoise-ancienne': (w) => 10 * w,
+  'charpente-chene': () => 1.2,
+  'charpente-sapin': () => 1.2,
+  'bois-brut': () => 1.2,
+  'plancher-ancien': (w) => 9 * w,
+  'plancher-sapin': (w) => 9 * w,
+  'parquet-mosaique': (w) => 7.5 * w,
+  tomettes: (w) => 7 * w,
+  'carrelage-ancien': (w) => 3 * w,
+  'brique-rouge': (w) => 7 * (w + 0.01),
+  'brique-ancienne': (w) => 10 * (w + 0.01),
+  'brique-jaune': (w) => 9 * (w + 0.01),
+  'pierre-calcaire': () => 2.2,
+  moellons: () => 2,
+  meuliere: () => 2.4,
+  'enduit-ancien': () => 2,
+  'enduit-ecaille': () => 2,
+  'enduit-taloche': () => 2,
+  'bardage-bois': (w) => 14 * w,
+  'bardage-gris': (w) => 14 * w,
+  'bardage-peint': (w) => 16 * w,
+  gazon: () => 2.5,
+  'herbe-jardin': () => 2.5,
+  terre: () => 2.5,
+  gravier: () => 1,
+  'gravier-blanc': () => 1,
+  gravillons: () => 0.8,
+  'pave-granit': () => 1.5,
+  'paves-anciens': () => 1,
+  'pave-beton': () => 1.3,
+  'dalles-pierre': () => 2.4,
+  'dalles-beton': () => 1.7,
+  'terrasse-bois': () => 2,
+};
+
 /** Force de la teinte (1 = couleur exacte du produit, 0 = couleur de la photo). */
-const TINT: Partial<Record<PhotoKey, number>> = { brick: 0.55, stone: 0.5, rooftiles: 0.6, slate: 0.7, terracotta: 0.7, cement: 0.5, zellige: 0.8, grass: 0.5, 'old-planks': 0.85, 'oak-planks': 0.9, herringbone: 0.9 };
+const TINT: Partial<Record<PhotoKey, number>> = { brick: 0.55, stone: 0.5, rooftiles: 0.6, slate: 0.7, terracotta: 0.7, cement: 0.5, zellige: 0.8, grass: 0.5, 'old-planks': 0.85, 'oak-planks': 0.9, herringbone: 0.9, 'enduit-ancien': 0.8, 'enduit-ecaille': 0.6, 'enduit-taloche': 1, 'bardage-peint': 0.8, 'carrelage-ancien': 0.6 };
+
+/** Photos de matériaux précis : on garde leurs couleurs naturelles, juste nuancées par la couleur du produit. */
+const NATURAL = 0.3;
 
 /** Relief atténué pour les surfaces lisses (peinture, papier peint). */
-const NORMAL: Partial<Record<PhotoKey, number>> = { plaster: 0.35, wallpaper: 0.5, 'tiles-large': 0.8 };
+const NORMAL: Partial<Record<PhotoKey, number>> = { plaster: 0.35, wallpaper: 0.5, 'tiles-large': 0.8, 'enduit-taloche': 0.6 };
 
 const loader = new THREE.TextureLoader();
 const images = new Map<string, Promise<HTMLImageElement>>();
@@ -148,7 +201,7 @@ export function applyPhoto(m: THREE.MeshStandardMaterial, key: PhotoKey, pattern
   const c = new THREE.Color(color);
   const target = [c.r, c.g, c.b];
   // Les photos très colorées (brique, tuiles, bois) gardent une partie de leurs nuances naturelles.
-  const k = TINT[key] ?? 1;
+  const k = TINT[key] ?? (SIZES[key] ? NATURAL : 1);
   const tint = new THREE.Color(...(target.map((t, i) => Math.min(2.5, Math.max(0.05, t / Math.max(0.01, info.avg[i]))) ** k) as [number, number, number]));
   const rough = Math.min(3, Math.max(0.2, (roughness ?? info.rough) / Math.max(0.05, info.rough)));
   const make = (img: HTMLImageElement, srgb: boolean) => {

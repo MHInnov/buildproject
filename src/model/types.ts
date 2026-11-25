@@ -77,6 +77,10 @@ export interface Roof {
   eave?: number;
   /** Fenêtres de toit (type Velux). */
   windows?: RoofWindow[];
+  /** Bois de la charpente (voir data/exterior.ts) ; absent : sapin. */
+  timber?: string;
+  /** Combles aménagés : pannes et faîtage laissés apparents sous le rampant. */
+  exposedBeams?: boolean;
   /**
    * Emprise du toit (faces extérieures, avant débord), quand elle ne se déduit pas des murs : combles
    * importés d'un plan, dont les pignons fixent la largeur d'égout à égout.
@@ -186,6 +190,18 @@ export interface Building {
   roof: Roof | null;
   /** Terrain autour de la maison, lu sur le plan d'implantation (absent sinon). */
   site?: Site;
+  /** Revêtements extérieurs (pelouse, abords de la maison) ; absent : pelouse par défaut, sans abords. */
+  outdoor?: Outdoor;
+}
+
+/** Revêtements extérieurs, voir data/exterior.ts. */
+export interface Outdoor {
+  /** Sol du jardin et du terrain autour. */
+  lawn?: string;
+  /** Abords : bande autour de la maison (terrasse, allée, gravier), absente si null. */
+  apron?: string | null;
+  /** Largeur des abords, en mètres. */
+  apronWidth?: number;
 }
 
 /** Parcelle : contour en mètres, dans le repère du plan (la maison à sa place). */

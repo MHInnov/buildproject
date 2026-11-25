@@ -238,5 +238,395 @@
       0.1789
     ],
     "rough": 0.4774
+  },
+  "tuiles-canal": {
+    "source": "RoofingTiles006",
+    "aspect": 1.0,
+    "avg": [
+      0.18202,
+      0.06126,
+      0.02818
+    ],
+    "rough": 0.7009
+  },
+  "tuiles-canal-anciennes": {
+    "source": "RoofingTiles007",
+    "aspect": 1.0,
+    "avg": [
+      0.12534,
+      0.04195,
+      0.01761
+    ],
+    "rough": 0.6381
+  },
+  "tuiles-plates": {
+    "source": "RoofingTiles011A",
+    "aspect": 1.0,
+    "avg": [
+      0.20541,
+      0.06833,
+      0.02962
+    ],
+    "rough": 0.6176
+  },
+  "tuiles-plates-anciennes": {
+    "source": "RoofingTiles011B",
+    "aspect": 1.0,
+    "avg": [
+      0.16951,
+      0.06443,
+      0.02994
+    ],
+    "rough": 0.6248
+  },
+  "tuiles-beton": {
+    "source": "RoofingTiles013A",
+    "aspect": 1.0,
+    "avg": [
+      0.03145,
+      0.03028,
+      0.03636
+    ],
+    "rough": 0.4999
+  },
+  "ardoise-ecailles": {
+    "source": "RoofingTiles001",
+    "aspect": 1.0,
+    "avg": [
+      0.06383,
+      0.0686,
+      0.06156
+    ],
+    "rough": 0.706
+  },
+  "ardoise-ancienne": {
+    "source": "RoofingTiles004",
+    "aspect": 1.0,
+    "avg": [
+      0.04305,
+      0.0489,
+      0.04529
+    ],
+    "rough": 0.6707
+  },
+  "charpente-chene": {
+    "source": "Wood076",
+    "aspect": 1.0,
+    "avg": [
+      0.06859,
+      0.03514,
+      0.01932
+    ],
+    "rough": 0.6283
+  },
+  "charpente-sapin": {
+    "source": "Wood094",
+    "aspect": 1.0,
+    "avg": [
+      0.38718,
+      0.22537,
+      0.12758
+    ],
+    "rough": 0.4924
+  },
+  "bois-brut": {
+    "source": "Wood086",
+    "aspect": 1.0,
+    "avg": [
+      0.25919,
+      0.20907,
+      0.13087
+    ],
+    "rough": 0.7172
+  },
+  "plancher-ancien": {
+    "source": "Planks036A",
+    "aspect": 1.0,
+    "avg": [
+      0.16769,
+      0.0989,
+      0.0563
+    ],
+    "rough": 0.509
+  },
+  "plancher-sapin": {
+    "source": "Planks033A",
+    "aspect": 1.0,
+    "avg": [
+      0.33601,
+      0.18756,
+      0.10124
+    ],
+    "rough": 0.508
+  },
+  "parquet-mosaique": {
+    "source": "WoodFloor022",
+    "aspect": 1.0,
+    "avg": [
+      0.10612,
+      0.06108,
+      0.037
+    ],
+    "rough": 0.4801
+  },
+  "tomettes": {
+    "source": "Tiles065",
+    "aspect": 1.0,
+    "avg": [
+      0.42787,
+      0.18814,
+      0.0962
+    ],
+    "rough": 0.445
+  },
+  "carrelage-ancien": {
+    "source": "Tiles028",
+    "aspect": 1.0,
+    "avg": [
+      0.87283,
+      0.66628,
+      0.52444
+    ],
+    "rough": 0.5546
+  },
+  "brique-rouge": {
+    "source": "Bricks082A",
+    "aspect": 1.0,
+    "avg": [
+      0.22538,
+      0.14674,
+      0.11275
+    ],
+    "rough": 0.6752
+  },
+  "brique-ancienne": {
+    "source": "Bricks077",
+    "aspect": 0.5,
+    "avg": [
+      0.51523,
+      0.2744,
+      0.24787
+    ],
+    "rough": 0.5833
+  },
+  "brique-jaune": {
+    "source": "Bricks081A",
+    "aspect": 1.0,
+    "avg": [
+      0.53952,
+      0.3118,
+      0.12085
+    ],
+    "rough": 0.5718
+  },
+  "pierre-calcaire": {
+    "source": "Bricks084",
+    "aspect": 0.5,
+    "avg": [
+      0.42819,
+      0.3785,
+      0.22614
+    ],
+    "rough": 0.6473
+  },
+  "moellons": {
+    "source": "Bricks078",
+    "aspect": 0.5,
+    "avg": [
+      0.39806,
+      0.36314,
+      0.25645
+    ],
+    "rough": 0.6185
+  },
+  "meuliere": {
+    "source": "Bricks075A",
+    "aspect": 0.5,
+    "avg": [
+      0.26981,
+      0.23002,
+      0.15812
+    ],
+    "rough": 0.5958
+  },
+  "enduit-ancien": {
+    "source": "PaintedPlaster015",
+    "aspect": 1.0,
+    "avg": [
+      0.32695,
+      0.3254,
+      0.30086
+    ],
+    "rough": 0.6481
+  },
+  "enduit-ecaille": {
+    "source": "PaintedPlaster014",
+    "aspect": 1.0,
+    "avg": [
+      0.28657,
+      0.276,
+      0.24483
+    ],
+    "rough": 0.6475
+  },
+  "enduit-taloche": {
+    "source": "PaintedPlaster017",
+    "aspect": 0.5,
+    "avg": [
+      0.51451,
+      0.51904,
+      0.49553
+    ],
+    "rough": 0.5153
+  },
+  "bardage-bois": {
+    "source": "WoodSiding008",
+    "aspect": 1.0,
+    "avg": [
+      0.07409,
+      0.04898,
+      0.03263
+    ],
+    "rough": 0.6309
+  },
+  "bardage-gris": {
+    "source": "WoodSiding003",
+    "aspect": 1.0,
+    "avg": [
+      0.05732,
+      0.03823,
+      0.02084
+    ],
+    "rough": 0.6894
+  },
+  "bardage-peint": {
+    "source": "WoodSiding009",
+    "aspect": 0.5,
+    "avg": [
+      0.58879,
+      0.53351,
+      0.34384
+    ],
+    "rough": 0.7253
+  },
+  "gazon": {
+    "source": "Grass001",
+    "aspect": 1.0,
+    "avg": [
+      0.05819,
+      0.10607,
+      0.02163
+    ],
+    "rough": 0.544
+  },
+  "herbe-jardin": {
+    "source": "Grass007",
+    "aspect": 1.0,
+    "avg": [
+      0.11699,
+      0.21221,
+      0.02196
+    ],
+    "rough": 0.7724
+  },
+  "terre": {
+    "source": "Ground039",
+    "aspect": 1.0,
+    "avg": [
+      0.25211,
+      0.18896,
+      0.17346
+    ],
+    "rough": 0.4903
+  },
+  "gravier": {
+    "source": "Gravel022",
+    "aspect": 1.0,
+    "avg": [
+      0.21726,
+      0.20275,
+      0.16442
+    ],
+    "rough": 0.4628
+  },
+  "gravier-blanc": {
+    "source": "Gravel023",
+    "aspect": 1.0,
+    "avg": [
+      0.70149,
+      0.67541,
+      0.62127
+    ],
+    "rough": 0.4675
+  },
+  "gravillons": {
+    "source": "Gravel037",
+    "aspect": 1.0,
+    "avg": [
+      0.60531,
+      0.5164,
+      0.34923
+    ],
+    "rough": 0.4494
+  },
+  "pave-granit": {
+    "source": "PavingStones049",
+    "aspect": 1.0,
+    "avg": [
+      0.09632,
+      0.10254,
+      0.10191
+    ],
+    "rough": 0.7209
+  },
+  "paves-anciens": {
+    "source": "PavingStones010",
+    "aspect": 1.0,
+    "avg": [
+      0.24663,
+      0.22173,
+      0.15774
+    ],
+    "rough": 0.475
+  },
+  "pave-beton": {
+    "source": "PavingStones033",
+    "aspect": 1.0,
+    "avg": [
+      0.16173,
+      0.15779,
+      0.16608
+    ],
+    "rough": 0.5385
+  },
+  "dalles-pierre": {
+    "source": "PavingStones069",
+    "aspect": 0.5,
+    "avg": [
+      0.32361,
+      0.28549,
+      0.19496
+    ],
+    "rough": 0.5135
+  },
+  "dalles-beton": {
+    "source": "PavingStones029",
+    "aspect": 1.0,
+    "avg": [
+      0.18393,
+      0.19232,
+      0.20825
+    ],
+    "rough": 0.5139
+  },
+  "terrasse-bois": {
+    "source": "Planks029S",
+    "aspect": 1.0,
+    "avg": [
+      0.28897,
+      0.22071,
+      0.12684
+    ],
+    "rough": 0.6796
   }
 }

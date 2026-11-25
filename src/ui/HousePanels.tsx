@@ -9,6 +9,7 @@ import { areaAboveHeight, eaveForKnee, isSloped, kneeHeight, roofArea, roofFrame
 import { CONDITION_LABELS, ROOF_LABELS, type Building, type Condition, type Level, type RoofType } from '../model/types';
 import { useBuilding, useStore } from '../store';
 import { ProductPicker } from './ProductPicker';
+import { APRONS, DEFAULT_APRON_WIDTH, DEFAULT_LAWN, LAWNS, TIMBERS } from '../data/exterior';
 
 const m2 = (n: number) => `${n.toLocaleString('fr-BE', { maximumFractionDigits: 1 })} m²`;
 const m = (n: number) => `${n.toLocaleString('fr-BE', { maximumFractionDigits: 2 })} m`;
@@ -114,6 +115,7 @@ export function HouseOverview() {
           + Ajouter une toiture
         </button>
       )}
+      <OutdoorFields />
       {b.site && (
         <>
           <h4>Jardin</h4>
@@ -125,6 +127,51 @@ export function HouseOverview() {
           </button>
         </>
       )}
+    </>
+  );
+}
+
+/** Extérieurs : sol du jardin et abords de la maison (rendu de la visite 3D). */
+function OutdoorFields() {
+  const o = useStore((s) => s.project.existing.outdoor);
+  const editExisting = useStore((s) => s.editExisting);
+  const edit = (fn: (x: NonNullable<Building['outdoor']>) => void) =>
+    editExisting((b) => {
+      b.outdoor ??= {};
+      fn(b.outdoor);
+    });
+  return (
+    <>
+      <h4>Extérieurs</h4>
+      <div className="fields">
+        <label className="field">
+          <span>Jardin</span>
+          <select value={o?.lawn ?? DEFAULT_LAWN} onChange={(e) => edit((x) => void (x.lawn = e.target.value))}>
+            {LAWNS.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field" title="Bande au pied des façades : terrasse, allée, gravier">
+          <span>Abords de la maison</span>
+          <select value={o?.apron ?? ''} onChange={(e) => edit((x) => void (x.apron = e.target.value || null))}>
+            <option value="">Aucun (jardin jusqu'aux murs)</option>
+            {APRONS.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        {o?.apron && (
+          <label className="field">
+            <span>Largeur des abords (m)</span>
+            <NumberInput min={0.3} max={8} value={o.apronWidth ?? DEFAULT_APRON_WIDTH} onChange={(v) => edit((x) => void (x.apronWidth = v))} />
+          </label>
+        )}
+      </div>
     </>
   );
 }
@@ -284,6 +331,25 @@ export function RoofPanel() {
             )}
           </div>
           {isSloped(roof) && <AtticFields />}
+          {isSloped(roof) && (
+            <div className="fields">
+              <label className="field" title="Bois des chevrons, pannes et faîtage, visibles dans la visite 3D">
+                <span>Charpente</span>
+                <select value={roof.timber ?? TIMBERS[0].id} onChange={(e) => edit((r) => void (r.timber = e.target.value))}>
+                  {TIMBERS.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {roof.eave != null && (
+                <label className="toggle">
+                  <input type="checkbox" checked={!!roof.exposedBeams} onChange={(e) => edit((r) => void (r.exposedBeams = e.target.checked || undefined))} /> Poutres apparentes
+                </label>
+              )}
+            </div>
+          )}
           <ConditionField value={roof.condition} onChange={(c) => setCondition({ kind: 'roof', id: 'roof' }, c)} />
         </>
       )}

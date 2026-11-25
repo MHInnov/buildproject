@@ -4,6 +4,8 @@ import type { Catalog } from '../model/catalog';
 import { productById } from '../model/catalog';
 import { roofFrame, type RoofFrame } from '../model/roof';
 import type { Building, Roof, RoofWindow } from '../model/types';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { outdoorById, TIMBERS } from '../data/exterior';
 import { CEILING, FACADE, fromProduct, PLASTER, ROOF_UNDERSIDE, surfaceMaterial } from './materials';
 
 type V = THREE.Vector3;
@@ -164,6 +166,122 @@ function gable(poly: V[], center: V, thickness: number): THREE.BufferGeometry {
   return g;
 }
 
+/** Épaisseur des pans dessinés (couverture, liteaux et chevrons). */
+const SLAB = 0.24;
+
+/**
+ * Pièce de bois de section wd × ht et de longueur len, centrée en c, le long de dir, sa hauteur selon up.
+ * Coordonnées de texture en mètres, le fil du bois dans la longueur.
+ */
+function beam(c: V, dir: V, up: V, len: number, wd: number, ht: number): THREE.BufferGeometry {
+  const g = new THREE.BoxGeometry(len, ht, wd);
+  const uv = g.attributes.uv as THREE.BufferAttribute;
+  // Faces de BoxGeometry : +x, -x, +y, -y, +z, -z (4 sommets chacune)
+  const scale: [number, number][] = [[wd, ht], [wd, ht], [len, wd], [len, wd], [len, ht], [len, ht]];
+  for (let i = 0; i < uv.count; i++) {
+    const [a, b] = scale[Math.floor(i / 4)];
+    uv.setXY(i, uv.getX(i) * a, uv.getY(i) * b);
+  }
+  const x = dir.clone().normalize();
+  const z = new THREE.Vector3().crossVectors(x, up).normalize();
+  const y = new THREE.Vector3().crossVectors(z, x).normalize();
+  g.applyMatrix4(new THREE.Matrix4().makeBasis(x, y, z).setPosition(c));
+  return g;
+}
+
+/**
+ * Charpente sous la couverture : faîtage, pannes et chevrons (tous les 60 cm).
+ * Combles perdus : tout est visible. Combles aménagés : les chevrons ne se voient que sous le débord,
+ * pannes et faîtage seulement s'ils sont laissés apparents.
+ */
+export function roofTimber(f: RoofFrame, roof: Roof): THREE.BufferGeometry | null {
+  if (roof.type !== 'deux-pans' && roof.type !== 'monopente') return null;
+  const swap = roof.ridge === 'y';
+  const u0 = swap ? f.minY : f.minX;
+  const u1 = swap ? f.maxY : f.maxX;
+  const w0 = swap ? f.minX : f.minY;
+  const w1 = swap ? f.maxX : f.maxY;
+  const P = (u: number, h: number, w: number) => (swap ? v3(w, h, u) : v3(u, h, w));
+  const t = Math.tan((roof.pitch * Math.PI) / 180);
+  const cos = Math.cos((roof.pitch * Math.PI) / 180);
+  const drop = SLAB / cos;
+  const ov = roof.overhang;
+  const attic = roof.eave != null;
+  const parts: THREE.BufferGeometry[] = [];
+  const U = swap ? v3(0, 0, 1) : v3(1, 0, 0);
+  const UP = v3(0, 1, 0);
+  // Un pan : de l'égout (w = e) vers le haut (w = top), sens s = ±1
+  const side = (e: number, top: number, s: number, ridge: boolean) => {
+    const under = (w: number) => f.base + (w - e) * s * t - drop;
+    const span = Math.abs(top - e);
+    // Pannes : une au milieu, deux sur les grands pans
+    const n = span > 4.5 ? 2 : 1;
+    for (let k = 1; k <= n; k++) {
+      if (attic && !roof.exposedBeams) break;
+      const wm = e + (s * span * k) / (n + 1);
+      const topY = under(wm - s * 0.05);
+      parts.push(beam(P((u0 + u1) / 2, topY - 0.1, wm), U, UP, u1 - u0, 0.1, 0.2));
+    }
+    // Chevrons, perpendiculaires au faîtage, juste sous la couverture
+    const n2 = v3(0, 1, -s * t).normalize(); // normale du pan dans le repère (u, h, w)
+    const from = e - s * ov;
+    const to = attic ? e : ridge ? top - s * 0.06 : top;
+    const L = Math.abs(to - from) / cos;
+    if (L < 0.1) return;
+    const wc = (from + to) / 2;
+    const hc = under(wc) - 0.045 / cos;
+    const dirC = v3(0, t, s).normalize();
+    const nUp = swap ? v3(n2.z, n2.y, 0) : v3(0, n2.y, n2.z);
+    const dir = swap ? v3(dirC.z, dirC.y, 0) : v3(0, dirC.y, dirC.z);
+    for (let u = u0 + 0.05; u <= u1 - 0.02; u += 0.6) parts.push(beam(P(u, hc, wc), dir, nUp, L, 0.06, 0.09));
+  };
+  if (roof.type === 'deux-pans') {
+    const cw = (w0 + w1) / 2;
+    side(w0, cw, 1, true);
+    side(w1, cw, -1, true);
+    if (!attic || roof.exposedBeams) {
+      const hR = f.base + (cw - w0) * t - drop - 0.06 * t;
+      parts.push(beam(P((u0 + u1) / 2, hR - 0.13, cw), U, UP, u1 - u0, 0.12, 0.26));
+    }
+  } else {
+    side(w0, w1, 1, false);
+  }
+  if (!parts.length) return null;
+  const g = mergeGeometries(parts.map((p) => p.toNonIndexed()));
+  parts.forEach((p) => p.dispose());
+  return g;
+}
+
+/** Pignons au-dessus des murs : même parement que les façades du niveau (le plus fréquent), brique sinon. */
+function gableSurface(b: Building, catalog: Catalog) {
+  const count = new Map<string, number>();
+  for (const w of b.walls) {
+    if (w.levelId !== b.roof?.levelId || w.thickness < 0.15) continue;
+    for (const id of [w.finish.gauche, w.finish.droite]) {
+      const p = productById(catalog, id);
+      if (p && (p.tags.includes('façade') || ['bricks', 'stone'].includes(p.pattern?.kind ?? ''))) count.set(p.id, (count.get(p.id) ?? 0) + 1);
+    }
+  }
+  const best = [...count].sort((x, y) => y[1] - x[1])[0];
+  return best ? fromProduct(productById(catalog, best[0]), FACADE) : FACADE;
+}
+
+/** Faîtage : rangée de tuiles faîtières (ou bande d'ardoise) qui couvre la jonction des deux pans. */
+function ridgeCap(f: RoofFrame, roof: Roof): THREE.BufferGeometry | null {
+  if (roof.type !== 'deux-pans') return null;
+  const swap = roof.ridge === 'y';
+  const u0 = (swap ? f.minY : f.minX) - roof.overhang;
+  const u1 = (swap ? f.maxY : f.maxX) + roof.overhang;
+  const w0 = swap ? f.minX : f.minY;
+  const w1 = swap ? f.maxX : f.maxY;
+  const cw = (w0 + w1) / 2;
+  const h = f.base + (cw - w0) * Math.tan((roof.pitch * Math.PI) / 180);
+  const c = swap ? v3(cw, h, (u0 + u1) / 2) : v3((u0 + u1) / 2, h, cw);
+  const dir = swap ? v3(0, 0, 1) : v3(1, 0, 0);
+  const up = swap ? v3(1, 1, 0) : v3(0, 1, 1);
+  return beam(c, dir, up.normalize(), u1 - u0, 0.22, 0.22);
+}
+
 type Click = (e: { stopPropagation: () => void; delta: number }) => void;
 
 export function RoofMesh({
@@ -188,7 +306,9 @@ export function RoofMesh({
     const parts = roofParts(f, roof);
     const center = v3((f.minX + f.maxX) / 2, f.base, (f.minY + f.maxY) / 2);
     return {
-      slopes: parts.slopes.map((p) => slab(p, roof.type === 'plat' ? 0.3 : 0.24)),
+      slopes: parts.slopes.map((p) => slab(p, roof.type === 'plat' ? 0.3 : SLAB)),
+      timber: roofTimber(f, roof),
+      cap: ridgeCap(f, roof),
       // Combles aménagés : les pignons sont les murs de l'étage, montés jusqu'au rampant
       gables: roof.eave != null ? [] : parts.gables.map((p) => gable(p, center, 0.3)),
     };
@@ -205,8 +325,10 @@ export function RoofMesh({
       {geo.slopes.map((g, i) => (
         <mesh key={i} geometry={g} material={[top, under, edge]} castShadow receiveShadow userData={ud} onClick={onClick} />
       ))}
+      {geo.cap && <mesh geometry={geo.cap} material={top} castShadow receiveShadow userData={ud} onClick={onClick} />}
+      {geo.timber && <mesh geometry={geo.timber} material={surfaceMaterial((outdoorById(TIMBERS, roof.timber) ?? TIMBERS[0]).surface, selected)} castShadow receiveShadow userData={ud} onClick={onClick} />}
       {geo.gables.map((g, i) => (
-        <mesh key={`g${i}`} geometry={g} material={surfaceMaterial(FACADE, selected)} castShadow receiveShadow userData={ud} onClick={onClick} />
+        <mesh key={`g${i}`} geometry={g} material={surfaceMaterial(gableSurface(building, catalog), selected)} castShadow receiveShadow userData={ud} onClick={onClick} />
       ))}
       {f && (roof.windows ?? []).map((w) => <RoofWindowMesh key={w.id} win={w} roof={roof} f={f} selected={selected || selectedWindow === w.id} onClick={onWindowClick ? onWindowClick(w.id) : onClick} />)}
     </group>

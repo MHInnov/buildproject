@@ -39,6 +39,7 @@ export function onLevel(b: Building, levelId: string): Building {
     floorZones: (b.floorZones ?? []).filter((z) => z.levelId === levelId),
     roof: b.roof,
     site: b.site,
+    outdoor: b.outdoor,
   };
 }
 
