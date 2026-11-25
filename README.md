@@ -87,7 +87,10 @@ Ce que fait le retraçage, dans l'ordre :
 ## Avec ou sans IA
 
 Tout fonctionne sans IA : retraçage du plan par analyse d'image, report des éléments d'une photo par géométrie et couleur.
-Dans **Menu > Administration**, on peut activer l'option **Avec IA** (Claude, d'Anthropic) avec sa propre clé API : elle lit les cotes et les pièces d'un plan, et reconnaît les éléments d'une photo. La clé reste dans le navigateur et les images partent directement chez Anthropic ; l'usage est facturé sur le compte de la clé. Le module IA n'est téléchargé que s'il est activé.
+Dans **Menu > Administration**, on peut activer l'option **Avec IA** (Claude, d'Anthropic) : elle lit les cotes et les pièces d'un plan, et reconnaît les éléments d'une photo. Le module IA n'est téléchargé que s'il est utilisé.
+
+- **API** : renseignez soit votre propre clé (les images partent alors directement chez Anthropic, usage facturé sur le compte de la clé), soit l'**adresse de l'API** d'un serveur de l'entreprise compatible avec l'API d'Anthropic, qui garde la clé (la clé devient alors facultative). Ces réglages restent dans le navigateur.
+- **À l'import des plans**, la fenêtre « Importer tous les plans » propose **Sans IA** / **Avec IA**. Sans IA, tout est retracé sur l'appareil ; avec IA, l'IA nomme en plus les pièces et ajoute les portes et fenêtres manquées, en appelant l'API définie dans les paramètres (bouton « Paramètres de l'API… » si elle n'est pas encore renseignée).
 
 ## Raccourcis de la visite
 

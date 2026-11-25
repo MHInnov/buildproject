@@ -8,7 +8,10 @@ import { useSettings } from './settings';
 async function client(): Promise<Anthropic> {
   const { default: Anthropic } = await import('@anthropic-ai/sdk');
   // Application sans serveur : la clé est celle de l'utilisateur, saisie dans l'administration.
-  return new Anthropic({ apiKey: useSettings.getState().apiKey.trim(), dangerouslyAllowBrowser: true });
+  // Une adresse d'API peut être donnée dans les paramètres (relais de l'entreprise qui garde la clé).
+  const { apiKey, apiUrl } = useSettings.getState();
+  const baseURL = apiUrl.trim().replace(/\/+$/, '') || undefined;
+  return new Anthropic({ apiKey: apiKey.trim() || 'cle-gardee-par-le-relais', baseURL, dangerouslyAllowBrowser: true });
 }
 
 function splitDataUrl(dataUrl: string): { media: 'image/jpeg' | 'image/png' | 'image/webp'; data: string } {

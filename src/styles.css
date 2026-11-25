@@ -280,3 +280,4 @@ details.sub summary { cursor: pointer; font-size: 13px; }
 @media (max-width: 560px) { .plan-list li { grid-template-columns: 48px 1fr auto; } .plan-list select { grid-column: 2 / 4; max-width: none; } }
 .underlay__level { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft, #e6efff); color: var(--accent, #1f6feb); font-weight: 600; font-size: 12px; }
+.ai-choice { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0 12px; }

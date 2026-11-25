@@ -5,7 +5,8 @@ import { isFloorKind, PLAN_KIND_LABELS, parseDrawingScale, pdfScale, type PlanKi
 import type { Bitmap, TracedWall } from '../model/vectorize';
 import { decode, isPdf, nextFrame, pdfPages, type PlanPage } from '../planFiles';
 import { analysePlan, classifyPages, importPlans, levelFor, type ImportReport, type PlanInput } from '../plansImport';
-import { aiReady, useSettings } from '../settings';
+import { aiReady, apiConfigured, useSettings } from '../settings';
+import { AdminDialog } from './AdminDialog';
 import { useStore } from '../store';
 import { applyAiReading } from '../traceApply';
 
@@ -48,7 +49,9 @@ export function PlansImport({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [report, setReport] = useState<ImportReport | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [useAi, setUseAi] = useState(settings.aiEnabled && aiReady(settings));
+  const [useAi, setUseAi] = useState(aiReady(settings));
+  const [showAdmin, setShowAdmin] = useState(false);
+  const apiOk = apiConfigured(settings);
 
   async function addFiles(files: File[]) {
     setError(null);
@@ -134,7 +137,7 @@ export function PlansImport({ onClose }: { onClose: () => void }) {
       const r = rep as ImportReport | null;
       if (!r) throw new Error('rien à importer');
       // IA facultative : noms des pièces et ouvertures manquées
-      if (useAi) {
+      if (useAi && apiConfigured()) {
         const b1 = useStore.getState().project.existing;
         for (const it of used.filter((x) => isFloorKind(x.kind))) {
           const l = b1.levels.find((x) => x.underlay?.assetId && inputs.find((i) => i.name === it.label)?.assetId === x.underlay.assetId);
@@ -170,6 +173,38 @@ export function PlansImport({ onClose }: { onClose: () => void }) {
           page est reconnue d'après son nom, son cartouche et son dessin ; corrigez si besoin. Tout est ensuite retracé ensemble : même échelle pour tous les plans (lue sur le PDF
           quand le cartouche l'indique), étages calés sur le rez-de-chaussée, hauteurs sous plafond et toit lus sur la coupe.
         </p>
+        <div className="ai-choice">
+          <span>Aide de l'IA :</span>
+          <div className="segmented segmented--small" role="radiogroup" aria-label="Aide de l'IA">
+            <button type="button" role="radio" aria-checked={!useAi} className={useAi ? '' : 'is-active'} onClick={() => setUseAi(false)} disabled={!!busy}>
+              Sans IA
+            </button>
+            <button type="button" role="radio" aria-checked={useAi} className={useAi ? 'is-active' : ''} onClick={() => setUseAi(true)} disabled={!!busy}>
+              Avec IA
+            </button>
+          </div>
+          <span className="muted small">
+            {useAi
+              ? apiOk
+                ? "Après le tracé, l'IA nomme les pièces et ajoute les portes et fenêtres manquées (appel à l'API définie dans les paramètres)."
+                : "Aucune API n'est définie : l'import se fera sans IA tant qu'elle n'est pas renseignée."
+              : 'Tout est retracé sur cet appareil, sans envoyer les plans.'}
+          </span>
+          {useAi && (
+            <button
+              type="button"
+              className="btn btn--small"
+              onClick={() => {
+                // Ouvre l'administration sur la partie IA, où se règle l'adresse de l'API
+                if (!settings.aiEnabled) settings.update({ aiEnabled: true });
+                setShowAdmin(true);
+              }}
+              disabled={!!busy}
+            >
+              Paramètres de l'API…
+            </button>
+          )}
+        </div>
         <input
           ref={input}
           type="file"
@@ -229,11 +264,6 @@ export function PlansImport({ onClose }: { onClose: () => void }) {
         )}
         {dup.length > 0 && <p className="warning">Deux plans pour le même niveau ({dup.map((k) => PLAN_KIND_LABELS[k]).join(', ')}) : un seul sera retracé.</p>}
         {items.length > 0 && !floors.length && <p className="warning">Ajoutez au moins un plan de niveau : la coupe seule ne donne pas les murs.</p>}
-        {settings.aiEnabled && (
-          <label className="toggle">
-            <input type="checkbox" checked={useAi} disabled={!aiReady(settings)} onChange={(e) => setUseAi(e.target.checked)} /> Nommer aussi les pièces avec l'IA (facturé sur votre compte)
-          </label>
-        )}
         {busy && <p className="muted small">{busy}</p>}
         {error && <p className="warning">{error}</p>}
         {report && (
@@ -265,6 +295,11 @@ export function PlansImport({ onClose }: { onClose: () => void }) {
         </div>
         {report && <p className="muted small">Vérifiez chaque niveau avec les onglets au-dessus du plan ; « Annuler » (Ctrl+Z) revient à l'état d'avant l'import.</p>}
       </div>
+      {showAdmin && (
+        <div onClick={(e) => e.stopPropagation()}>
+          <AdminDialog onClose={() => setShowAdmin(false)} />
+        </div>
+      )}
     </div>
   );
 }

@@ -6,6 +6,11 @@ export interface AdminSettings {
   aiEnabled: boolean;
   /** Clé API Anthropic (Claude). Stockée localement, envoyée uniquement à api.anthropic.com. */
   apiKey: string;
+  /**
+   * Adresse de l'API (compatible avec celle d'Anthropic). Vide : api.anthropic.com. Un serveur de l'entreprise
+   * qui garde la clé peut servir de relais : la clé devient alors facultative ici.
+   */
+  apiUrl: string;
   model: string;
 }
 
@@ -18,7 +23,7 @@ export const AI_MODELS: { id: string; label: string }[] = [
 const KEY = 'construprojet:admin';
 
 function load(): AdminSettings {
-  const d: AdminSettings = { aiEnabled: false, apiKey: '', model: 'claude-opus-5-5' };
+  const d: AdminSettings = { aiEnabled: false, apiKey: '', apiUrl: '', model: 'claude-opus-5-5' };
   try {
     return { ...d, ...(JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<AdminSettings>) };
   } catch {
@@ -30,14 +35,20 @@ export const useSettings = create<AdminSettings & { update: (p: Partial<AdminSet
   ...load(),
   update: (p) => {
     set(p);
-    const { aiEnabled, apiKey, model } = get();
+    const { aiEnabled, apiKey, apiUrl, model } = get();
     try {
-      localStorage.setItem(KEY, JSON.stringify({ aiEnabled, apiKey, model }));
+      localStorage.setItem(KEY, JSON.stringify({ aiEnabled, apiKey, apiUrl, model }));
     } catch {
       /* ignore */
     }
   },
 }));
 
-/** L'IA est utilisable : activée et clé renseignée. */
-export const aiReady = (s: AdminSettings = useSettings.getState()) => s.aiEnabled && s.apiKey.trim().length > 20;
+/** Adresse de l'API valide (http ou https). */
+export const validApiUrl = (url: string) => /^https?:\/\/[^\s/]+/i.test(url.trim());
+
+/** L'API est configurée : une clé, ou l'adresse d'un relais qui garde la clé. */
+export const apiConfigured = (s: AdminSettings = useSettings.getState()) => s.apiKey.trim().length > 20 || validApiUrl(s.apiUrl);
+
+/** L'IA est utilisable : activée et API configurée. */
+export const aiReady = (s: AdminSettings = useSettings.getState()) => s.aiEnabled && apiConfigured(s);

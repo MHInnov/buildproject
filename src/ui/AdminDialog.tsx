@@ -4,7 +4,7 @@ import { CSV_TEMPLATE, parseCatalogFile, useImported } from '../catalogImport';
 import { commitImported } from './catalogs';
 import { ConnectorsPanel } from './ConnectorsPanel';
 import { newId } from '../model/geometry';
-import { AI_MODELS, useSettings } from '../settings';
+import { AI_MODELS, useSettings, validApiUrl } from '../settings';
 
 /** Catalogues fournisseurs : import d'un fichier CSV ou JSON. */
 function CatalogImport() {
@@ -113,6 +113,20 @@ export function AdminDialog({ onClose }: { onClose: () => void }) {
                 </div>
               </label>
               <label className="field">
+                <span>Adresse de l'API (facultatif)</span>
+                <input
+                  type="url"
+                  value={s.apiUrl}
+                  placeholder="https://api.anthropic.com"
+                  onChange={(e) => s.update({ apiUrl: e.target.value })}
+                  onKeyDown={(e) => e.stopPropagation()}
+                />
+              </label>
+              <p className="muted small">
+                Vide : l'API d'Anthropic, avec la clé ci-dessus. Pour passer par un serveur de l'entreprise (compatible avec l'API d'Anthropic) qui garde la clé, indiquez son adresse : la clé devient facultative.
+              </p>
+              {s.apiUrl.trim() !== '' && !validApiUrl(s.apiUrl) && <p className="warning small">Adresse invalide : elle doit commencer par http:// ou https://.</p>}
+              <label className="field">
                 <span>Modèle</span>
                 <select value={s.model} onChange={(e) => s.update({ model: e.target.value })}>
                   {AI_MODELS.map((m) => (
@@ -139,7 +153,7 @@ export function AdminDialog({ onClose }: { onClose: () => void }) {
               </div>
               {status && <p className="small">{status}</p>}
               <p className="warning small">
-                La clé est enregistrée dans ce navigateur uniquement et n'est envoyée qu'à l'API d'Anthropic. Pour un usage partagé (plusieurs utilisateurs), il faudra passer par un petit serveur qui garde la clé.
+                La clé est enregistrée dans ce navigateur uniquement et n'est envoyée qu'à l'API indiquée ci-dessus. Pour un usage partagé (plusieurs utilisateurs), indiquez plutôt l'adresse d'un serveur de l'entreprise qui garde la clé.
               </p>
             </>
           )}
