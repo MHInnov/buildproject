@@ -358,10 +358,17 @@ export function fitImportedAttic(b: Building, placed: Map<string, Placement>, se
   const windows: RoofWindow[] = [];
   for (const k of knees) {
     const d = Math.abs(k.at - box[k.side]);
-    for (const v of findRoofWindows(f, box, k.side, d, span)) {
-      const c = at(box, k.side, d + v.depth / 2, (v.t0 + v.t1) / 2);
-      const width = Math.round((v.t1 - v.t0) * 100) / 100;
-      windows.push({ id: newId('rw'), x: Math.round(c.x * 100) / 100, y: Math.round(c.y * 100) / 100, width, length: Math.round(v.depth * 100) / 100, productId: 'ex-fenetre-toit' });
+    const found = findRoofWindows(f, box, k.side, d, span);
+    if (!found.length) continue;
+    // Le cadre dessiné est le décroché du mur bas, plus large que la fenêtre ; les fenêtres d'un même pan sont
+    // d'ordinaire du même modèle : largeur de série sous 85 % du plus petit cadre, longueur du moins profond
+    const SIZES = [0.55, 0.66, 0.78, 0.94, 1.14, 1.34];
+    const narrow = Math.min(...found.map((v) => v.t1 - v.t0)) * 0.85;
+    const width = [...SIZES].reverse().find((x) => x <= narrow) ?? SIZES[0];
+    const length = Math.round(Math.min(...found.map((v) => v.depth)) * 100) / 100;
+    for (const v of found) {
+      const c = at(box, k.side, d + length / 2 + 0.05, (v.t0 + v.t1) / 2);
+      windows.push({ id: newId('rw'), x: Math.round(c.x * 100) / 100, y: Math.round(c.y * 100) / 100, width, length, productId: 'ex-fenetre-toit' });
     }
   }
   top.height = Math.max(top.height, 2.3);
