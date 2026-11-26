@@ -11,7 +11,7 @@ import type { Building, FloorZone, FurnitureItem, Level, Opening, Point, Room, W
 import type { Selection } from '../store';
 import { useUi } from '../uiState';
 import { CEILING, ceramic, chrome, FACADE, fromProduct, glassMaterial, meterBox, plain, PLASTER, RAW_FLOOR, surfaceMaterial, type Surface } from './materials';
-import { RoofMesh } from './RoofMesh';
+import { facadeSurface, RoofMesh } from './RoofMesh';
 import { atticProfiles, clipUnderRoof, prismGeometry, type WallProfile } from './attic';
 import { floorOffsetAt } from './physics';
 import { levelOutline } from '../model/footprint';
@@ -165,6 +165,8 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
     return m;
   }, [building.levels, building.walls]);
   const lowest = Math.min(...building.levels.map((l) => l.elevation));
+  // Tranche des planchers, vue de dehors entre deux niveaux : même parement que les façades
+  const slabEdge = useMemo(() => surfaceMaterial(facadeSurface(building, catalog)), [building, catalog]);
   const roofLevel = building.roof?.levelId;
   const groundId = [...building.levels].sort((m, n) => Math.abs(m.elevation) - Math.abs(n.elevation))[0]?.id;
   const plinth = building.plinth ?? 0;
@@ -187,7 +189,7 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
           return (
             <group key={level.id}>
               {below && floorThickness > 0.02 && (outlines.get(level.id) ?? []).map((o, i) => (
-                <Slab key={`slab-${i}`} outline={o} top={level.elevation - 0.01} thickness={floorThickness - 0.014} holes={holes.get(level.id) ?? []} />
+                <Slab key={`slab-${i}`} outline={o} top={level.elevation - 0.01} thickness={floorThickness - 0.014} holes={holes.get(level.id) ?? []} edge={slabEdge} />
               ))}
               {lRooms.map((r) => (
                 <Floor
@@ -318,7 +320,6 @@ function Floor({ room, elevation, offset, thickness, holes, surface, selected, o
   );
 }
 
-const SLAB_EDGE = plain('#d8d2c8', 0.9);
 const PLINTH = plain('#8a8279', 0.95);
 
 /** Marches devant les portes de façade du rez-de-chaussée, du terrain jusqu'au seuil. */
@@ -367,12 +368,12 @@ function Plinth({ outline, height }: { outline: Point[]; height: number }) {
 }
 
 /** Dalle de plancher entre deux niveaux, trémies d'escalier découpées. */
-function Slab({ outline, top, thickness, holes }: { outline: Point[]; top: number; thickness: number; holes: Point[][] }) {
+function Slab({ outline, top, thickness, holes, edge }: { outline: Point[]; top: number; thickness: number; holes: Point[][]; edge: THREE.Material }) {
   const geom = useMemo(() => {
     const inside = holes.filter((h) => h.every((p) => pointInside(p, outline)));
     return new THREE.ExtrudeGeometry(shapeOf(outline, inside), { depth: thickness, bevelEnabled: false });
   }, [outline, thickness, holes]);
-  return <mesh geometry={geom} rotation-x={-Math.PI / 2} position-y={top - thickness} material={[surfaceMaterial(RAW_FLOOR), SLAB_EDGE]} receiveShadow castShadow />;
+  return <mesh geometry={geom} rotation-x={-Math.PI / 2} position-y={top - thickness} material={[surfaceMaterial(RAW_FLOOR), edge]} receiveShadow castShadow />;
 }
 
 /** Sol posé sur une partie de pièce : légèrement au-dessus du sol de la pièce. */
@@ -492,7 +493,9 @@ function WallMesh({ wall, elevation, openings, catalog, facing, profile, selecte
   };
   const left = surfaceMaterial(faceSurface('gauche'), selected);
   const right = surfaceMaterial(faceSurface('droite'), selected);
-  const edge = surfaceMaterial(facing && facing.size === 0 ? FACADE : PLASTER, selected);
+  // Tranches (tableaux des baies, bouts de mur) d'une façade : son parement extérieur, pas de l'enduit
+  const outSide: WallSide | null = facing && facing.size < 2 && wall.kind === 'porteur' ? (facing.has('gauche') ? 'droite' : 'gauche') : null;
+  const edge = surfaceMaterial(outSide ? faceSurface(outSide) : PLASTER, selected);
   // Ordre des faces d'une BoxGeometry : +x, -x, +y, -y, +z (gauche), -z (droite)
   const materials = [edge, edge, edge, edge, left, right];
   const pieces = useMemo(

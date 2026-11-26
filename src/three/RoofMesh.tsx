@@ -254,9 +254,14 @@ export function roofTimber(f: RoofFrame, roof: Roof): THREE.BufferGeometry | nul
 
 /** Pignons au-dessus des murs : même parement que les façades du niveau (le plus fréquent), brique sinon. */
 function gableSurface(b: Building, catalog: Catalog) {
+  return facadeSurface(b, catalog, b.roof?.levelId);
+}
+
+/** Parement de façade le plus fréquent (d'un niveau, ou de toute la maison). */
+export function facadeSurface(b: Building, catalog: Catalog, levelId?: string) {
   const count = new Map<string, number>();
   for (const w of b.walls) {
-    if (w.levelId !== b.roof?.levelId || w.thickness < 0.15) continue;
+    if ((levelId && w.levelId !== levelId) || w.thickness < 0.15) continue;
     for (const id of [w.finish.gauche, w.finish.droite]) {
       const p = productById(catalog, id);
       if (p && (p.tags.includes('façade') || ['bricks', 'stone'].includes(p.pattern?.kind ?? ''))) count.set(p.id, (count.get(p.id) ?? 0) + 1);

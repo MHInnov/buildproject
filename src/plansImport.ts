@@ -505,6 +505,8 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
       b.roof.pitch = pitch;
       b.roof.levelId = top.id;
     } else b.roof = { type: kind, levelId: top.id, pitch, overhang: 0.3, ridge, coveringId: null, insulationId: null };
+    // Maison importée : couverture par défaut en tuiles foncées (la plus courante sur ces plans), sauf choix déjà fait
+    if (groundId && (!b.roof.coveringId || b.roof.coveringId === 'ex-toit-tuiles')) b.roof.coveringId = 'ex-toit-tuiles-beton';
     delete b.roof.eave;
     delete b.roof.bounds;
     roofEave = eaves.length ? Math.min(...eaves) : null;

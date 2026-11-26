@@ -38,6 +38,9 @@ export function applyTrace(b: Building, levelId: string, r: VectorizeResult, dx:
   // Façade d'une porte de garage : la baie et son poteau sont lus minces, le mur reste une façade
   const thick = placed.map((p) => p.wall.thickness).filter((t) => t >= 0.2).sort((m, n) => m - n);
   const facade = thick.length ? thick[Math.floor(thick.length / 2)] : 0.3;
+  // Murs épais d'une même maison : une seule épaisseur (lue à quelques cm près, les tronçons d'une même
+  // façade feraient des ressauts visibles), sauf un mur nettement plus épais (cheminée, mur mitoyen)
+  for (const w of b.walls) if (w.levelId === levelId && w.thickness >= 0.2 && Math.abs(w.thickness - facade) <= 0.12) w.thickness = facade;
   for (const p of placed) {
     if (!p.openings.some((o) => o.garage) || p.wall.thickness >= 0.2) continue;
     for (const w of b.walls.filter((x) => x.levelId === levelId && dist(x.a, x.b) > 0 && onSegment(x, p.wall))) {
