@@ -1,6 +1,6 @@
 import { dist, insertWall, newId, projectOnSegment } from './model/geometry';
 import type { AiPlanResult } from './ai';
-import type { Building, Level, Opening, Underlay, Wall } from './model/types';
+import type { Building, Level, Opening, OpeningSwing, Underlay, Wall } from './model/types';
 import type { VectorizeResult } from './model/vectorize';
 
 /**
@@ -30,6 +30,7 @@ export function applyTrace(b: Building, levelId: string, r: VectorizeResult, dx:
       height: level.height,
       kind: tw.thickness >= 0.2 ? 'porteur' : 'cloison',
       finish: { gauche: null, droite: null },
+      ...(tw.layers ? { layers: tw.layers.map((l) => ({ ...l, thickness: Math.round(l.thickness * k * 100) / 100 })) } : {}),
     };
     insertWall(b, wall);
     placed.push({ wall, openings: r.openings.filter((o) => canon[o.wall] === i) });
@@ -64,9 +65,25 @@ export function applyTrace(b: Building, levelId: string, r: VectorizeResult, dx:
         sill: o.kind === 'porte' ? 0 : 0.9,
         productId: o.garage ? 'ex-porte-garage' : o.kind === 'porte' ? 'ex-porte-isoplane' : 'ex-fenetre-bois-simple',
       };
+      if (o.kind === 'porte' && o.swing) op.swing = swingOnPiece(wall, piece, o.swing);
+      if (o.kind === 'porte' && (o.leaves ?? 1) > 1) op.options = { leaves: o.leaves };
       b.openings.push(op);
     }
   }
+}
+
+/** Sens d'ouverture lu sur le mur retracé, ramené au tronçon qui porte la porte (sa direction peut différer). */
+function swingOnPiece(wall: Wall, piece: Wall, sw: OpeningSwing): OpeningSwing {
+  const L = dist(wall.a, wall.b) || 1;
+  const u = { x: (wall.b.x - wall.a.x) / L, y: (wall.b.y - wall.a.y) / L };
+  const Lp = dist(piece.a, piece.b) || 1;
+  const up = { x: (piece.b.x - piece.a.x) / Lp, y: (piece.b.y - piece.a.y) / Lp };
+  // charnière : vers a (-u) ou vers b (+u) ; débattement : normale gauche (-u.y, u.x) ou son opposée
+  const h = sw.hinge === 'a' ? -1 : 1;
+  const sg = sw.side === 'gauche' ? 1 : -1;
+  const n = { x: -u.y * sg, y: u.x * sg };
+  const np = { x: -up.y, y: up.x };
+  return { hinge: h * (u.x * up.x + u.y * up.y) < 0 ? 'a' : 'b', side: n.x * np.x + n.y * np.y > 0 ? 'gauche' : 'droite' };
 }
 
 /** Tronçon `x` pris sur le mur `w` (découpé à l'insertion). */

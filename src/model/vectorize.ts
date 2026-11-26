@@ -15,7 +15,7 @@
  */
 import { detectRooms, insertWall, pointInPolygon } from './geometry';
 import { defaultLevel } from './levels';
-import type { Building } from './types';
+import type { Building, WallLayer } from './types';
 
 export interface Bitmap {
   width: number;
@@ -37,6 +37,8 @@ export interface TracedWall {
   a: { x: number; y: number };
   b: { x: number; y: number };
   thickness: number;
+  /** Couches lues dans l'épaisseur (mur creux dessiné en deux bandes), de la face gauche à la face droite. */
+  layers?: WallLayer[];
 }
 
 export interface TracedOpening {
@@ -49,6 +51,12 @@ export interface TracedOpening {
   source?: 'trou' | 'vitrage';
   /** Porte de garage : large baie de façade fermée par des traits, sans arc de porte. */
   garage?: boolean;
+  /** Sens d'ouverture lu sur l'arc : charnière côté a ou b du mur, débattement côté gauche (normale) ou droit. */
+  swing?: { hinge: 'a' | 'b'; side: 'gauche' | 'droite' };
+  /** Porte à deux vantaux (deux arcs). */
+  leaves?: number;
+  /** Des traits de vitrage traversent aussi la baie (porte-fenêtre, ou fenêtre près d'un trait courbe) */
+  glazed?: boolean;
 }
 
 export interface VectorizeResult {
@@ -360,58 +368,230 @@ function inkNear(ink: Uint8Array, w: number, h: number, x: number, y: number, r 
   return false;
 }
 
+/** Sens d'ouverture d'une porte lu sur le plan, en pixels : charnière au début (0) ou à la fin (1) de la baie, côté du débattement. */
+export interface PxSwing {
+  hinge: 0 | 1;
+  side: -1 | 1;
+  /** Rayon de l'arc (largeur du vantail), en pixels */
+  r: number;
+  /** Position de la charnière le long du mur */
+  at: number;
+  double: boolean;
+  /** Arc complet (quart de cercle entier) : plus sûr qu'un arc partiel avec son vantail */
+  full: boolean;
+}
+
 /**
- * Arc de débattement d'une porte : un quart de cercle centré sur un tableau, de rayon la largeur de la baie
- * (ou la moitié pour une porte double), d'un côté ou de l'autre du mur. Pointillé ou continu.
+ * Arc de débattement d'une porte : un quart de cercle (ou un arc partiel si le vantail est dessiné
+ * entrouvert) centré sur un tableau, de rayon la largeur du vantail (ou la moitié pour une porte double),
+ * d'un côté ou de l'autre du mur. Pointillé ou continu. La charnière peut être sur la face du mur ou dans
+ * son épaisseur, un peu en retrait du bord de la baie (feuillure d'un mur creux) ; le vantail peut être
+ * plus étroit que la baie. Renvoie le sens d'ouverture, ou null s'il n'y a pas d'arc.
  */
-export function doorArc(ink: Uint8Array, w: number, h: number, horizontal: boolean, c: number, th: number, g0: number, g1: number): boolean {
+export function doorSwing(ink: Uint8Array, w: number, h: number, horizontal: boolean, c: number, th: number, g0: number, g1: number, maxLeaf = Infinity): PxSwing | null {
   const gap = g1 - g0;
+  if (gap <= 2) return null;
   const P = (along: number, across: number) => (horizontal ? [along, across] : [across, along]);
   const at = (along: number, across: number, r = 1) => {
     const [x, y] = P(along, across);
     return inkNear(ink, w, h, x, y, r);
   };
-  // Arc fin : encré sur le cercle, blanc un peu à l'intérieur ou à l'extérieur (pas une zone noircie de traits)
-  const arc = (hinge: number, dir: number, side: number, r: number) => {
+  // Arc fin : encré sur le cercle, blanc un peu à l'intérieur ou à l'extérieur (pas une zone noircie de traits).
+  // Renvoie la part des points encrés, et celle de la plage continue qui part du tableau opposé (arc partiel).
+  const arc = (hinge: number, dir: number, side: number, base: number, r: number) => {
     let n = 0;
     let all = 0;
-    const tol = Math.max(1, Math.round(r * 0.03));
-    for (let a = 20; a <= 80; a += 5) {
+    let run = 0;
+    let broken = false;
+    const tol = Math.min(3, Math.max(1, Math.round(r * 0.03)));
+    for (let a = 10; a <= 82; a += 6) {
       const t = (a * Math.PI) / 180;
-      const pt = (rr: number) => [hinge + dir * rr * Math.cos(t), c + side * (th / 2 + rr * Math.sin(t))] as const;
+      const pt = (rr: number) => [hinge + dir * rr * Math.cos(t), base + side * rr * Math.sin(t)] as const;
       all++;
-      if (!at(...pt(r), tol)) continue;
-      if (!at(...pt(r * 0.8), 0) || !at(...pt(r * 1.2), 0)) n++;
+      const ok = at(...pt(r), tol) && (!at(...pt(r * 0.82), 0) || !at(...pt(r * 1.18), 0));
+      if (ok) n++;
+      // (un pointillé saute un point sur deux : on tolère un trou isolé)
+      if (!broken) {
+        if (ok) run = all;
+        else if (all - run > 2) broken = true;
+      }
     }
-    return n / all;
+    return { frac: n / all, run: run / all };
   };
-  // Le vantail : un trait droit partant de la charnière, perpendiculaire au mur, de la longueur du rayon
-  const leaf = (hinge: number, dir: number, side: number, r: number) => {
+  // Le vantail : un trait droit partant de la charnière, en travers du mur, de la longueur du rayon
+  const leaf = (hinge: number, dir: number, side: number, base: number, r: number) => {
     let best = 0;
     for (const off of [0.02, 0.05, 0.08]) {
       let n = 0;
       let all = 0;
       for (let f = 0.3; f <= 0.9; f += 0.06) {
         all++;
-        if (at(hinge + dir * r * off, c + side * (th / 2 + r * f))) n++;
+        if (at(hinge + dir * r * off, base + side * r * f)) n++;
       }
       best = Math.max(best, n / all);
     }
     return best;
   };
-  const door = (hinge: number, dir: number, side: number, r: number) => {
-    const a = arc(hinge, dir, side, r);
-    const l = leaf(hinge, dir, side, r);
-    return a >= 0.85 || (a >= 0.55 && l >= 0.7);
+  const score = (hinge: number, dir: number, side: number, base: number, r: number) => {
+    const a = arc(hinge, dir, side, base, r);
+    if (a.frac >= 0.85) return a.frac + 0.5;
+    if (a.frac < 0.5 && a.run < 0.5) return 0;
+    const l = leaf(hinge, dir, side, base, r);
+    // arc complet ou presque, avec le vantail ; ou vantail entrouvert : arc continu depuis le tableau opposé
+    if ((a.frac >= 0.55 && l >= 0.7) || (a.run >= 0.5 && l >= 0.6)) return Math.max(a.frac, a.run) + l * 0.3;
+    return 0;
   };
-  for (const side of [-1, 1])
-    for (const k of [0.92, 1, 1.08]) {
-      // porte simple, charnière d'un côté ou de l'autre
-      if (door(g0, 1, side, gap * k) || door(g1, -1, side, gap * k)) return true;
-      // porte double : deux arcs de rayon moitié
-      if (gap > 2 * th && door(g0, 1, side, (gap / 2) * k) && door(g1, -1, side, (gap / 2) * k)) return true;
+  let best: (PxSwing & { q: number }) | null = null;
+  for (const side of [-1, 1] as const)
+    for (const off of [th / 2, 0, -th / 2]) {
+      const base = c + side * off;
+      for (const shift of [0, 0.1, 0.18]) {
+        for (const k of [0.7, 0.8, 0.9, 1, 1.1]) {
+          // porte simple, charnière d'un côté ou de l'autre (en retrait éventuel dans la baie)
+          for (const hinge of [0, 1] as const) {
+            const hp = hinge === 0 ? g0 + shift * gap : g1 - shift * gap;
+            const dir = hinge === 0 ? 1 : -1;
+            const r = (gap - shift * gap) * k;
+            if (r < 3 || r > maxLeaf) continue;
+            const q = score(hp, dir, side, base, r);
+            if (q > 0 && (!best || q > best.q)) best = { hinge, side, r, at: hp, double: false, full: q >= 1.35, q };
+          }
+          // porte double : deux arcs de rayon moitié
+          if (gap > 2 * th && shift === 0 && (gap / 2) * k <= maxLeaf) {
+            const r = (gap / 2) * k;
+            const q0 = score(g0, 1, side, base, r);
+            const q1 = q0 > 0 ? score(g1, -1, side, base, r) : 0;
+            if (q0 > 0 && q1 > 0 && (!best || (q0 + q1) / 2 + 0.05 > best.q)) best = { hinge: 0, side, r, at: g0, double: true, full: Math.min(q0, q1) >= 1.35, q: (q0 + q1) / 2 + 0.05 };
+          }
+        }
+      }
     }
-  return false;
+  // Arc dessiné à main levée (aplati, inégal) : depuis la charnière, chaque rayon rencontre le trait à peu près
+  // à la même distance, avec du papier blanc avant. Un mur ou une cote rectilignes ne donnent pas une distance constante.
+  const rays = (hp: number, dir: number, side: number, base: number) => {
+    // Pour chaque rayon, les distances où il entre dans un trait (un arc peut être croisé par une cote)
+    const all: number[][] = [];
+    const rmin = Math.max(3, gap * 0.22);
+    const rmax = gap * 1.2;
+    for (let a = 24; a <= 78; a += 6) {
+      const t = (a * Math.PI) / 180;
+      const ca = Math.cos(t);
+      const sa = Math.sin(t);
+      const hits: number[] = [];
+      let prev = false;
+      for (let rr = rmin; rr <= rmax; rr += 1) {
+        const [x, y] = P(hp + dir * rr * ca, base + side * rr * sa);
+        const xi = Math.round(x);
+        const yi = Math.round(y);
+        if (xi < 0 || yi < 0 || xi >= w || yi >= h) break;
+        const on = ink[yi * w + xi] === 1;
+        if (on && !prev) hits.push(rr);
+        prev = on;
+      }
+      all.push(hits);
+    }
+    let best: { m: number; n: number; first: number } | null = null;
+    for (const hs of all)
+      for (const m of hs) {
+        let n = 0;
+        let first = 0;
+        for (const r of all) {
+          const k = r.findIndex((d) => Math.abs(d - m) <= 0.15 * m);
+          if (k >= 0) n++;
+          if (k === 0) first++;
+        }
+        if (!best || n > best.n || (n === best.n && first > best.first)) best = { m, n, first };
+      }
+    // presque tous les rayons croisent l'arc, et la plupart sans rien croiser avant (le débattement est libre)
+    if (!best || best.n < 0.8 * all.length || best.first < 0.55 * all.length) return null;
+    // distance médiane des rencontres
+    const per = all.map((r) => r.find((d) => Math.abs(d - best!.m) <= 0.15 * best!.m));
+    // Un arc ne bombe pas au milieu : le coin d'un rectangle (châssis, meuble, angle de pièce) est plus loin à 45°
+    // qu'à ses deux bouts, un cercle ou un arc aplati non.
+    const mean = (v: (number | undefined)[]) => {
+      const x = v.filter((d): d is number => d !== undefined);
+      return x.length ? x.reduce((m, n) => m + n, 0) / x.length : NaN;
+    };
+    const ends = Math.max(mean(per.slice(0, 2)), mean(per.slice(-2)));
+    const mid = mean(per.slice(Math.floor(per.length / 2) - 1, Math.floor(per.length / 2) + 1));
+    if (mid > 1.07 * ends) return null;
+    // Le trait est continu d'un rayon à l'autre (des traits sans rapport qui tombent à la bonne distance, non)
+    const known = per.map((d, i) => ({ d, a: 24 + 6 * i })).filter((x): x is { d: number; a: number } => x.d !== undefined);
+    let on = 0;
+    let tot = 0;
+    for (let i = 1; i < known.length; i++)
+      for (let a = known[i - 1].a + 1.5; a < known[i].a; a += 1.5) {
+        const f = (a - known[i - 1].a) / (known[i].a - known[i - 1].a);
+        const r = known[i - 1].d + (known[i].d - known[i - 1].d) * f;
+        const t = (a * Math.PI) / 180;
+        tot++;
+        if (at(hp + dir * r * Math.cos(t), base + side * r * Math.sin(t), 2)) on++;
+      }
+    if (!tot || on < 0.75 * tot) return null;
+    // … et le vantail est dessiné : un trait droit depuis la charnière, en travers du mur
+    if (leaf(hp, dir, side, base, best.m) < 0.6) return null;
+    const ds = per.filter((d): d is number => d !== undefined).sort((m, n) => m - n);
+    return { m: ds[Math.floor(ds.length / 2)], frac: best.n / all.length };
+  };
+  type Ray = { hp: number; m: number; frac: number };
+  let alt: (PxSwing & { q: number }) | null = null;
+  for (const side of [-1, 1] as const)
+    for (const off of [th / 2, 0]) {
+      const base = c + side * off;
+      const ends: Ray[][] = [[], []];
+      for (const hinge of [0, 1] as const)
+        for (let f = -0.04; f <= 0.4; f += 0.04) {
+          const hp = hinge === 0 ? g0 + f * gap : g1 - f * gap;
+          const x = rays(hp, hinge === 0 ? 1 : -1, side, base);
+          if (x) ends[hinge].push({ hp, ...x });
+        }
+      // simple : l'arc retombe sur l'autre tableau de la baie
+      for (const hinge of [0, 1] as const)
+        for (const x of ends[hinge]) {
+          const reach = hinge === 0 ? x.hp + x.m : x.hp - x.m;
+          if (x.m > 1.1 * gap || x.m > maxLeaf || x.m < 0.25 * gap) continue;
+          // L'arc retombe sur l'autre tableau ; ou, dans une large baie (porte et parties vitrées fixes), dans la baie
+          const exact = x.m >= 0.5 * gap && Math.abs(reach - (hinge === 0 ? g1 : g0)) <= 0.2 * gap;
+          const within = reach >= g0 - 0.05 * gap && reach <= g1 + 0.05 * gap && x.m * 3 >= th;
+          if (!exact && !within) continue;
+          const q = x.frac - (exact ? 0 : 0.05);
+          if (!alt || q > alt.q) alt = { hinge, side, r: x.m, at: x.hp, double: false, full: q >= 0.9, q };
+        }
+      // double : deux arcs qui se rejoignent
+      for (const L of ends[0])
+        for (const R of ends[1]) {
+          if (L.m < 0.25 * gap || R.m < 0.25 * gap || L.m > 0.65 * gap || R.m > 0.65 * gap || L.m > maxLeaf || R.m > maxLeaf) continue;
+          const meet = Math.abs(L.hp + L.m - (R.hp - R.m));
+          if (meet > 0.12 * gap) continue;
+          // (deux vantaux de même largeur, qui se rejoignent exactement : la meilleure paire)
+          const q = Math.min(L.frac, R.frac) + 0.1 - (Math.abs(L.m - R.m) + meet) / gap;
+          if (!alt || q > alt.q) alt = { hinge: 0, side, r: (R.hp - L.hp) / 2, at: L.hp, double: true, full: q >= 0.9, q };
+        }
+    }
+  // Arc entier au compas d'abord ; deux arcs à main levée qui se rejoignent (porte double) l'emportent toutefois
+  const pick = alt?.full && (alt.double || !best?.full) ? alt : best?.full ? best : (alt ?? best);
+  if (!pick) return null;
+  const { q: _q, ...res } = pick;
+  return res;
+}
+
+/** Y a-t-il un arc de porte dans cette baie ? */
+export function doorArc(ink: Uint8Array, w: number, h: number, horizontal: boolean, c: number, th: number, g0: number, g1: number): boolean {
+  return doorSwing(ink, w, h, horizontal, c, th, g0, g1) !== null;
+}
+
+/** Part encrée du cœur du mur (moitié centrale de l'épaisseur) entre g0 et g1 : un mur continu (hachuré, grisé par le scan) n'est pas une baie. */
+export function inkFill(ink: Uint8Array, w: number, horizontal: boolean, c: number, th: number, g0: number, g1: number): number {
+  let n = 0;
+  let all = 0;
+  for (let k = Math.ceil(g0) + 1; k < g1 - 1; k++)
+    for (let t = Math.ceil(c - th / 4); t < c + th / 4; t++) {
+      const i = horizontal ? t * w + k : k * w + t;
+      if (i < 0 || i >= ink.length) continue;
+      all++;
+      n += ink[i];
+    }
+  return all ? n / all : 0;
 }
 
 /**
@@ -454,11 +634,138 @@ export function isGlazing(ink: Uint8Array, w: number, horizontal: boolean, c: nu
   return rows.length >= 2 || (rows.length === 1 && Math.abs(rows[0] + 0.5 - c) <= Math.max(1, th * 0.25));
 }
 
+/**
+ * Couches d'un mur creux : sur la coupe en travers du mur (moyenne le long du mur, hors baies et bouts), deux
+ * bandes encrées séparées par un vide. La plus fine (≤ 15 cm) est le parement en brique, le vide la coulisse
+ * (lame d'air ou isolant), l'autre le bloc. Un mur d'une seule bande, ou une cloison, n'a pas de couches.
+ */
+function wallLayers(ink: Uint8Array, w: number, h: number, S: PxSeg, scale: number, holes: [number, number][]): WallLayer[] | undefined {
+  if (S.th * scale < 0.2) return undefined;
+  const t0 = Math.floor(S.c - S.th / 2) - 2;
+  const t1 = Math.ceil(S.c + S.th / 2) + 2;
+  const k0 = Math.ceil(S.s + S.th);
+  const k1 = Math.floor(S.e - S.th);
+  if (k1 - k0 < 0.5 / scale) return undefined;
+  const frac: number[] = [];
+  for (let t = t0; t <= t1; t++) {
+    let n = 0;
+    let all = 0;
+    for (let k = k0; k < k1; k += 2) {
+      if (holes.some(([a, b]) => k >= a - 2 && k <= b + 2)) continue;
+      const i = S.horizontal ? t * w + k : k * w + t;
+      if (i < 0 || i >= w * h) continue;
+      all++;
+      n += ink[i];
+    }
+    frac.push(all ? n / all : 0);
+  }
+  // Plages encrées (≥ 25 %) et vides
+  const runs: { ink: boolean; a: number; b: number }[] = [];
+  frac.forEach((f, i) => {
+    const on = f >= 0.25;
+    const last = runs[runs.length - 1];
+    if (last && last.ink === on) last.b = i + 1;
+    else runs.push({ ink: on, a: i, b: i + 1 });
+  });
+  // (on ignore le blanc de part et d'autre du mur, et les vides d'un pixel)
+  while (runs.length && !runs[0].ink) runs.shift();
+  while (runs.length && !runs[runs.length - 1].ink) runs.pop();
+  const bands = runs.filter((r) => r.ink && (r.b - r.a) * scale >= 0.04);
+  const gaps = runs.filter((r) => !r.ink && (r.b - r.a) * scale >= 0.02);
+  if (bands.length !== 2 || gaps.length !== 1) return undefined;
+  const [A, B] = bands;
+  const G = gaps[0];
+  if (!(A.b <= G.a && G.b <= B.a)) return undefined;
+  const ta = (A.b - A.a) * scale;
+  const tg = (G.b - G.a) * scale;
+  const tb = (B.b - B.a) * scale;
+  if (tg > 0.15) return undefined;
+  const leaf = (x: number, other: number): WallLayer['kind'] => (x <= 0.15 && x + 0.02 <= other ? 'brique' : 'bloc');
+  const total = ta + tg + tb;
+  const k = (S.th * scale) / total;
+  const r2 = (v: number) => Math.round(v * k * 100) / 100;
+  // De la plus petite coordonnée transversale à la plus grande
+  const list: WallLayer[] = [
+    { kind: leaf(ta, tb), thickness: r2(ta) },
+    { kind: 'vide', thickness: r2(tg) },
+    { kind: leaf(tb, ta), thickness: r2(tb) },
+  ];
+  // Face gauche : +y pour un mur horizontal (a → b vers +x), -x pour un mur vertical
+  return S.horizontal ? list.reverse() : list;
+}
+
+/**
+ * Symboles pleins isolés (hexagone ou cercle du nom de pièce, repère de niveau) : une tache compacte, pas
+ * rectangulaire, de moins de 80 cm, qui ne touche aucun mur. Un poteau (rectangle plein) est gardé.
+ */
+export function dropSymbols(mask: Uint8Array, w: number, h: number, scale: number): Uint8Array {
+  const out = mask.slice();
+  const seen = new Uint8Array(w * h);
+  const stack: number[] = [];
+  const max = 0.8 / scale;
+  for (let i0 = 0; i0 < w * h; i0++) {
+    if (!out[i0] || seen[i0]) continue;
+    const px: number[] = [];
+    let x0 = w;
+    let x1 = 0;
+    let y0 = h;
+    let y1 = 0;
+    let big = false;
+    stack.push(i0);
+    seen[i0] = 1;
+    while (stack.length) {
+      const i = stack.pop()!;
+      if (!big) px.push(i);
+      const x = i % w;
+      const y = (i - x) / w;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+      if (x1 - x0 > max || y1 - y0 > max) big = true;
+      for (const j of [i - 1, i + 1, i - w, i + w]) {
+        if (j < 0 || j >= w * h || seen[j] || !out[j]) continue;
+        if ((j === i - 1 && x === 0) || (j === i + 1 && x === w - 1)) continue;
+        seen[j] = 1;
+        stack.push(j);
+      }
+    }
+    if (big) continue;
+    const bw = x1 - x0 + 1;
+    const bh = y1 - y0 + 1;
+    if (Math.min(bw, bh) < 4 || Math.max(bw, bh) / Math.min(bw, bh) > 1.6) continue;
+    // Hexagone, cercle : ~0,75 de son cadre, convexe (une seule plage par ligne et par colonne). Un bout de
+    // mur en L ou en T (entre deux baies, à un angle) remplit bien moins son cadre ; un poteau, presque tout.
+    const fill = px.length / (bw * bh);
+    if (fill < 0.62 || fill > 0.85) continue;
+    const rows = new Map<number, number[]>();
+    const cols = new Map<number, number[]>();
+    for (const i of px) {
+      const x = i % w;
+      const y = (i - x) / w;
+      const r = rows.get(y) ?? [w, -1, 0];
+      r[0] = Math.min(r[0], x);
+      r[1] = Math.max(r[1], x);
+      r[2]++;
+      rows.set(y, r);
+      const c = cols.get(x) ?? [h, -1, 0];
+      c[0] = Math.min(c[0], y);
+      c[1] = Math.max(c[1], y);
+      c[2]++;
+      cols.set(x, c);
+    }
+    const convex = [...rows.values(), ...cols.values()].every(([a, b, n]) => n >= 0.9 * (b - a + 1));
+    if (!convex) continue;
+    for (const i of px) out[i] = 0;
+  }
+  return out;
+}
+
 /** Retraçage à partir d'un masque des murs déjà isolé (en pixels), `ink` servant à reconnaître les fenêtres. */
 function traceMask(source: Uint8Array, ink: Uint8Array, w: number, h: number, scale: number, minThick: number, minLength = 0.4, maxThick = Infinity): Omit<VectorizeResult, 'threshold'> {
   const dark = ink;
   const minLen = Math.max(minThick * 2, Math.round(minLength / scale));
-  const mask = open(source, w, h, Math.floor((minThick - 1) / 2));
+  const mask = dropSymbols(open(source, w, h, Math.floor((minThick - 1) / 2)), w, h, scale);
 
   type Seg = PxSeg;
   const segs: Seg[] = [];
@@ -521,9 +828,19 @@ function traceMask(source: Uint8Array, ink: Uint8Array, w: number, h: number, sc
   mergeLayers(segs, scale);
 
   // Trous entre deux tronçons alignés : portes et fenêtres.
-  const openingsPx: { seg: Seg; at: number; width: number; kind: 'porte' | 'fenetre'; source: 'trou' | 'vitrage'; garage?: boolean }[] = [];
+  const openingsPx: { seg: Seg; at: number; width: number; kind: 'porte' | 'fenetre'; source: 'trou' | 'vitrage'; garage?: boolean; swing?: PxSwing; glazed?: boolean }[] = [];
   const maxGap = 3.2 / scale;
   const minGap = 0.45 / scale;
+  /** Le mur continue à travers ce vide : dessin moucheté (hachures, scan) ou deux faces qui passent sans rien entre elles. */
+  // (une cloison dont les faces passent devant une porte reste une porte si l'arc est net)
+  const solidAcross = (horizontal: boolean, cc: number, th: number, g0: number, g1: number) => {
+    // (des vitrages flous, sur un plan réduit ou scanné, noircissent aussi la baie : ce sont des traits continus)
+    if (inkFill(dark, w, horizontal, cc, th, g0, g1) >= 0.55 && !isGlazing(dark, w, horizontal, cc, th, g0, g1)) return true;
+    if (th * scale >= 0.2 || (g1 - g0) * scale > 1.6) return false;
+    const rows = glazingRows(dark, w, horizontal, cc, th, g0, g1);
+    const faces = rows.length === 2 && rows.every((t) => Math.abs(Math.abs(t + 0.5 - cc) - th / 2) <= Math.max(2, th * 0.2));
+    return faces && !doorSwing(dark, w, h, horizontal, cc, th, g0, g1, 1.25 / scale)?.full;
+  };
   let merged = true;
   while (merged) {
     merged = false;
@@ -537,8 +854,24 @@ function traceMask(source: Uint8Array, ink: Uint8Array, w: number, h: number, sc
         const crossing = segs.some((P) => P.horizontal !== A.horizontal && P.c > A.e + 1 && P.c < B.s - 1 && P.s <= A.c + A.th && P.e >= A.c - A.th);
         if (crossing) continue;
         const th = Math.max(A.th, B.th);
-        const arc = doorArc(dark, w, h, A.horizontal, (A.c + B.c) / 2, th, A.e, B.s);
-        const glass = !arc && isGlazing(dark, w, A.horizontal, (A.c + B.c) / 2, th, A.e, B.s);
+        // Mur continu dont le dessin est seulement moucheté (hachures, scan) : on recolle, sans ouverture
+        // … ou mur en double trait dont les deux faces continuent à travers le « trou » sans rien entre elles
+        const solidGap = solidAcross(A.horizontal, (A.c + B.c) / 2, th, A.e, B.s);
+        const glazed = !solidGap && isGlazing(dark, w, A.horizontal, (A.c + B.c) / 2, th, A.e, B.s);
+        // Des traits de vitrage l'emportent sur un arc partiel (souvent un trait voisin) ; pas sur un arc entier
+        const found = solidGap ? null : doorSwing(dark, w, h, A.horizontal, (A.c + B.c) / 2, th, A.e, B.s, 1.25 / scale);
+        const sw = found && (found.full || !glazed) ? found : null;
+        const arc = !!sw;
+        const glass = !arc && glazed;
+        if (solidGap) {
+          const joined: Seg = { horizontal: A.horizontal, s: A.s, e: B.e, c: (A.c * (A.e - A.s) + B.c * (B.e - B.s)) / (A.e - A.s + B.e - B.s), th };
+          for (const o of openingsPx) if (o.seg === A || o.seg === B) o.seg = joined;
+          segs.splice(segs.indexOf(A), 1);
+          segs.splice(segs.indexOf(B), 1);
+          segs.push(joined);
+          merged = true;
+          break outer;
+        }
         // Un vide sans arc ni vitrage n'est un passage qu'entre deux vrais morceaux de mur (pas des tirets)
         const solid = (S: Seg) => S.e - S.s >= Math.max(3 * S.th, 0.5 / scale);
         if (!arc && !glass && (gap > 1.4 / scale || !solid(A) || !solid(B))) continue;
@@ -548,7 +881,7 @@ function traceMask(source: Uint8Array, ink: Uint8Array, w: number, h: number, sc
         const kind = arc || !glass ? 'porte' : 'fenetre';
         const joined: Seg = { horizontal: A.horizontal, s: A.s, e: B.e, c: (A.c * (A.e - A.s) + B.c * (B.e - B.s)) / (A.e - A.s + B.e - B.s), th };
         for (const o of openingsPx) if (o.seg === A || o.seg === B) o.seg = joined;
-        openingsPx.push({ seg: joined, at: (A.e + B.s) / 2, width: gap, kind, source: 'trou' });
+        openingsPx.push({ seg: joined, at: (A.e + B.s) / 2, width: gap, kind, source: 'trou', ...(sw ? { swing: sw } : {}), ...(glazed ? { glazed } : {}) });
         segs.splice(segs.indexOf(A), 1);
         segs.splice(segs.indexOf(B), 1);
         segs.push(joined);
@@ -595,11 +928,17 @@ function traceMask(source: Uint8Array, ink: Uint8Array, w: number, h: number, sc
       const g0 = dir > 0 ? pos : best.c + best.th / 2;
       const g1 = dir > 0 ? best.c - best.th / 2 : pos;
       if (covered(g0, g1, S) > 0.3) continue;
-      const arc = doorArc(dark, w, h, S.horizontal, S.c, S.th, g0, g1);
+      if (solidAcross(S.horizontal, S.c, S.th, g0, g1)) {
+        S[end] = best.c;
+        continue;
+      }
       const glass = isGlazing(dark, w, S.horizontal, S.c, S.th, g0, g1);
+      const found = doorSwing(dark, w, h, S.horizontal, S.c, S.th, g0, g1, 1.25 / scale);
+      const sw = found && (found.full || !glass) ? found : null;
+      const arc = !!sw;
       if (!arc && !glass && bd > 1.1 / scale) continue;
       S[end] = best.c;
-      openingsPx.push({ seg: S, at: (g0 + g1) / 2, width: g1 - g0, kind: arc || !glass ? 'porte' : 'fenetre', source: 'trou' });
+      openingsPx.push({ seg: S, at: (g0 + g1) / 2, width: g1 - g0, kind: arc || !glass ? 'porte' : 'fenetre', source: 'trou', ...(sw ? { swing: sw } : {}), ...(glass ? { glazed: true } : {}) });
     }
   }
 
@@ -711,7 +1050,10 @@ function traceMask(source: Uint8Array, ink: Uint8Array, w: number, h: number, sc
   type Bay = 'porte' | 'fenetre' | 'garage';
   const bay = (S: Seg, g0: number, g1: number): Bay | null => {
     if (g1 - g0 < minGap * 0.9) return null;
-    if (g1 - g0 <= 1.4 / scale && doorArc(dark, w, h, S.horizontal, S.c, S.th, g0, g1)) return 'porte';
+    if (g1 - g0 <= 1.4 / scale) {
+      const sw = doorSwing(dark, w, h, S.horizontal, S.c, S.th, g0, g1, 1.25 / scale);
+      if (sw && (sw.full || !isGlazing(dark, w, S.horizontal, S.c, S.th, g0, g1))) return 'porte';
+    }
     // Des traits sur toute la largeur : un châssis, ou au-delà de 2,2 m une porte de garage (sectionnelle,
     // basculante), dessinée de la même façon
     if (isGlazing(dark, w, S.horizontal, S.c, S.th, g0, g1)) return g1 - g0 >= 2.2 / scale ? 'garage' : 'fenetre';
@@ -744,7 +1086,9 @@ function traceMask(source: Uint8Array, ink: Uint8Array, w: number, h: number, sc
     } else parts.push([g0, g1]);
     for (const [p0, p1] of parts) {
       const kd: Bay = kind === 'garage' && p1 - p0 < 1.8 / scale ? 'fenetre' : kind;
-      openingsPx.push({ seg: S, at: (p0 + p1) / 2, width: p1 - p0, kind: kd === 'fenetre' ? 'fenetre' : 'porte', source: 'trou', garage: kd === 'garage' || undefined });
+      const sw = kd === 'porte' ? doorSwing(dark, w, h, S.horizontal, S.c, S.th, p0, p1, 1.25 / scale) : null;
+      const glazedBay = kd === 'porte' && isGlazing(dark, w, S.horizontal, S.c, S.th, p0, p1);
+      openingsPx.push({ seg: S, at: (p0 + p1) / 2, width: p1 - p0, kind: kd === 'fenetre' ? 'fenetre' : 'porte', source: 'trou', garage: kd === 'garage' || undefined, ...(sw ? { swing: sw } : {}), ...(glazedBay ? { glazed: true } : {}) });
     }
   };
   for (const { seg: S, end } of freeEnds(segs)) {
@@ -804,15 +1148,42 @@ function traceMask(source: Uint8Array, ink: Uint8Array, w: number, h: number, sc
 
   const q = (v: number) => Math.round(v * scale * 100) / 100;
   const qt = (v: number) => Math.max(0.05, Math.round(v * scale * 100) / 100);
-  const walls: TracedWall[] = segs.map((S) =>
-    S.horizontal
+  const walls: TracedWall[] = segs.map((S) => {
+    const layers = wallLayers(dark, w, h, S, scale, openingsPx.filter((o) => o.seg === S).map((o) => [o.at - o.width / 2, o.at + o.width / 2] as [number, number]));
+    const base = S.horizontal
       ? { a: { x: q(S.s), y: q(S.c) }, b: { x: q(S.e), y: q(S.c) }, thickness: qt(S.th) }
-      : { a: { x: q(S.c), y: q(S.s) }, b: { x: q(S.c), y: q(S.e) }, thickness: qt(S.th) },
-  );
+      : { a: { x: q(S.c), y: q(S.s) }, b: { x: q(S.c), y: q(S.e) }, thickness: qt(S.th) };
+    return layers ? { ...base, layers } : base;
+  });
   const openings: TracedOpening[] = openingsPx.flatMap((o) => {
     const i = segs.indexOf(o.seg);
     if (i < 0) return [];
-    return [{ wall: i, kind: o.kind, offset: Math.round((o.at - o.seg.s) * scale * 100) / 100, width: Math.round(o.width * scale * 100) / 100, source: o.source, ...(o.garage ? { garage: true } : {}) }];
+    let at = o.at;
+    let width = o.width;
+    const sw = o.kind === 'porte' && !o.garage ? o.swing : undefined;
+    // Vantail nettement plus étroit que la baie lue (feuillure d'un mur creux) : la porte prend la largeur de l'arc
+    if (sw && !sw.double && sw.r < 0.88 * o.width && sw.r * scale >= 0.55) {
+      width = sw.r;
+      at = sw.at + (sw.hinge === 0 ? 1 : -1) * (sw.r / 2);
+    } else if (sw?.double && 2 * sw.r < 0.88 * o.width && 2 * sw.r * scale >= 0.9) {
+      width = 2 * sw.r;
+      at = sw.at + sw.r;
+    }
+    // Côté du débattement : pour un mur horizontal (a → b vers +x), +y est la gauche ; pour un mur vertical, -x.
+    const swing = sw ? { hinge: sw.hinge === 0 ? ('a' as const) : ('b' as const), side: (o.seg.horizontal ? sw.side > 0 : sw.side < 0) ? ('gauche' as const) : ('droite' as const) } : undefined;
+    return [
+      {
+        wall: i,
+        kind: o.kind,
+        offset: Math.round((at - o.seg.s) * scale * 100) / 100,
+        width: Math.round(width * scale * 100) / 100,
+        source: o.source,
+        ...(o.garage ? { garage: true } : {}),
+        ...(swing ? { swing } : {}),
+        ...(sw?.double ? { leaves: 2 } : {}),
+        ...(o.glazed ? { glazed: true } : {}),
+      },
+    ];
   });
   return { walls, openings, mask, free: free.map(({ seg: S, end }) => (S.horizontal ? { x: q(S[end]), y: q(S.c) } : { x: q(S.c), y: q(S[end]) })) };
 }
@@ -1443,14 +1814,32 @@ export function refine<T extends VectorizeResult>(r: T): T {
     // L'ouverture doit tenir dans son mur
     if (offset - o.width / 2 < -0.05 || offset + o.width / 2 > L + 0.05) return;
     let kind = o.kind;
+    let swing = o.swing;
+    let leaves = o.leaves;
     if (kind === 'fenetre' && !exterior(w, offset)) {
       if (o.source === 'vitrage') return;
       kind = 'porte';
     }
+    // Sur une façade, une porte s'ouvre vers l'intérieur : un « arc » trouvé dehors est un autre trait
+    // (appui, volet, cote). Avec des traits de vitrage, c'est une fenêtre ; sinon, la porte s'ouvre vers dedans.
+    if (kind === 'porte' && swing && !o.garage && rooms.length && exterior(w, offset)) {
+      const ux = (w.b.x - w.a.x) / L;
+      const uy = (w.b.y - w.a.y) / L;
+      const sg = swing.side === 'gauche' ? 1 : -1;
+      const d = w.thickness / 2 + 0.35;
+      const p = { x: w.a.x + ux * offset - uy * sg * d, y: w.a.y + uy * offset + ux * sg * d };
+      if (!inside(p)) {
+        if (o.glazed) {
+          kind = 'fenetre';
+          swing = undefined;
+          leaves = undefined;
+        } else swing = { ...swing, side: swing.side === 'gauche' ? 'droite' : 'gauche' };
+      }
+    }
     // Pas deux ouvertures qui se chevauchent sur le même mur
     if (openings.some((x) => x.wall === o.wall && Math.abs(x.offset - offset) < (x.width + o.width) / 2)) return;
-    const { garage, ...rest } = o;
-    openings.push({ ...rest, kind, offset, ...(garage && exterior(w, offset) ? { garage: true } : {}) });
+    const { garage, swing: _sw, leaves: _lv, ...rest } = o;
+    openings.push({ ...rest, kind, offset, ...(garage && exterior(w, offset) ? { garage: true } : {}), ...(kind === 'porte' && swing ? { swing } : {}), ...(kind === 'porte' && leaves ? { leaves } : {}) });
   });
   return { ...r, walls, openings };
 }

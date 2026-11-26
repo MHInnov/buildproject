@@ -5,7 +5,7 @@ import { demoProject, emptyProject } from './data/demoProject';
 import type { Catalog } from './model/catalog';
 import { migrateProject } from './model/levels';
 import { applyOperations, pushOperation } from './model/operations';
-import type { Building, Operation, Project, WallSide } from './model/types';
+import type { Building, DwellingKind, Operation, Project, WallSide } from './model/types';
 
 export type Step = 'existant' | 'projet' | 'visite' | 'artisans' | 'resume';
 export type Tool = 'select' | 'wall' | 'room' | 'zone' | 'door' | 'window' | 'furniture' | 'viewpoint' | 'calibrate' | 'roofWindow';
@@ -49,7 +49,7 @@ interface State {
   redo: () => void;
   loadProject: (p: Project) => void;
   resetDemo: () => void;
-  resetEmpty: () => void;
+  resetEmpty: (kind?: DwellingKind) => void;
 }
 
 const STORAGE_KEY = 'construprojet:v1';
@@ -154,7 +154,7 @@ export const useStore = create<State>((set, get) => {
     },
     loadProject: (p) => commit(p),
     resetDemo: () => commit(demoProject()),
-    resetEmpty: () => commit(emptyProject()),
+    resetEmpty: (kind) => commit(emptyProject(kind)),
   };
 });
 

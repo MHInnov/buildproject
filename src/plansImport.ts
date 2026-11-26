@@ -9,6 +9,7 @@ import { removeLevel } from './model/levels';
 import { levelOutline } from './model/footprint';
 import { fitSite, readSitePlan } from './model/site';
 import { alignFacades, alignWalls, footprint, guessKind, isFloorKind, looksLikeSection, planSimilarity, readSection, storeysFromSection, type PlanKind, type SectionReading } from './model/plans';
+import { isFlat } from './model/dwelling';
 import { eaveForKnee } from './model/roof';
 import type { Building, Level } from './model/types';
 import { autoVectorize, type AutoVectorizeResult, type Bitmap, type TracedWall } from './model/vectorize';
@@ -378,6 +379,8 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
     }
     level.underlay = { assetId: p.assetId, x: dx, y: dy, scale: s * k, width: p.width, height: p.height, opacity: 0.35, visible: true, calibrated: !!calibrated.find((u) => sameSize(u, p)) };
     done.add(level.id);
+    // Un étage calé automatiquement sur celui du dessous reste à vérifier par l'utilisateur
+    if (level.id !== g.id && anchorId) level.alignment = 'a-verifier';
     if (level.id === g.id) groundId = level.id;
     anchorId ??= level.id;
     const doors = scaled.openings.filter((o) => o.kind === 'porte').length;
@@ -472,7 +475,7 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
   }
 
   // Toit : la lecture la plus nette (deux pans d'abord), l'égout le plus bas des coupes qui en donnent un
-  if (roofs.length) {
+  if (roofs.length && !isFlat(b)) {
     const kind = roofs.some((x) => x.type === 'deux-pans') ? 'deux-pans' : roofs[0].type;
     const same = roofs.filter((x) => x.type === kind);
     const pitch = kind === 'plat' ? 0 : Math.round(median(same.map((x) => x.pitch)));
@@ -526,5 +529,8 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
       lines.push(`${it.name} : jardin tracé, parcelle de ${Math.round(polygonArea(parcel)).toLocaleString('fr-FR')} m² autour de la maison.`);
     }
   }
+  const toCheck = b.levels.filter((l) => done.has(l.id) && l.alignment === 'a-verifier');
+  if (toCheck.length)
+    lines.push(`À vérifier : calage de ${toCheck.map((l) => `« ${l.name} »`).join(', ')} sur le niveau du dessous (affichez l'étage, le niveau du dessous apparaît en orange ; corrigez avec les flèches puis « Valider le calage »).`);
   return { lines, warnings, levelId: groundId ?? (done.size ? [...done][0] : null) };
 }

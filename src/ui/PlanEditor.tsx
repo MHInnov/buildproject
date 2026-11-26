@@ -1,3 +1,4 @@
+import { layerBands, layerInfo } from '../model/wallLayers';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   addFloorZone,
@@ -101,6 +102,8 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
   const select = useStore((s) => s.select);
   const setTool = useStore((s) => s.setTool);
   const isExisting = step === 'existant';
+  // Calage d'un étage : le niveau du dessous ressort en orange
+  const aligning = isExisting && ui.alignLevel && !!lower?.walls.length;
 
   const svgRef = useRef<SVGSVGElement>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
@@ -679,7 +682,18 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
 
       {/* Niveau inférieur en filigrane, pour superposer les murs */}
       {lower?.walls.map((w) => (
-        <line key={`lw-${w.id}`} x1={w.a.x} y1={w.a.y} x2={w.b.x} y2={w.b.y} stroke="var(--ink-soft)" strokeOpacity={0.18} strokeWidth={w.thickness} strokeLinecap="square" pointerEvents="none" />
+        <line
+          key={`lw-${w.id}`}
+          x1={w.a.x}
+          y1={w.a.y}
+          x2={w.b.x}
+          y2={w.b.y}
+          stroke={aligning ? '#e8742a' : 'var(--ink-soft)'}
+          strokeOpacity={aligning ? 0.55 : 0.18}
+          strokeWidth={w.thickness}
+          strokeLinecap="square"
+          pointerEvents="none"
+        />
       ))}
       {stairsBelow.map((f) => {
         const s = itemProduct(catalog, f)?.size ?? { w: 0.8, d: 3, h: 2.8 };
@@ -789,6 +803,25 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
             onContextMenu={ctx((e) => wallMenu(e, w))}
           >
             <line x1={w.a.x} y1={w.a.y} x2={w.b.x} y2={w.b.y} stroke={isSel('wall', w.id) ? 'var(--accent)' : color} strokeWidth={Math.max(w.thickness, 0.06)} strokeLinecap="square" />
+            {/* Mur à plusieurs couches (mur creux) : chaque couche dans sa couleur */}
+            {!isNew &&
+              layerBands(w).map(({ layer, offset, thickness }, i) => {
+                const n = wallNormal(w);
+                const inset = isSel('wall', w.id) ? 0.012 : 0;
+                return (
+                  <line
+                    key={i}
+                    x1={w.a.x + n.x * offset}
+                    y1={w.a.y + n.y * offset}
+                    x2={w.b.x + n.x * offset}
+                    y2={w.b.y + n.y * offset}
+                    stroke={layerInfo(layer.kind).color}
+                    strokeWidth={Math.max(0.005, thickness - inset)}
+                    strokeLinecap="butt"
+                    pointerEvents="none"
+                  />
+                );
+              })}
             {/* Zone de clic élargie pour les cloisons fines */}
             <line x1={w.a.x} y1={w.a.y} x2={w.b.x} y2={w.b.y} stroke="transparent" strokeWidth={Math.max(w.thickness, fs * 1.4)} style={{ cursor: tool === 'select' ? 'pointer' : undefined }} />
           </g>
@@ -1128,34 +1161,34 @@ function OpeningShape({ o, w, selected, isNew, onSelect, onMenu }: { o: Opening;
       </g>
     );
   }
-  // Porte : vantail + arc d'ouverture ; double porte (ou garage battant) : deux vantaux depuis chaque bord
+  // Porte : vantail + arc d'ouverture ; double porte (ou garage battant) : deux vantaux depuis chaque bord.
+  // Sens d'ouverture : charnière côté a ou b du mur, débattement vers la face gauche ou droite.
   const double = (o.options?.leaves ?? 1) >= 2 || o.options?.style === 'battante';
   const r = double ? o.width / 2 : o.width;
   const mid = lerp(w.a, w.b, (t1 + t2) / 2);
-  const leaf = { x: p1.x + n.x * r, y: p1.y + n.y * r };
-  const leaf2 = { x: p2.x + n.x * r, y: p2.y + n.y * r };
-  const sweep = crossSign(w) ? 1 : 0;
+  const nn = o.swing ? wallNormal(w, o.swing.side) : n;
+  const atB = !double && o.swing?.hinge === 'b';
+  const H = atB ? p2 : p1;
+  const O = atB ? p1 : p2;
+  const tip = (h: Point) => ({ x: h.x + nn.x * r, y: h.y + nn.y * r });
+  // arc de la pointe du vantail jusqu'au tableau opposé (ou au milieu), dans le sens qui reste du côté du débattement
+  const sweep = (c: Point, a: Point, b: Point) => ((a.x - c.x) * (b.y - c.y) - (a.y - c.y) * (b.x - c.x) > 0 ? 1 : 0);
+  const leaves = double ? [{ h: p1, end: mid }, { h: p2, end: mid }] : [{ h: H, end: O }];
   return (
     <g onPointerDown={onSelect} onContextMenu={onMenu} style={{ cursor: 'pointer' }}>
       <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke="var(--paper)" strokeWidth={th + 0.01} />
-      <line x1={p1.x} y1={p1.y} x2={leaf.x} y2={leaf.y} stroke={stroke} strokeWidth={sw * 1.5} />
-      <path d={`M${leaf.x} ${leaf.y} A${r} ${r} 0 0 ${sweep} ${double ? `${mid.x} ${mid.y}` : `${p2.x} ${p2.y}`}`} fill="none" stroke={stroke} strokeWidth={sw * 0.6} strokeDasharray="0.05 0.04" />
-      {double && (
-        <>
-          <line x1={p2.x} y1={p2.y} x2={leaf2.x} y2={leaf2.y} stroke={stroke} strokeWidth={sw * 1.5} />
-          <path d={`M${leaf2.x} ${leaf2.y} A${r} ${r} 0 0 ${1 - sweep} ${mid.x} ${mid.y}`} fill="none" stroke={stroke} strokeWidth={sw * 0.6} strokeDasharray="0.05 0.04" />
-        </>
-      )}
+      {leaves.map(({ h, end }, i) => {
+        const t = tip(h);
+        return (
+          <g key={i}>
+            <line x1={h.x} y1={h.y} x2={t.x} y2={t.y} stroke={stroke} strokeWidth={sw * 1.5} />
+            <path d={`M${t.x} ${t.y} A${r} ${r} 0 0 ${sweep(h, t, end)} ${end.x} ${end.y}`} fill="none" stroke={stroke} strokeWidth={sw * 0.6} strokeDasharray="0.05 0.04" />
+          </g>
+        );
+      })}
       <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke="transparent" strokeWidth={th + 0.15} />
     </g>
   );
-}
-
-/** Sens de l'arc de la porte selon l'orientation du mur. */
-function crossSign(w: Wall): boolean {
-  const n = wallNormal(w);
-  const d = { x: w.b.x - w.a.x, y: w.b.y - w.a.y };
-  return n.x * d.y - n.y * d.x < 0;
 }
 
 /** Motif SVG d'un matériau (sol), à l'échelle réelle. */

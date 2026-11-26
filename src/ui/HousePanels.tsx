@@ -1,3 +1,4 @@
+import { isFlat, setDwellingKind } from '../model/dwelling';
 import { useMemo } from 'react';
 import { NumberInput } from './NumberInput';
 import { setCondition, setRoofCovering, setRoofInsulation } from '../actions';
@@ -37,10 +38,11 @@ export function LevelTabs() {
   const setLevel = useStore((s) => s.setLevel);
   const select = useStore((s) => s.select);
   const roof = useStore((s) => s.project.existing.roof);
+  const flat = useStore((s) => isFlat(s.project.existing));
   const sorted = [...levels].sort((a, b) => b.elevation - a.elevation);
   return (
     <div className="levelbar no-print" role="tablist" aria-label="Niveaux">
-      {roof && (
+      {roof && !flat && (
         <button className="levelbar__roof" onClick={() => select({ kind: 'roof', id: 'roof' })} title="Toiture">
           ⌂ Toit
         </button>
@@ -72,6 +74,41 @@ function nextLevel(b: Building, where: 'above' | 'below'): Level {
   return { id: newId('lv'), name: 'Cave', elevation: Math.round((bottom.elevation - 2.2 - 0.25) * 100) / 100, height: 2.2, slab: 0.25 };
 }
 
+/** Maison ou appartement, en tête du panneau de l'existant. */
+export function DwellingField() {
+  const b = useStore((s) => s.project.existing);
+  const editExisting = useStore((s) => s.editExisting);
+  const flat = isFlat(b);
+  return (
+    <>
+      <h4>Type de logement</h4>
+      <div className="segmented segmented--small" role="group" aria-label="Type de logement">
+        <button className={!flat ? 'is-active' : ''} onClick={() => flat && editExisting((x) => setDwellingKind(x, 'maison'))}>
+          Maison
+        </button>
+        <button className={flat ? 'is-active' : ''} onClick={() => !flat && editExisting((x) => setDwellingKind(x, 'appartement'))}>
+          Appartement
+        </button>
+      </div>
+      {flat && (
+        <>
+          <p className="muted small">Dans un immeuble : pas de toiture ni de jardin, le plafond du dernier niveau est la dalle de l'étage au-dessus.</p>
+          <label className="field">
+            <span>Étage dans l'immeuble</span>
+            <select value={b.storey ?? 0} onChange={(e) => editExisting((x) => void (x.storey = Number(e.target.value)))}>
+              {Array.from({ length: 21 }, (_, i) => (
+                <option key={i} value={i}>
+                  {i === 0 ? 'Rez-de-chaussée' : i === 1 ? '1er étage' : `${i}e étage`}
+                </option>
+              ))}
+            </select>
+          </label>
+        </>
+      )}
+    </>
+  );
+}
+
 /** Panneau « maison » : niveaux et toiture, quand rien n'est sélectionné à l'étape existant. */
 export function HouseOverview() {
   const b = useStore((s) => s.project.existing);
@@ -90,16 +127,17 @@ export function HouseOverview() {
     });
     setLevel(l.id);
   };
+  const flat = isFlat(b);
   return (
     <>
       <h4>Niveaux</h4>
       <p className="muted small">Cliquez sur l'onglet du niveau affiché (en haut à droite du plan) pour régler sa hauteur sous plafond.</p>
       <div className="actions">
-        <button className="btn" onClick={() => addLevel('above')}>+ Étage ou combles</button>
-        <button className="btn" onClick={() => addLevel('below')}>+ Cave</button>
+        <button className="btn" onClick={() => addLevel('above')}>{flat ? '+ Niveau au-dessus (duplex)' : '+ Étage ou combles'}</button>
+        {!flat && <button className="btn" onClick={() => addLevel('below')}>+ Cave</button>}
       </div>
-      <h4>Toiture</h4>
-      {b.roof ? (
+      {flat ? null : <h4>Toiture</h4>}
+      {flat ? null : b.roof ? (
         <button className="btn" onClick={() => select({ kind: 'roof', id: 'roof' })}>
           {ROOF_LABELS[b.roof.type]} · {b.roof.pitch}° · {productById(useStore.getState().catalog, b.roof.coveringId)?.name ?? 'couverture ?'}
         </button>
@@ -115,8 +153,8 @@ export function HouseOverview() {
           + Ajouter une toiture
         </button>
       )}
-      <OutdoorFields />
-      {b.site && (
+      {!flat && <OutdoorFields />}
+      {!flat && b.site && (
         <>
           <h4>Jardin</h4>
           <p className="muted small">

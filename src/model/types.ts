@@ -45,6 +45,8 @@ export interface Level {
   /** Épaisseur du plancher au-dessus, en mètres. */
   slab: number;
   underlay?: Underlay;
+  /** Calage sur le niveau du dessous : à vérifier après un import, validé par l'utilisateur. */
+  alignment?: 'a-verifier' | 'valide';
 }
 
 export type RoofType = 'deux-pans' | 'quatre-pans' | 'monopente' | 'plat';
@@ -115,6 +117,19 @@ export interface Wall {
   /** Revêtement de chaque face (id produit catalogue), null = enduit brut. */
   finish: Record<WallSide, string | null>;
   condition?: Condition;
+  /**
+   * Composition d'un mur à plusieurs couches (mur creux : parement en brique, coulisse, bloc béton), de la face
+   * gauche à la face droite. Absente pour un mur d'un seul matériau.
+   */
+  layers?: WallLayer[];
+}
+
+export type WallLayerKind = 'brique' | 'bloc' | 'beton' | 'isolant' | 'vide' | 'pierre' | 'bois' | 'platre';
+
+export interface WallLayer {
+  kind: WallLayerKind;
+  /** Épaisseur en mètres. */
+  thickness: number;
 }
 
 export type OpeningKind = 'porte' | 'fenetre';
@@ -133,6 +148,16 @@ export interface Opening {
   condition?: Condition;
   /** Réglages d'un modèle générique (couleur, vantaux, variante). */
   options?: ItemOptions;
+  /**
+   * Sens d'ouverture d'une porte : charnière du côté de wall.a ou de wall.b, débattement vers la face gauche
+   * ou droite du mur. Absent : charnière côté a, vers la pièce.
+   */
+  swing?: OpeningSwing;
+}
+
+export interface OpeningSwing {
+  hinge: 'a' | 'b';
+  side: WallSide;
 }
 
 /** Réglages d'un objet générique paramétrable (voir model/generic.ts). */
@@ -194,7 +219,14 @@ export interface FurnitureItem {
   options?: ItemOptions;
 }
 
+/** Maison (toiture, jardin) ou appartement (dans un immeuble : ni toit ni terrain). */
+export type DwellingKind = 'maison' | 'appartement';
+
 export interface Building {
+  /** Type de logement ; absent : maison (anciens projets). */
+  kind?: DwellingKind;
+  /** Appartement : étage dans l'immeuble (0 = rez-de-chaussée). */
+  storey?: number;
   /** Niveaux, du plus bas au plus haut. */
   levels: Level[];
   walls: Wall[];

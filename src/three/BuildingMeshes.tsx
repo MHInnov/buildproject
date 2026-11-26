@@ -631,7 +631,10 @@ function OpeningMesh({ o, th, product, selected, open, inward, onClick, onToggle
     const leafH = o.height - 0.02;
     const glazed = tags.includes('vitré');
     const moulded = tags.includes('moulures');
-    const angle = -inward * Math.PI * (n > 1 ? 0.46 : 0.48);
+    // Sens d'ouverture lu sur le plan (ou réglé) : côté du débattement et charnière ; sinon vers la pièce, charnière côté a
+    const towards = o.swing ? (o.swing.side === 'gauche' ? 1 : -1) : inward;
+    const angle = -towards * Math.PI * (n > 1 ? 0.46 : 0.48);
+    const atB = n === 1 && o.swing?.hinge === 'b';
     // Vantail dessiné de x0 à x0 + leafW (x0 < 0 pour le vantail de droite, qui pivote sur l'autre bord)
     const leaf = (x0: number, handleX: number) => (
       <>
@@ -660,9 +663,15 @@ function OpeningMesh({ o, th, product, selected, open, inward, onClick, onToggle
     return (
       <group>
         {casings}
-        <Swing target={open ? angle : 0} position={[s + 0.01, 0, 0]}>
-          {leaf(0, n > 1 ? -1 : leafW - 0.08)}
-        </Swing>
+        {atB ? (
+          <Swing target={open ? -angle : 0} position={[s + o.width - 0.01, 0, 0]}>
+            {leaf(-leafW, 0.08)}
+          </Swing>
+        ) : (
+          <Swing target={open ? angle : 0} position={[s + 0.01, 0, 0]}>
+            {leaf(0, n > 1 ? -1 : leafW - 0.08)}
+          </Swing>
+        )}
         {n > 1 && (
           <Swing target={open ? -angle : 0} position={[s + o.width - 0.01, 0, 0]}>
             {leaf(-leafW, 0.08)}

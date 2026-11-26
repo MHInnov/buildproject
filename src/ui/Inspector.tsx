@@ -1,3 +1,5 @@
+import { isFlat } from '../model/dwelling';
+import { LevelAlignPanel } from './LevelAlignPanel';
 import { useMemo, useState } from 'react';
 import {
   addFloorZone,
@@ -33,10 +35,11 @@ import { euro } from '../model/estimate';
 import { detectRooms, inRoom, newId, wallLength, wallSideFacingRoom } from '../model/geometry';
 import { levelById } from '../model/levels';
 import { areaAboveHeight, placeRoofWindow, ROOF_DEPTH, roofFrame, roofWindowHeight, roofWindowLength } from '../model/roof';
-import type { FloorZone, Room, Wall, WallSide } from '../model/types';
+import type { FloorZone, Room, Wall, WallLayer, WallLayerKind, WallSide } from '../model/types';
+import { cavityWall, describeLayers, layerInfo, LAYER_KINDS } from '../model/wallLayers';
 import { useBuilding, useStore } from '../store';
 import { useUi } from '../uiState';
-import { ConditionField, HouseOverview, LevelPanel, RoofPanel } from './HousePanels';
+import { ConditionField, DwellingField, HouseOverview, LevelPanel, RoofPanel } from './HousePanels';
 import { ProductPicker } from './ProductPicker';
 import { NumberInput } from './NumberInput';
 import { UnderlayPanel } from './UnderlayPanel';
@@ -99,17 +102,20 @@ function NoSelection() {
   const viewpoints = useStore((s) => s.project.viewpoints);
   const isPlan = step === 'existant' || step === 'projet';
   const here = viewpoints.filter((v) => v.levelId === levelId);
+  const flat = useStore((s) => isFlat(s.project.existing));
   return (
     <div className="panel">
-      <h3>{step === 'existant' ? 'Votre maison actuelle' : 'Votre projet'}</h3>
+      <h3>{step === 'existant' ? (flat ? 'Votre appartement actuel' : 'Votre maison actuelle') : 'Votre projet'}</h3>
       <p className="muted">
         {step === 'existant'
           ? 'Importez un plan ou dessinez les murs, ajoutez portes et fenêtres, puis cliquez sur une pièce, un mur ou une menuiserie pour indiquer ses matériaux et son état.'
           : 'Cliquez sur un mur pour le démolir ou changer son revêtement, sur une pièce pour changer son sol, sur un meuble pour le remplacer. Chaque choix met le budget à jour.'}
       </p>
+      {step === 'existant' && <DwellingField />}
+      {step === 'existant' && <LevelAlignPanel />}
       {step === 'existant' && <UnderlayPanel />}
       {step === 'existant' && <HouseOverview />}
-      {step === 'projet' && (
+      {step === 'projet' && !flat && (
         <button className="btn" onClick={() => select({ kind: 'roof', id: 'roof' })}>
           Toiture et isolation…
         </button>
@@ -214,6 +220,7 @@ function WallPanel({ w, rooms, isExisting, initialSide }: { w: Wall; rooms: Room
           </label>
         )}
       </div>
+      <WallLayersField w={w} isExisting={isExisting} onEdit={edit} />
       {isExisting && <ConditionField value={w.condition} onChange={(c) => setCondition({ kind: 'wall', id: w.id }, c)} label="État (fissures, humidité…)" />}
       <div className="actions">
         <button className="btn btn--danger" onClick={() => removeWall(w.id)}>
@@ -222,6 +229,62 @@ function WallPanel({ w, rooms, isExisting, initialSide }: { w: Wall; rooms: Room
       </div>
       {!isExisting && w.kind === 'porteur' && <p className="warning">Mur porteur : une démolition demande une étude de stabilité et une poutre de reprise. Elles sont ajoutées au chiffrage.</p>}
     </div>
+  );
+}
+
+/** Composition d'un mur à plusieurs couches (mur creux : brique, coulisse, bloc), de la face A à la face B. */
+function WallLayersField({ w, isExisting, onEdit }: { w: Wall; isExisting: boolean; onEdit: (fn: (x: Wall) => void) => void }) {
+  const layers = w.layers ?? [];
+  const setLayers = (next: WallLayer[] | undefined) =>
+    onEdit((x) => {
+      if (!next?.length) delete x.layers;
+      else {
+        x.layers = next;
+        x.thickness = Math.round(next.reduce((s, l) => s + l.thickness, 0) * 100) / 100;
+      }
+    });
+  if (!layers.length)
+    return isExisting ? (
+      <div className="actions">
+        <button className="btn" onClick={() => setLayers(cavityWall(w.thickness))} title="Mur creux : parement en brique, coulisse isolée et bloc béton">
+          Décrire les couches du mur (mur creux…)
+        </button>
+      </div>
+    ) : null;
+  return (
+    <>
+      <h4>Composition</h4>
+      <p className="muted small">De la face A à la face B : {describeLayers(layers)}.</p>
+      {isExisting && (
+        <div className="layers">
+          {layers.map((l, i) => (
+            <div key={i} className="layers__row">
+              <i className="layers__swatch" style={{ background: layerInfo(l.kind).color }} />
+              <select value={l.kind} aria-label={`Couche ${i + 1}`} onChange={(e) => setLayers(layers.map((x, j) => (j === i ? { ...x, kind: e.target.value as WallLayerKind } : x)))}>
+                {LAYER_KINDS.map((k) => (
+                  <option key={k.kind} value={k.kind}>
+                    {k.label}
+                  </option>
+                ))}
+              </select>
+              <NumberInput value={Math.round(l.thickness * 100)} min={1} max={60} onChange={(v) => setLayers(layers.map((x, j) => (j === i ? { ...x, thickness: v / 100 } : x)))} />
+              <span className="muted small">cm</span>
+              <button className="btn btn--ghost" title="Retirer cette couche" onClick={() => setLayers(layers.filter((_, j) => j !== i))}>
+                ×
+              </button>
+            </div>
+          ))}
+          <div className="actions">
+            <button className="btn" onClick={() => setLayers([...layers, { kind: 'platre', thickness: 0.02 }])}>
+              Ajouter une couche
+            </button>
+            <button className="btn" onClick={() => setLayers([...layers].reverse())} title="Les couches dans l'autre sens (brique dehors, bloc dedans)">
+              Inverser
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -301,6 +364,27 @@ function OpeningPanel({ id, isExisting }: { id: string; isExisting: boolean }) {
   return (
     <div className="panel">
       <h3>{o.kind === 'porte' ? 'Porte' : 'Fenêtre'}</h3>
+      {isExisting && (
+        <div className="actions">
+          <button
+            className="btn"
+            title="Le retraçage s'est trompé : changer la nature de l'ouverture"
+            onClick={() =>
+              edit((x) => {
+                const toDoor = x.kind === 'fenetre';
+                x.kind = toDoor ? 'porte' : 'fenetre';
+                x.productId = toDoor ? 'ex-porte-isoplane' : 'ex-fenetre-bois-simple';
+                x.height = toDoor ? 2.05 : 1.25;
+                x.sill = toDoor ? 0 : 0.9;
+                delete x.options;
+                delete x.swing;
+              })
+            }
+          >
+            {o.kind === 'porte' ? "C'est une fenêtre" : "C'est une porte"}
+          </button>
+        </div>
+      )}
       <p className="muted">{product ? `${itemProduct(catalog, o)?.name} · ${euro(itemPrice(product, o.options, { w: o.width, h: o.height }))}` : 'Produit non défini'}</p>
       {step === 'visite' && (
         <div className="actions">
@@ -316,6 +400,21 @@ function OpeningPanel({ id, isExisting }: { id: string; isExisting: boolean }) {
         <NumberField label="Position (m)" value={o.offset} disabled={!sizable} onChange={(v) => edit((x) => void (x.offset = Math.min(maxOffset, Math.max(o.width / 2, v))))} />
       </div>
       {product?.generic && <GenericOptions product={product} options={o.options} dims={{ w: o.width, h: o.height }} onChange={(opt) => setOpeningOptions(o.id, opt)} />}
+      {o.kind === 'porte' && sizable && !product?.id.includes('garage') && (
+        <>
+          <h4>Sens d'ouverture</h4>
+          <div className="actions">
+            {(o.options?.leaves ?? 1) < 2 && (
+              <button className="btn" title="La porte tourne sur l'autre montant" onClick={() => edit((x) => void (x.swing = { hinge: x.swing?.hinge === 'b' ? 'a' : 'b', side: x.swing?.side ?? 'gauche' }))}>
+                Charnière de l'autre côté
+              </button>
+            )}
+            <button className="btn" title="La porte s'ouvre vers l'autre pièce" onClick={() => edit((x) => void (x.swing = { hinge: x.swing?.hinge ?? 'a', side: x.swing?.side === 'droite' ? 'gauche' : 'droite' }))}>
+              S'ouvre de l'autre côté
+            </button>
+          </div>
+        </>
+      )}
       {isExisting && <ConditionField value={o.condition} onChange={(c) => setCondition({ kind: 'opening', id: o.id }, c)} />}
       <h4>{isExisting ? 'Modèle actuel' : 'Remplacer par'}</h4>
       <ProductPicker categories={[o.kind === 'porte' ? 'porte' : 'fenetre']} only={(p) => p.subcategory !== 'toit'} currentId={o.productId} onPick={(p) => replaceOpening(o.id, p.id)} />

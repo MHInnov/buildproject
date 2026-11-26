@@ -219,7 +219,8 @@ function FileMenu() {
       </button>
       {open && (
         <div className="menu__list" onMouseLeave={() => setOpen(false)}>
-          <button onClick={() => { resetEmpty(); setOpen(false); }}>Nouveau projet vide</button>
+          <button onClick={() => { resetEmpty(); setOpen(false); }}>Nouvelle maison (vide)</button>
+          <button onClick={() => { resetEmpty('appartement'); setOpen(false); }}>Nouvel appartement (vide)</button>
           <button onClick={() => { resetDemo(); setOpen(false); }}>Recharger la maison de démo</button>
           <button onClick={exportJson}>Exporter le projet (.json)</button>
           <button onClick={() => input.current?.click()}>Importer un projet…</button>

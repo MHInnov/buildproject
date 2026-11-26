@@ -1,3 +1,4 @@
+import { isFlat } from '../model/dwelling';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
@@ -64,7 +65,24 @@ function Sun({ building, night }: { building: Building; night: boolean }) {
 /** Champ autour de la maison ; plus terne quand le jardin (la parcelle) est tracé. */
 const FIELD: Surface = { ...GRASS, color: '#7b8455' };
 
+/** Appartement : la dalle de l'immeuble autour du logement, sans jardin. */
+const SLAB: Surface = { color: '#b9b6ae', roughness: 0.9 };
+
 function Ground({ building }: { building: Building }) {
+  if (isFlat(building)) return <FlatGround />;
+  return <HouseGround building={building} />;
+}
+
+function FlatGround() {
+  return (
+    <mesh rotation-x={-Math.PI / 2} position-y={-0.02} receiveShadow>
+      <planeGeometry args={[160, 160]} />
+      <meshStandardMaterial color={SLAB.color} roughness={0.9} />
+    </mesh>
+  );
+}
+
+function HouseGround({ building }: { building: Building }) {
   const parcel = building.site?.parcel;
   const size = parcel ? Math.max(160, 3 * Math.max(...parcel.map((p) => Math.hypot(p.x, p.y)))) : 160;
   const geo = useMemo(() => {
@@ -303,7 +321,7 @@ function PersoRig({ world, levelId, onHint }: { world: WalkWorld; levelId: strin
   const speedRef = useRef(0);
   const worldRef = useRef(world);
   worldRef.current = world;
-  const st = useRef({ pos: new THREE.Vector3(), heading: 0, yaw: Math.PI, look: 0, dragging: false, frame: 0, camDist: null as number | null, pitch: 0.3, dist: 2.8, phase: 0, near: null as Interactive | null, lastHint: 0, hint: null as string | null });
+  const st = useRef({ pos: new THREE.Vector3(), heading: 0, yaw: Math.PI, look: 0, dragging: false, frame: 0, camDist: null as number | null, hidden: new Set<THREE.Object3D>(), pitch: 0.42, dist: 3.4, phase: 0, near: null as Interactive | null, lastHint: 0, hint: null as string | null });
   const items = useMemo(() => interactives(world.b), [world]);
   const itemsRef = useRef(items);
   itemsRef.current = items;
@@ -316,7 +334,7 @@ function PersoRig({ world, levelId, onHint }: { world: WalkWorld; levelId: strin
     if (far && (far.x !== s.at.x || far.y !== s.at.y)) st.current.heading = Math.atan2(far.x - s.at.x, far.y - s.at.y);
     st.current.yaw = st.current.heading + Math.PI;
     st.current.look = 0;
-    (camera as THREE.PerspectiveCamera).fov = 60;
+    (camera as THREE.PerspectiveCamera).fov = 52;
     (camera as THREE.PerspectiveCamera).updateProjectionMatrix();
     const el = gl.domElement;
     let drag: { x: number; y: number } | null = null;
@@ -359,6 +377,8 @@ function PersoRig({ world, levelId, onHint }: { world: WalkWorld; levelId: strin
       window.removeEventListener('pointerup', up);
       el.removeEventListener('wheel', wheel);
       window.removeEventListener('keydown', key);
+      for (const o of st.current.hidden) o.visible = true;
+      st.current.hidden.clear();
       onHint(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -408,24 +428,40 @@ function PersoRig({ world, levelId, onHint }: { world: WalkWorld; levelId: strin
       if (inner.current?.visible && moving) body.current.position.y += Math.abs(Math.cos(s.phase)) * 0.03;
       body.current.rotation.y = s.heading;
     }
-    // Caméra derrière le personnage, rapprochée si un mur s'interpose
+    // Caméra derrière le personnage, toujours à bonne distance : un mur ou un plafond qui la sépare du
+    // personnage est masqué (vue en coupe) au lieu de rapprocher la caméra, ce qui déformait les proportions.
     const head = s.pos.clone().add(new THREE.Vector3(0, 1.55, 0));
     const dir = new THREE.Vector3(Math.sin(s.yaw) * Math.cos(s.pitch), Math.sin(s.pitch), Math.cos(s.yaw) * Math.cos(s.pitch));
-    // Obstacle entre la tête et la caméra : recherché une image sur trois (le lancer de rayon coûte cher)
+    // Obstacles entre la tête et la caméra : recherchés une image sur trois (le lancer de rayon coûte cher)
     s.frame = (s.frame + 1) % 3;
     if (s.frame === 0 || s.camDist === null) {
-    ray.set(head, dir);
-    ray.far = s.dist;
-    const hit = ray.intersectObjects(scene.children, true).find((h) => {
-      let o: THREE.Object3D | null = h.object;
-      while (o) {
-        if (o.userData?.noCam) return false;
-        o = o.parent;
+      ray.set(head, dir);
+      ray.far = s.dist + 0.3;
+      const hits = ray.intersectObjects(scene.children, true).filter((h) => {
+        let o: THREE.Object3D | null = h.object;
+        while (o) {
+          if (o.userData?.noCam) return false;
+          o = o.parent;
+        }
+        const m = (h.object as THREE.Mesh).material as THREE.Material;
+        return !(m && !Array.isArray(m) && m.transparent);
+      });
+      const next = new Set<THREE.Object3D>();
+      let pull: number | null = null;
+      for (const h of hits) {
+        const g = (h.object as THREE.Mesh).geometry;
+        if (g && !g.boundingSphere) g.computeBoundingSphere();
+        // Gros éléments (terrain, toiture d'un seul tenant) : on rapproche la caméra comme avant.
+        if (!g?.boundingSphere || g.boundingSphere.radius * h.object.matrixWorld.getMaxScaleOnAxis() > 14) {
+          pull = Math.max(0.3, h.distance - 0.2);
+          break;
+        }
+        next.add(h.object);
       }
-      const m = (h.object as THREE.Mesh).material as THREE.Material;
-      return !(m && !Array.isArray(m) && m.transparent);
-    });
-    s.camDist = hit ? Math.max(0.3, hit.distance - 0.2) : s.dist;
+      for (const o of s.hidden) if (!next.has(o)) o.visible = true;
+      for (const o of next) o.visible = false;
+      s.hidden = next;
+      s.camDist = pull ?? s.dist;
     }
     const d = s.camDist ?? s.dist;
     camera.position.copy(head).addScaledVector(dir, d);
