@@ -88,6 +88,21 @@ export interface Roof {
    * importés d'un plan, dont les pignons fixent la largeur d'égout à égout.
    */
   bounds?: { x0: number; y0: number; x1: number; y1: number };
+  /**
+   * Avancées couvertes de leur propre toit à deux pans (même pente, même égout), raccordé en noue au toit
+   * principal : emprise extérieure de l'avancée, sens du faîtage et côté par lequel elle touche la maison.
+   */
+  wings?: RoofWing[];
+}
+
+export interface RoofWing {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  ridge: 'x' | 'y';
+  /** Bout du faîtage contre la maison (le pignon est à l'autre bout). */
+  attach: 'x0' | 'x1' | 'y0' | 'y1';
 }
 
 /** Fenêtre de toit, posée dans un pan. Position et dimensions en projection sur le plan. */

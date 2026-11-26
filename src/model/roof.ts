@@ -1,4 +1,5 @@
-import type { Building, Level, Point, Roof, Room } from './types';
+import type { Building, Level, Point, Roof, RoofWing, Room } from './types';
+import { levelOutline } from './footprint';
 import { levelBelow, levelById } from './levels';
 import { inRoom } from './geometry';
 
@@ -176,4 +177,91 @@ export function placeRoofWindow(b: Building, p: Point, width: number, length: nu
 export function roofWindowRect(roof: Roof, w: { x: number; y: number; width: number; length: number }): { x: number; y: number; w: number; h: number } {
   const [dx, dy] = roof.ridge === 'x' ? [w.width, w.length] : [w.length, w.width];
   return { x: w.x - dx / 2, y: w.y - dy / 2, w: dx, h: dy };
+}
+
+/**
+ * Toit principal et avancées : sur l'emprise des niveaux couverts par le toit, le corps principal est la
+ * bande (le long du faîtage) occupée sur au moins la moitié de la longueur ; ce qui dépasse sur le côté
+ * d'au moins 80 cm, sur 2 m de large, est une avancée avec son propre toit, faîtage perpendiculaire.
+ * Un retrait (renfoncement) reste sous le toit principal.
+ */
+export function detectWings(b: Building, roof: Roof): { bounds: NonNullable<Roof['bounds']>; wings: RoofWing[] } | null {
+  const level = levelById(b, roof.levelId);
+  if (!level || roof.type !== 'deux-pans') return null;
+  const levels = new Set(b.levels.filter((l) => l.elevation <= level.elevation + 0.01).map((l) => l.id));
+  const polys = levelOutline(b.walls.filter((w) => levels.has(w.levelId)));
+  if (!polys.length) return null;
+  const pts = polys.flat();
+  const X0 = Math.min(...pts.map((p) => p.x));
+  const X1 = Math.max(...pts.map((p) => p.x));
+  const Y0 = Math.min(...pts.map((p) => p.y));
+  const Y1 = Math.max(...pts.map((p) => p.y));
+  const C = 0.1;
+  const nx = Math.ceil((X1 - X0) / C);
+  const ny = Math.ceil((Y1 - Y0) / C);
+  if (nx * ny > 1e6) return null;
+  const inside = (p: Point) =>
+    polys.some((poly) => {
+      let ins = false;
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const a = poly[i];
+        const c = poly[j];
+        if (a.y > p.y !== c.y > p.y && p.x < ((c.x - a.x) * (p.y - a.y)) / (c.y - a.y) + a.x) ins = !ins;
+      }
+      return ins;
+    });
+  const m = new Uint8Array(nx * ny);
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) m[j * nx + i] = inside({ x: X0 + (i + 0.5) * C, y: Y0 + (j + 0.5) * C }) ? 1 : 0;
+  // Faîtage le long de la grande dimension du corps principal
+  const along = roof.ridge === 'y' ? 'y' : 'x';
+  const nA = along === 'y' ? ny : nx;
+  const nW = along === 'y' ? nx : ny;
+  const at = (a: number, w: number) => (along === 'y' ? m[a * nx + w] : m[w * nx + a]);
+  const cover = Array.from({ length: nW }, (_, w) => {
+    let n = 0;
+    for (let a = 0; a < nA; a++) n += at(a, w);
+    return n / nA;
+  });
+  let w0 = cover.findIndex((c) => c >= 0.5);
+  let w1 = nW - 1 - [...cover].reverse().findIndex((c) => c >= 0.5);
+  if (w0 < 0 || w1 <= w0) return null;
+  const wings: RoofWing[] = [];
+  const toX = (i: number) => X0 + i * C;
+  const toY = (j: number) => Y0 + j * C;
+  // Dépassements de part et d'autre du corps principal
+  for (const [from, to, attach] of [
+    [0, w0, 'hi'],
+    [w1 + 1, nW, 'lo'],
+  ] as const) {
+    if (to - from < 8) continue;
+    // Tranches le long du faîtage occupées par le dépassement
+    let a = 0;
+    while (a < nA) {
+      const occ = (k: number) => {
+        let n = 0;
+        for (let w = from; w < to; w++) n += at(k, w);
+        return n / (to - from) >= 0.5;
+      };
+      if (!occ(a)) {
+        a++;
+        continue;
+      }
+      const s = a;
+      while (a < nA && occ(a)) a++;
+      if (a - s < 20) continue;
+      const r = { a0: s, a1: a, w0: from, w1: to };
+      const wing: RoofWing =
+        along === 'y'
+          ? { x0: toX(r.w0), x1: toX(r.w1), y0: toY(r.a0), y1: toY(r.a1), ridge: 'x', attach: attach === 'hi' ? 'x1' : 'x0' }
+          : { x0: toX(r.a0), x1: toX(r.a1), y0: toY(r.w0), y1: toY(r.w1), ridge: 'y', attach: attach === 'hi' ? 'y1' : 'y0' };
+      wings.push(wing);
+    }
+  }
+  const bounds = along === 'y' ? { x0: toX(w0), x1: toX(w1 + 1), y0: Y0, y1: Y1 } : { x0: X0, x1: X1, y0: toY(w0), y1: toY(w1 + 1) };
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const round = <T extends { x0: number; x1: number; y0: number; y1: number }>(o: T): T => ({ ...o, x0: r2(o.x0), x1: r2(o.x1), y0: r2(o.y0), y1: r2(o.y1) });
+  // Les avancées dans le sens du faîtage (pignon prolongé) ne sont pas des ailes : bornes sur la bande pleine
+  w0 = Math.max(0, w0);
+  w1 = Math.min(nW - 1, w1);
+  return { bounds: round(bounds), wings: wings.map(round) };
 }

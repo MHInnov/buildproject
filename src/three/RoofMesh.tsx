@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import type { Catalog } from '../model/catalog';
 import { productById } from '../model/catalog';
 import { roofFrame, type RoofFrame } from '../model/roof';
-import type { Building, Roof, RoofWindow } from '../model/types';
+import type { Building, Roof, RoofWing, RoofWindow } from '../model/types';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { outdoorById, TIMBERS } from '../data/exterior';
 import { CEILING, FACADE, fromProduct, PLASTER, ROOF_UNDERSIDE, surfaceMaterial } from './materials';
@@ -335,6 +335,55 @@ function ridgeCap(f: RoofFrame, roof: Roof): THREE.BufferGeometry | null {
   return beam(c, dir, up.normalize(), u1 - u0, 0.22, 0.22);
 }
 
+/**
+ * Toit d'une avancée : deux pans de même pente et même égout que le toit principal, faîtage
+ * perpendiculaire. Il entre dans le toit principal jusqu'à ce que son faîtage rencontre le pan (la noue
+ * se dessine à l'intersection). Pignon au bout libre, et murs remontés du haut des murs de l'avancée
+ * jusqu'à l'égout.
+ */
+function wingParts(f: RoofFrame, roof: Roof, wing: RoofWing, wallTop: number) {
+  const swap = wing.ridge === 'y';
+  const t = Math.tan((roof.pitch * Math.PI) / 180);
+  const w0 = swap ? wing.x0 : wing.y0;
+  const w1 = swap ? wing.x1 : wing.y1;
+  const hw = (w1 - w0) / 2;
+  const inLow = wing.attach === (swap ? 'y0' : 'x0');
+  const ua = swap ? wing.y0 : wing.x0;
+  const ub = swap ? wing.y1 : wing.x1;
+  // Bout côté maison prolongé dans le toit principal, de la demi-largeur de l'avancée
+  const uIn = inLow ? ua - hw - 0.05 : ub + hw + 0.05;
+  const uOut = inLow ? ub : ua;
+  const frame: RoofFrame = {
+    ...f,
+    minX: swap ? w0 : Math.min(uIn, uOut),
+    maxX: swap ? w1 : Math.max(uIn, uOut),
+    minY: swap ? Math.min(uIn, uOut) : w0,
+    maxY: swap ? Math.max(uIn, uOut) : w1,
+    rise: hw * t,
+  };
+  const r: Roof = { ...roof, type: 'deux-pans', ridge: wing.ridge };
+  const parts = roofParts(frame, r);
+  // roofParts : pignons à u0 puis u1 ; on garde celui du bout libre
+  const outer = parts.gables[inLow ? 1 : 0];
+  const P = (u: number, h: number, w: number) => (swap ? v3(w, h, u) : v3(u, h, w));
+  const base = f.base;
+  const cw = (w0 + w1) / 2;
+  const hR = base + hw * t;
+  const uFace = inLow ? ua : ub;
+  const walls: V[][] = [];
+  if (wallTop < base - 0.02) {
+    walls.push([P(uOut, wallTop, w0), P(uOut, wallTop, w1), P(uOut, base, w1), P(uOut, hR, cw), P(uOut, base, w0)]);
+    walls.push([P(uFace, wallTop, w0), P(uOut, wallTop, w0), P(uOut, base, w0), P(uFace, base, w0)]);
+    walls.push([P(uFace, wallTop, w1), P(uOut, wallTop, w1), P(uOut, base, w1), P(uFace, base, w1)]);
+  } else walls.push(outer);
+  // Faîtière de l'avancée, du pignon jusqu'au toit principal
+  const u0c = Math.min(uIn, uOut) - (inLow ? 0 : roof.overhang);
+  const u1c = Math.max(uIn, uOut) + (inLow ? roof.overhang : 0);
+  const c = P((u0c + u1c) / 2, hR, cw);
+  const cap = beam(c, swap ? v3(0, 0, 1) : v3(1, 0, 0), (swap ? v3(1, 1, 0) : v3(0, 1, 1)).normalize(), u1c - u0c, 0.22, 0.22);
+  return { slopes: parts.slopes, walls, cap, center: P((uFace + uOut) / 2, base, cw) };
+}
+
 type Click = (e: { stopPropagation: () => void; delta: number }) => void;
 
 export function RoofMesh({
@@ -365,8 +414,21 @@ export function RoofMesh({
       soffit: soffit(f, roof),
       // Combles aménagés : les pignons sont les murs de l'étage, montés jusqu'au rampant
       gables: roof.eave != null ? [] : parts.gables.map((p) => gable(p, center, 0.3)),
+      wings: (roof.type === 'deux-pans' ? (roof.wings ?? []) : []).map((wg) => {
+        // Haut des murs sous l'avancée (souvent un rez-de-chaussée seul)
+        const tops = building.walls
+          .filter((w) => {
+            const l = building.levels.find((x) => x.id === w.levelId);
+            const mx = (w.a.x + w.b.x) / 2;
+            const my = (w.a.y + w.b.y) / 2;
+            return l && mx >= wg.x0 - 0.05 && mx <= wg.x1 + 0.05 && my >= wg.y0 - 0.05 && my <= wg.y1 + 0.05;
+          })
+          .map((w) => building.levels.find((x) => x.id === w.levelId)!.elevation + w.height);
+        const wp = wingParts(f, roof, wg, tops.length ? Math.max(...tops) : f.base);
+        return { slopes: wp.slopes.map((p) => slab(p, SLAB)), walls: wp.walls.map((p) => gable(p, wp.center, 0.3)), cap: wp.cap };
+      }),
     };
-  }, [f, roof]);
+  }, [f, roof, building.walls, building.levels]);
   if (!geo || !roof) return null;
   const covering = fromProduct(productById(catalog, roof.coveringId), { color: '#9c4f36', pattern: { kind: 'rooftiles', w: 0.22, h: 0.3 }, roughness: 0.85 });
   const top = surfaceMaterial(covering, selected);
@@ -384,6 +446,17 @@ export function RoofMesh({
       {geo.timber && <mesh geometry={geo.timber} material={surfaceMaterial((outdoorById(TIMBERS, roof.timber) ?? TIMBERS[0]).surface, selected)} castShadow receiveShadow userData={ud} onClick={onClick} />}
       {geo.gables.map((g, i) => (
         <mesh key={`g${i}`} geometry={g} material={surfaceMaterial(gableSurface(building, catalog), selected)} castShadow receiveShadow userData={ud} onClick={onClick} />
+      ))}
+      {geo.wings.map((wg, i) => (
+        <group key={`w${i}`}>
+          {wg.slopes.map((g, j) => (
+            <mesh key={j} geometry={g} material={[top, surfaceMaterial(ROOF_UNDERSIDE, selected), edge]} castShadow receiveShadow userData={ud} onClick={onClick} />
+          ))}
+          {wg.walls.map((g, j) => (
+            <mesh key={`p${j}`} geometry={g} material={surfaceMaterial(gableSurface(building, catalog), selected)} castShadow receiveShadow userData={ud} onClick={onClick} />
+          ))}
+          <mesh geometry={wg.cap} material={surfaceMaterial({ color: `#${new THREE.Color(covering.color).multiplyScalar(0.72).getHexString()}`, roughness: 0.8 }, selected)} castShadow userData={ud} onClick={onClick} />
+        </group>
       ))}
       {f && (roof.windows ?? []).map((w) => <RoofWindowMesh key={w.id} win={w} roof={roof} f={f} selected={selected || selectedWindow === w.id} onClick={onWindowClick ? onWindowClick(w.id) : onClick} />)}
     </group>

@@ -11,7 +11,7 @@ import { fitSite, readSitePlan } from './model/site';
 import { alignFacades, alignWalls, footprint, guessKind, isFloorKind, looksLikeSection, planSimilarity, readSection, storeysFromSection, type PlanKind, type SectionReading } from './model/plans';
 import { isFlat } from './model/dwelling';
 import { applySectionFacts, type SectionOpening } from './model/sectionFacts';
-import { eaveForKnee } from './model/roof';
+import { detectWings, eaveForKnee } from './model/roof';
 import type { Building, Level } from './model/types';
 import { autoVectorize, type AutoVectorizeResult, type Bitmap, type TracedWall } from './model/vectorize';
 import { applyStoreys, applyTrace, groundLevel } from './traceApply';
@@ -540,6 +540,15 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
       const parcel = reading.parcel.map(fit.toPlan).map((p) => ({ x: Math.round(p.x * 100) / 100, y: Math.round(p.y * 100) / 100 }));
       b.site = { parcel };
       lines.push(`${it.name} : jardin tracé, parcelle de ${Math.round(polygonArea(parcel)).toLocaleString('fr-FR')} m² autour de la maison.`);
+    }
+  }
+  // Avancées (aile en L, bow-window) : leur propre toit, raccordé en noue au toit principal
+  if (b.roof?.type === 'deux-pans') {
+    const d = detectWings(b, b.roof);
+    if (d?.wings.length) {
+      b.roof.wings = d.wings;
+      b.roof.bounds ??= d.bounds;
+      lines.push(`Toiture : ${d.wings.length === 1 ? 'une avancée couverte' : `${d.wings.length} avancées couvertes`} de son propre toit (noue).`);
     }
   }
   const toCheck = b.levels.filter((l) => done.has(l.id) && l.alignment === 'a-verifier');
