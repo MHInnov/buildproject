@@ -1010,6 +1010,53 @@ function traceMask(source: Uint8Array, ink: Uint8Array, w: number, h: number, sc
     }
   }
 
+  // Portes dans un mur plein (noirci) : le mur s'évide sur la largeur du passage, ses deux faces
+  // continuent en traits fins et un arc de porte bat à côté. Un remplissage des traits parallèles
+  // (style « rempli ») ou des faces qui passent recollent le mur : on retrouve le passage ici.
+  for (const S of segs) {
+    if (S.th < 6) continue;
+    const len = S.e - S.s;
+    // Plus longue tache noire en travers du mur (bande élargie : le tracé peut être décalé d'un trait)
+    const pad = Math.max(S.th, 0.15 / scale);
+    const t0 = Math.floor(lo(S) - pad);
+    const t1 = Math.ceil(hi(S) + pad);
+    const thick = Math.max(5, Math.round(0.08 / scale));
+    const hollow: boolean[] = [];
+    let solidN = 0;
+    for (let k = Math.ceil(S.s); k < S.e; k++) {
+      let run = 0;
+      let best = 0;
+      for (let t = t0; t <= t1; t++) {
+        const idx = S.horizontal ? t * w + k : k * w + t;
+        run = idx >= 0 && idx < dark.length && dark[idx] ? run + 1 : 0;
+        if (run > best) best = run;
+      }
+      hollow.push(best <= 3);
+      if (best >= thick) solidN++;
+    }
+    // Il faut un vrai mur plein : noir au cœur sur l'essentiel de sa longueur
+    if (solidN < 0.35 * len) continue;
+    let i = 0;
+    while (i < hollow.length) {
+      if (!hollow[i]) {
+        i++;
+        continue;
+      }
+      const a = i;
+      while (i < hollow.length && (hollow[i] || (i + 2 < hollow.length && hollow[i + 1] && hollow[i + 2]) || (i + 1 < hollow.length && hollow[i + 1]))) i++;
+      const g0 = Math.ceil(S.s) + a;
+      const g1 = Math.ceil(S.s) + i;
+      const wpx = g1 - g0;
+      if (wpx < 0.55 / scale || wpx > 1.3 / scale) continue;
+      if (g0 - S.s < 0.05 / scale || S.e - g1 < 0.05 / scale) continue;
+      const at = (g0 + g1) / 2;
+      if (openingsPx.some((o) => o.seg === S && Math.abs(o.at - at) < (o.width + wpx) / 2)) continue;
+      const sw = doorSwing(dark, w, h, S.horizontal, S.c, S.th, g0, g1, 1.25 / scale);
+      if (!sw) continue;
+      openingsPx.push({ seg: S, at, width: wpx, kind: 'porte', source: 'trou', swing: sw });
+    }
+  }
+
   // Recalage des extrémités sur l'axe des murs perpendiculaires (angles et T).
   for (const S of segs) {
     for (const end of ['s', 'e'] as const) {
