@@ -129,61 +129,126 @@ export function findRoofWindows(f: Frame, box: Record<Side, number>, side: Side,
     const c = pts.length ? n / pts.length : 0;
     return { c, switches };
   };
+  /** Pointillé net : au moins 3 tirets courts, des vides réguliers, et rien de part et d'autre (pas du texte). */
+  const strict = (pts: { x: number; y: number }[], nx: number, ny: number) => {
+    const runs: [boolean, number][] = [];
+    let side = 0;
+    let n = 0;
+    for (const p of pts) {
+      const [x, y] = f.px(p.x, p.y);
+      const hit = inkAt(f, x, y, 0) || inkAt(f, x + nx * 0.6, y + ny * 0.6, 0);
+      if (hit) n++;
+      if (inkAt(f, x + nx * 3, y + ny * 3, 0) || inkAt(f, x - nx * 3, y - ny * 3, 0)) side++;
+      if (runs.length && runs[runs.length - 1][0] === hit) runs[runs.length - 1][1]++;
+      else runs.push([hit, 1]);
+    }
+    const c = pts.length ? n / pts.length : 0;
+    if (c < 0.3 || c > 0.85 || side > 0.35 * pts.length) return 0;
+    const inner = runs.slice(1, -1);
+    const dashes = inner.filter((r) => r[0]);
+    const gaps = inner.filter((r) => !r[0]);
+    if (dashes.length < 3) return 0;
+    if (dashes.some((r) => r[1] * res > 0.25) || gaps.some((r) => r[1] * res > 0.14)) return 0;
+    return c;
+  };
   const line = (d0: number, d1: number, t: number) => {
     const pts: { x: number; y: number }[] = [];
     for (let d = d0; d <= d1; d += res) pts.push(at(box, side, knee + d, t));
     return pts;
   };
-  // Côtés perpendiculaires : pointillé sur 15 cm à 50 cm du mur bas, et jusqu'où il va
-  const rows: { t: number; depth: number }[] = [];
+  // Côtés perpendiculaires : pointillé sur 40 cm à partir du mur bas. Un côté peut aussi se confondre avec
+  // un retour plein du mur bas (le mur bas se décroche au droit de la fenêtre) : on garde les traits pleins,
+  // mais il faut au moins un côté en pointillé.
+  const rows: { t: number; dashed: boolean }[] = [];
+  // Normale (en pixels) à un trait perpendiculaire à l'égout, et à un trait parallèle
+  const nA: [number, number] = side === 'x0' || side === 'x1' ? [0, 1] : [1, 0];
+  const nP: [number, number] = [nA[1], nA[0]];
   for (let t = span[0] + 0.3; t <= span[1] - 0.3; t += res) {
     const near = dashed(line(0.12, 0.5, t));
-    if (near.c < 0.25 || near.c > 0.85 || near.switches < 3) continue;
-    // profondeur : dernier pointillé avant 1,6 m (pas plus de 12 cm sans encre)
-    let depth = 0.5;
-    let gap = 0;
-    for (let d = 0.5; d <= 1.6; d += res) {
-      const p = at(box, side, knee + d, t);
-      const [x, y] = f.px(p.x, p.y);
-      if (inkAt(f, x, y, 0)) {
-        depth = d;
-        gap = 0;
-      } else if ((gap += res) > 0.12) break;
-    }
-    rows.push({ t, depth });
+    const isDashed = strict(line(0.12, 0.5, t), nA[0], nA[1]) > 0;
+    if (isDashed || near.c > 0.9) rows.push({ t, dashed: isDashed });
   }
   // Regroupe les rangées voisines (un trait fait 1 à 3 pixels)
-  const groups: { t: number; depth: number }[] = [];
+  const groups: { t: number; n: number; dashed: boolean }[] = [];
   for (const r of rows) {
     const g = groups[groups.length - 1];
-    if (g && r.t - g.t <= 3 * res) {
-      g.t = (g.t + r.t) / 2;
-      g.depth = Math.max(g.depth, r.depth);
-    } else groups.push({ ...r });
+    if (g && r.t - g.t <= 3 * res && g.dashed === r.dashed) {
+      g.t = (g.t * g.n + r.t) / (g.n + 1);
+      g.n++;
+    } else groups.push({ t: r.t, n: 1, dashed: r.dashed });
   }
-  const out: { t0: number; t1: number; depth: number }[] = [];
+  const out: { t0: number; t1: number; depth: number; q: number }[] = [];
   for (let i = 0; i < groups.length; i++) {
     for (let j = i + 1; j < groups.length; j++) {
       const a = groups[i];
       const b = groups[j];
       const wdt = b.t - a.t;
       if (wdt < 0.5) continue;
-      if (wdt > 1.5) break;
-      const depth = (a.depth + b.depth) / 2;
-      // une fenêtre de toit fait 0,8 à 1,4 m dans la pente, soit 0,7 m au moins en plan
-      if (Math.abs(a.depth - b.depth) > 0.2 || depth < 0.7) continue;
-      // côté parallèle en pointillé à cette profondeur
-      const pts: { x: number; y: number }[] = [];
-      for (let t = a.t + 0.08; t <= b.t - 0.08; t += res) pts.push(at(box, side, knee + depth, t));
-      const far = dashed(pts);
-      if (far.c < 0.25 || far.switches < 3) continue;
-      if (out.some((o) => !(b.t <= o.t0 || a.t >= o.t1))) continue;
-      out.push({ t0: a.t, t1: b.t, depth });
-      i = j;
-      break;
+      if (wdt > 1.4) break;
+      // Côté parallèle en pointillé, 0,55 à 1,4 m du mur bas (une fenêtre de toit fait 0,8 à 1,4 m dans la
+      // pente) : la profondeur où ce pointillé est le plus net
+      let best: { d: number; c: number } | null = null;
+      for (let d = 0.45; d <= 1.3; d += res) {
+        const pts: { x: number; y: number }[] = [];
+        for (let t = a.t + 0.08; t <= b.t - 0.08; t += res) pts.push(at(box, side, knee + d, t));
+        const c = strict(pts, nP[0], nP[1]);
+        // (un tracé à peine pointillé est plutôt un contour d'appareil sanitaire ou un axe)
+        if (c < 0.42) continue;
+        // … qui s'arrête aux angles du cadre (pas une longue ligne de hauteur sous rampant)
+        const out1: { x: number; y: number }[] = [];
+        const out0: { x: number; y: number }[] = [];
+        for (let t = b.t + 0.08; t <= b.t + 0.35; t += res) out1.push(at(box, side, knee + d, t));
+        for (let t = a.t - 0.35; t <= a.t - 0.08; t += res) out0.push(at(box, side, knee + d, t));
+        if (dashed(out1).c > 0.25 || dashed(out0).c > 0.25) continue;
+        if (!best || c > best.c) best = { d, c };
+      }
+      if (!best) continue;
+      const depth = best.d;
+      // Le côté en pointillé va jusqu'au côté parallèle… et s'arrête là (angle du cadre)
+      // Côtés : en pointillé jusqu'au côté parallèle, ou retour plein du mur bas (décroché au droit de la fenêtre)
+      // (le trait peut passer un pixel à côté de la rangée moyenne du groupe)
+      const wide = (d0: number, d1: number, t: number) => {
+        let n = 0;
+        let switches = 0;
+        let prev = false;
+        let all = 0;
+        for (let d = d0; d <= d1; d += res) {
+          const hit = [-res, 0, res].some((o) => {
+            const p = at(box, side, knee + d, t + o);
+            const [x, y] = f.px(p.x, p.y);
+            return inkAt(f, x, y, 0);
+          });
+          all++;
+          if (hit) n++;
+          if (hit !== prev) switches++;
+          prev = hit;
+        }
+        return { c: all ? n / all : 0, switches };
+      };
+      const sideOk = (g: { t: number }) => {
+        const r = wide(0.12, depth - 0.05, g.t);
+        if (r.c >= 0.9) return { c: 0.5, dashed: false };
+        // pointillé, éventuellement précédé du retour plein du mur bas
+        if (r.c < 0.45 || r.switches < 3) return { c: 0, dashed: false };
+        // … qui s'arrête à l'angle du cadre
+        if (wide(depth + 0.08, depth + 0.3, g.t).c > 0.3) return { c: 0, dashed: false };
+        return { c: r.c, dashed: true };
+      };
+      const sa = sideOk(a);
+      const sb = sideOk(b);
+      const ca = sa.c;
+      const cb = sb.c;
+      if (!ca || !cb || (!sa.dashed && !sb.dashed)) continue;
+      const alongC = ca + cb;
+      out.push({ t0: a.t, t1: b.t, depth, q: best.c + alongC });
     }
   }
-  return out;
+  // Cadres qui se chevauchent : le plus net
+  out.sort((m, n) => n.q - m.q);
+  const kept: { t0: number; t1: number; depth: number }[] = [];
+  for (const o of out) if (!kept.some((k) => !(o.t1 <= k.t0 || o.t0 >= k.t1))) kept.push({ t0: o.t0, t1: o.t1, depth: o.depth });
+  kept.sort((m, n) => m.t0 - n.t0);
+  return kept;
 }
 
 /**
