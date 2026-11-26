@@ -482,7 +482,12 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
     for (const f of sec.facades ?? []) {
       const storey = f.storey + shift;
       if (f.storey < dropped || f.storey - dropped >= storeys.length) continue;
-      sectionOpenings.push({ storey, kind: f.sill * scale < 0.2 ? 'porte' : 'fenetre', sill: Math.round(f.sill * scale * 100) / 100, head: Math.round(f.head * scale * 100) / 100 });
+      const sill = Math.round(f.sill * scale * 100) / 100;
+      const head = Math.round(f.head * scale * 100) / 100;
+      // Baie plausible seulement : une lecture de travers (fondations, bas de mansarde) ne doit rien changer
+      const door = sill < 0.2;
+      if (head < 1.8 || head > 2.6 || (!door && (sill < 0.4 || sill > 1.6 || head - sill < 0.4))) continue;
+      sectionOpenings.push({ storey, kind: door ? 'porte' : 'fenetre', sill, head });
     }
   }
   if (sectionOpenings.length) for (const n of applySectionFacts(b, { openings: sectionOpenings })) lines.push(`Coupes, façades : ${n}`);

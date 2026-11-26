@@ -1805,6 +1805,7 @@ export function refine<T extends VectorizeResult>(r: T): T {
     const p = { x: w.a.x + ux * along, y: w.a.y + uy * along };
     return !rooms.length || !inside({ x: p.x - uy * d, y: p.y + ux * d }) || !inside({ x: p.x + uy * d, y: p.y - ux * d });
   };
+  const facadeT = Math.max(0, ...walls.map((w) => w.thickness));
   const openings: TracedOpening[] = [];
   r.openings.forEach((o, i) => {
     const w = walls[o.wall];
@@ -1816,7 +1817,9 @@ export function refine<T extends VectorizeResult>(r: T): T {
     let kind = o.kind;
     let swing = o.swing;
     let leaves = o.leaves;
-    if (kind === 'fenetre' && !exterior(w, offset)) {
+    // Une fenêtre ne s'ouvre que dans une façade : pas dans un mur intérieur, ni dans une cloison mince
+    // (un plan de combles laisse souvent le couloir ouvert vers les rampants, sans mur pour fermer les pièces)
+    if (kind === 'fenetre' && (!exterior(w, offset) || w.thickness < Math.min(0.17, facadeT * 0.6))) {
       if (o.source === 'vitrage') return;
       kind = 'porte';
     }
