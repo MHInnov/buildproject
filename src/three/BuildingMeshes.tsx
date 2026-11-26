@@ -15,6 +15,7 @@ import { RoofMesh } from './RoofMesh';
 import { atticProfiles, clipUnderRoof, prismGeometry, type WallProfile } from './attic';
 import { floorOffsetAt } from './physics';
 import { levelOutline } from '../model/footprint';
+import { facadeOpeningsAt } from '../model/sectionFacts';
 
 export interface Pick {
   sel: NonNullable<Selection>;
@@ -165,9 +166,17 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
   }, [building.levels, building.walls]);
   const lowest = Math.min(...building.levels.map((l) => l.elevation));
   const roofLevel = building.roof?.levelId;
+  const groundId = [...building.levels].sort((m, n) => Math.abs(m.elevation) - Math.abs(n.elevation))[0]?.id;
+  const plinth = building.plinth ?? 0;
+  const plinthOutline = useMemo(
+    () => (plinth > 0.02 && groundId ? levelOutline(building.walls.filter((w) => w.levelId === groundId)) : []),
+    [plinth, groundId, building.walls],
+  );
 
   return (
     <group onContextMenu={contextMenu}>
+      {groundId && visibleLevels.has(groundId) && plinthOutline.map((o, i) => <Plinth key={`pl-${i}`} outline={o} height={plinth} />)}
+      {groundId && visibleLevels.has(groundId) && plinthOutline.length > 0 && <EntranceSteps building={building} levelId={groundId} height={plinth} />}
       {building.levels
         .filter((l) => visibleLevels.has(l.id))
         .map((level) => {
@@ -310,6 +319,52 @@ function Floor({ room, elevation, offset, thickness, holes, surface, selected, o
 }
 
 const SLAB_EDGE = plain('#d8d2c8', 0.9);
+const PLINTH = plain('#8a8279', 0.95);
+
+/** Marches devant les portes de façade du rez-de-chaussée, du terrain jusqu'au seuil. */
+function EntranceSteps({ building, levelId, height }: { building: Building; levelId: string; height: number }) {
+  const doors = useMemo(() => facadeOpeningsAt(building, levelId).filter((f) => f.opening.kind === 'porte'), [building, levelId]);
+  const n = Math.max(1, Math.round(height / 0.18));
+  const rise = height / n;
+  return (
+    <>
+      {doors.map(({ opening: o, wall, center, u, out }) => {
+        const angle = Math.atan2(u.y, u.x);
+        const off = wall.thickness / 2;
+        if (o.productId === 'ex-porte-garage') {
+          // Porte de garage : une rampe en pente douce jusqu'au terrain
+          const run = Math.max(1, height * 5);
+          const slope = Math.atan2(height, run);
+          const sign = out.x * -u.y + out.y * u.x > 0 ? 1 : -1;
+          const d = off + run / 2;
+          return (
+            <mesh key={`ramp-${o.id}`} position={[center.x + out.x * d, -height / 2 - 0.04, center.y + out.y * d]} rotation={[sign * slope, -angle, 0, 'YXZ']} material={PLINTH} receiveShadow>
+              <boxGeometry args={[o.width + 0.2, 0.1, Math.hypot(run, height)]} />
+            </mesh>
+          );
+        }
+        // Marches de 30 cm, la plus haute contre le seuil
+        return Array.from({ length: n }, (_, i) => {
+          const top = -i * rise;
+          const depth = 0.3 * (i + 1);
+          const d = off + depth / 2;
+          const h = height + top + 0.02;
+          return (
+            <mesh key={`st-${o.id}-${i}`} position={[center.x + out.x * d, top - h / 2, center.y + out.y * d]} rotation-y={-angle} material={PLINTH} receiveShadow castShadow>
+              <boxGeometry args={[o.width + 0.3, h, depth]} />
+            </mesh>
+          );
+        });
+      })}
+    </>
+  );
+}
+
+/** Soubassement : la maison posée au-dessus du terrain, sur toute l'emprise du rez-de-chaussée. */
+function Plinth({ outline, height }: { outline: Point[]; height: number }) {
+  const geom = useMemo(() => new THREE.ExtrudeGeometry(shapeOf(outline, []), { depth: height + 0.02, bevelEnabled: false }), [outline, height]);
+  return <mesh geometry={geom} rotation-x={-Math.PI / 2} position-y={-height - 0.02} material={PLINTH} receiveShadow castShadow />;
+}
 
 /** Dalle de plancher entre deux niveaux, trémies d'escalier découpées. */
 function Slab({ outline, top, thickness, holes }: { outline: Point[]; top: number; thickness: number; holes: Point[][] }) {

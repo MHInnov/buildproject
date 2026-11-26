@@ -238,6 +238,8 @@ export interface Building {
   roof: Roof | null;
   /** Terrain autour de la maison, lu sur le plan d'implantation (absent sinon). */
   site?: Site;
+  /** Sol du rez-de-chaussée au-dessus du terrain (soubassement), en mètres ; absent : de plain-pied. */
+  plinth?: number;
   /** Revêtements extérieurs (pelouse, abords de la maison) ; absent : pelouse par défaut, sans abords. */
   outdoor?: Outdoor;
 }

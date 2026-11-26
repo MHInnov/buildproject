@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
-import { aiReadPlan } from '../ai';
+import { aiReadPlan, aiReadSection } from '../ai';
+import { applySectionFacts } from '../model/sectionFacts';
 import { putAsset, shrinkImage } from '../assets';
 import { isFloorKind, PLAN_KIND_LABELS, parseDrawingScale, pdfScale, type PlanKind, type SectionReading } from '../model/plans';
 import type { Bitmap, TracedWall } from '../model/vectorize';
@@ -148,6 +149,20 @@ export function PlansImport({ onClose }: { onClose: () => void }) {
             const ul = l.underlay;
             editExisting((b) => applyAiReading(b, l.id, ul, res));
             r.lines.push(`${l.name} : ${res.rooms.length} pièces nommées par l'IA.`);
+          } catch (e) {
+            r.warnings.push(`IA, ${it.label} : ${(e as Error).message}`);
+          }
+        }
+      }
+      // IA : cotes des coupes (allèges, linteaux, soubassement, toit), plus sûres que le dessin
+      if (useAi && apiConfigured()) {
+        for (const it of used.filter((x) => x.kind === 'coupe')) {
+          setBusy(`L'IA lit les cotes de ${it.label}…`);
+          try {
+            const facts = await aiReadSection(it.dataUrl);
+            let notes: string[] = [];
+            editExisting((b) => void (notes = applySectionFacts(b, facts)));
+            r.lines.push(...notes.map((n) => `${it.label} (IA) : ${n}`));
           } catch (e) {
             r.warnings.push(`IA, ${it.label} : ${(e as Error).message}`);
           }

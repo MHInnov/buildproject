@@ -148,7 +148,9 @@ export function groundAt(world: WalkWorld, p: Point, currentY: number): number {
     if (!hole) candidates.push(r.elevation);
   }
   const lowest = Math.min(0, ...world.b.levels.map((l) => l.elevation));
-  if (!candidates.length) candidates.push(currentY < 0.5 ? Math.max(lowest, 0) : currentY);
+  // Dehors : le terrain, sous le rez-de-chaussée de la hauteur du soubassement
+  const terrain = -(world.b.plinth ?? 0);
+  if (!candidates.length) candidates.push(currentY < 0.5 ? Math.max(lowest, terrain) : currentY);
   const ok = candidates.filter((h) => h <= currentY + 0.4);
   return ok.length ? Math.max(...ok) : Math.min(...candidates);
 }

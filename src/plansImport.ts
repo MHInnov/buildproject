@@ -10,6 +10,7 @@ import { levelOutline } from './model/footprint';
 import { fitSite, readSitePlan } from './model/site';
 import { alignFacades, alignWalls, footprint, guessKind, isFloorKind, looksLikeSection, planSimilarity, readSection, storeysFromSection, type PlanKind, type SectionReading } from './model/plans';
 import { isFlat } from './model/dwelling';
+import { applySectionFacts, type SectionOpening } from './model/sectionFacts';
 import { eaveForKnee } from './model/roof';
 import type { Building, Level } from './model/types';
 import { autoVectorize, type AutoVectorizeResult, type Bitmap, type TracedWall } from './model/vectorize';
@@ -408,6 +409,8 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
   let roofEave: number | null = null;
   /** Bas de la mansarde lu sur une coupe : hauteur, depuis le plancher des combles, où le toit rencontre les murs. */
   let sectionKnee: number | null = null;
+  /** Baies des façades lues sur les coupes. */
+  const sectionOpenings: SectionOpening[] = [];
   // Les coupes les plus simples d'abord (moins de planchers) : une coupe en demi-niveaux se lit moins bien
   const readings = sections.map((c) => ({ c, sec: readSection(c.bmp) })).sort((m, n) => (m.sec?.slabs.length ?? 99) - (n.sec?.slabs.length ?? 99));
   for (const { c, sec } of readings) {
@@ -439,7 +442,9 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
       storeys = storeys.slice(0, -1);
     }
     // Un premier niveau très bas : vide sanitaire ou demi-niveau, pas une pièce
+    let dropped = 0;
     while (storeys.length >= 2 && storeys[0].height < 1.8) {
+      dropped++;
       notes.push(`vide sanitaire ou demi-niveau de ${storeys[0].height.toFixed(2).replace('.', ',')} m ignoré`);
       storeys = storeys.slice(1);
     }
@@ -472,7 +477,15 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
       for (const id of changed) fixedLevels.add(id);
     }
     if (sec.roof) roofs.push({ ...sec.roof, eave: sec.roof.eavePx != null ? sec.roof.eavePx * scale : null });
+    // Baies des façades coupées : allège et linteau, rapportés au niveau qu'elles traversent
+    const shift = levels.indexOf(first) - levels.indexOf(g) - dropped;
+    for (const f of sec.facades ?? []) {
+      const storey = f.storey + shift;
+      if (f.storey < dropped || f.storey - dropped >= storeys.length) continue;
+      sectionOpenings.push({ storey, kind: f.sill * scale < 0.2 ? 'porte' : 'fenetre', sill: Math.round(f.sill * scale * 100) / 100, head: Math.round(f.head * scale * 100) / 100 });
+    }
   }
+  if (sectionOpenings.length) for (const n of applySectionFacts(b, { openings: sectionOpenings })) lines.push(`Coupes, façades : ${n}`);
 
   // Toit : la lecture la plus nette (deux pans d'abord), l'égout le plus bas des coupes qui en donnent un
   if (roofs.length && !isFlat(b)) {

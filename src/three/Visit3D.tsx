@@ -743,7 +743,9 @@ export function Visit3D() {
         <AdaptiveQuality key={quality} max={quality === 'haute' ? 1.5 : 1.15} canDropAo={quality === 'haute' && !aoOff} onDropAo={() => setAoOff(true)} />
         <hemisphereLight args={[night ? '#28314a' : '#dfeaff', night ? '#0d0f14' : '#8a7d6a', night ? 0.12 : 0.55]} />
         <Sun building={building} night={night} />
-        <Ground building={building} />
+        <group position-y={-(building.plinth ?? 0)}>
+          <Ground building={building} />
+        </group>
         {mode === 'photo' && photoView === 'projet' && (
           <group ref={existingRef} visible={false}>
             <BuildingMeshes building={existingBuilding} catalog={catalog} selection={null} visibleLevels={visibleLevels} showRoof showCeiling night={night} />

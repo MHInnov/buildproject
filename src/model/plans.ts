@@ -196,6 +196,11 @@ export interface SectionReading {
   roof: { type: RoofType; pitch: number; eavePx?: number } | null;
   /** Rotation appliquée à la page pour la lire (quart de tour), 0 si la coupe était droite. */
   turned?: 0 | 90 | 270;
+  /**
+   * Baies des deux façades coupées, par niveau (0 = le plus bas, comme `storeysFromSection`) : hauteur
+   * du bas (allège, 0 pour une porte) et du haut (linteau) au-dessus du plancher, en pixels.
+   */
+  facades?: { side: 'L' | 'R'; storey: number; sill: number; head: number }[];
 }
 
 /** Image tournée d'un quart de tour (90 : sens horaire, 270 : sens inverse). */
@@ -303,8 +308,74 @@ function readUpright(bmp: Bitmap): SectionReading | null {
   }
   const widthPx = xR - xL + 1;
   const topSlab = slabs[0];
+  const facades = facadeCuts(solid, w, slabs, xL, xR);
   const roof = rafters(ink, w, h, xL, xR, topSlab.top) ?? profileRoof(ink, w, xL, xR, topSlab.top);
-  return { widthPx, slabs: slabs.map(({ top, bottom, length }) => ({ top, bottom, length })), roof };
+  return { widthPx, slabs: slabs.map(({ top, bottom, length }) => ({ top, bottom, length })), roof, facades };
+}
+
+/**
+ * Baies des façades coupées : dans chaque mur de façade (bande verticale pleine au bord de la coupe),
+ * les trous entre deux planchers. Un trou qui part du plancher est une porte, sinon une fenêtre (allège
+ * en dessous, linteau au-dessus). Les traits fins du châssis ne comptent pas (l'image est déjà ouverte).
+ */
+function facadeCuts(solid: Uint8Array, w: number, slabs: { top: number; bottom: number }[], xL: number, xR: number): NonNullable<SectionReading['facades']> {
+  const out: NonNullable<SectionReading['facades']> = [];
+  const bottomUp = [...slabs].reverse();
+  const W = xR - xL;
+  for (const side of ['L', 'R'] as const) {
+    // Épaisseur du mur : colonnes pleines sur la plus grande part de la hauteur des niveaux, au bord
+    const yTop = slabs[0].bottom;
+    const yBot = slabs[slabs.length - 1].top;
+    const H = yBot - yTop;
+    if (H <= 0) continue;
+    const colFill = (x: number) => {
+      let n = 0;
+      for (let y = yTop; y < yBot; y++) if (solid[y * w + x]) n++;
+      return n / H;
+    };
+    const dir = side === 'L' ? 1 : -1;
+    const edge = side === 'L' ? xL : xR;
+    const cols: number[] = [];
+    for (let i = -Math.round(W * 0.02); i < W * 0.08; i++) {
+      const x = edge + dir * i;
+      if (x < 0 || x >= w) continue;
+      if (colFill(x) >= 0.35) cols.push(x);
+      else if (cols.length && i > 0) break;
+    }
+    if (cols.length < 3) continue;
+    const x0 = Math.min(...cols);
+    const x1 = Math.max(...cols);
+    const present = (y: number) => {
+      let n = 0;
+      for (let x = x0; x <= x1; x++) if (solid[y * w + x]) n++;
+      return n / (x1 - x0 + 1) >= 0.5;
+    };
+    for (let k = 0; k + 1 < bottomUp.length; k++) {
+      const floor = bottomUp[k].top;
+      const ceil = bottomUp[k + 1].bottom;
+      const storey = floor - ceil;
+      if (storey < 10) continue;
+      let run = -1;
+      const gaps: [number, number][] = [];
+      for (let y = ceil; y <= floor; y++) {
+        const p = y < floor && present(y);
+        if (!p && y < floor) {
+          if (run < 0) run = y;
+        } else if (run >= 0) {
+          gaps.push([run, y - 1]);
+          run = -1;
+        }
+      }
+      for (const [g0, g1] of gaps) {
+        const len = g1 - g0 + 1;
+        // Une baie fait au moins 18 % de la hauteur d'étage, et ne monte pas jusqu'au plafond (linteau)
+        if (len < storey * 0.18 || g0 - ceil < storey * 0.04) continue;
+        const sill = floor - 1 - g1 < storey * 0.04 ? 0 : floor - 1 - g1;
+        out.push({ side, storey: k, sill, head: floor - g0 });
+      }
+    }
+  }
+  return out;
 }
 
 /**

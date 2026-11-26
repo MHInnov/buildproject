@@ -136,6 +136,12 @@ export function HouseOverview() {
         <button className="btn" onClick={() => addLevel('above')}>{flat ? '+ Niveau au-dessus (duplex)' : '+ Étage ou combles'}</button>
         {!flat && <button className="btn" onClick={() => addLevel('below')}>+ Cave</button>}
       </div>
+      {!flat && (
+        <label className="field">
+          <span>Sol du rez-de-chaussée au-dessus du terrain (soubassement, m)</span>
+          <NumberInput min={0} max={1.5} value={b.plinth ?? 0} onChange={(v) => editExisting((x) => void (v > 0 ? (x.plinth = v) : delete x.plinth))} />
+        </label>
+      )}
       {flat ? null : <h4>Toiture</h4>}
       {flat ? null : b.roof ? (
         <button className="btn" onClick={() => select({ kind: 'roof', id: 'roof' })}>

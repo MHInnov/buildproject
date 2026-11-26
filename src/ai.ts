@@ -1,4 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk';
+import type { SectionFacts } from './model/sectionFacts';
 import { useSettings } from './settings';
 
 /**
@@ -76,6 +77,43 @@ export async function aiReadPlan(dataUrl: string, width: number, height: number)
       },
     },
   );
+}
+
+/**
+ * Lit une coupe : les cotes écrites (hauteurs d'allège et de linteau des baies coupées dans les façades,
+ * niveau du rez-de-chaussée au-dessus du terrain, pente et débord du toit). Les niveaux sont comptés depuis
+ * le rez-de-chaussée (0).
+ */
+export async function aiReadSection(dataUrl: string): Promise<SectionFacts> {
+  const num = { type: ['number', 'null'] };
+  const res = await askJson<{ openings: SectionFacts['openings']; ground_to_floor_m: number | null; roof_pitch_deg: number | null; roof_overhang_m: number | null }>(
+    dataUrl,
+    "Voici une coupe verticale d'une maison (elle peut être tournée d'un quart de tour). " +
+      "Pour chaque porte ou fenêtre coupée dans un mur de façade (mur extérieur, à gauche ou à droite de la coupe), donne le niveau qu'elle traverse " +
+      "(0 = rez-de-chaussée, 1 = étage, -1 = cave), le bas de la baie (allège, 0 pour une porte) et le haut de la baie (sous le linteau), en mètres au-dessus du sol fini du niveau. " +
+      "Donne aussi la hauteur du sol fini du rez-de-chaussée au-dessus du terrain naturel, la pente du toit en degrés et le débord du toit en mètres. " +
+      "Lis d'abord les cotes écrites sur le dessin (en cm, ou les niveaux comme 49.00 et 48.20) ; à défaut, mesure à l'échelle. Mets null pour ce que la coupe ne montre pas, n'invente rien.",
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['openings', 'ground_to_floor_m', 'roof_pitch_deg', 'roof_overhang_m'],
+      properties: {
+        openings: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['storey', 'kind', 'sill', 'head'],
+            properties: { storey: { type: 'integer' }, kind: { type: 'string', enum: ['porte', 'fenetre'] }, sill: { type: 'number' }, head: { type: 'number' } },
+          },
+        },
+        ground_to_floor_m: num,
+        roof_pitch_deg: num,
+        roof_overhang_m: num,
+      },
+    },
+  );
+  return { openings: res.openings, plinth: res.ground_to_floor_m, roof: { pitch: res.roof_pitch_deg, overhang: res.roof_overhang_m } };
 }
 
 export interface AiPhotoElement {
