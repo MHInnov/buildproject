@@ -267,6 +267,8 @@ export interface Outdoor {
   apron?: string | null;
   /** Largeur des abords, en mètres. */
   apronWidth?: number;
+  /** Allée, chemin et terrasse devant les portes du rez-de-chaussée ; absent : affichés. */
+  paths?: boolean;
 }
 
 /** Parcelle : contour en mètres, dans le repère du plan (la maison à sa place). */

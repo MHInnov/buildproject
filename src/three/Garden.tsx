@@ -4,7 +4,8 @@
  */
 import { useMemo } from 'react';
 import * as THREE from 'three';
-import { APRONS, DEFAULT_APRON_WIDTH, DEFAULT_LAWN, LAWNS, outdoorById } from '../data/exterior';
+import { APRONS, DEFAULT_APRON_WIDTH, DEFAULT_LAWN, LAWNS, outdoorById, type OutdoorMaterial } from '../data/exterior';
+import { facadeOpeningsAt } from '../model/sectionFacts';
 import type { Building, Site } from '../model/types';
 import { groundLevel } from '../traceApply';
 import { plain, surfaceMaterial, type Surface } from './materials';
@@ -86,4 +87,46 @@ export function Apron({ building }: { building: Building }) {
   }, [building, mat, width]);
   if (!geo || !mat) return null;
   return <mesh geometry={geo} position-y={-0.006} material={surfaceMaterial(mat.surface, false, { side: THREE.DoubleSide })} receiveShadow />;
+}
+
+/**
+ * Accès devant les portes du rez-de-chaussée : allée de gravier devant une porte de garage, chemin dallé
+ * devant une porte d'entrée, terrasse devant une porte-fenêtre (porte vitrée ou à deux vantaux).
+ */
+export function Paths({ building }: { building: Building }) {
+  const parts = useMemo(() => {
+    if (!building.levels.length || building.outdoor?.paths === false) return [];
+    const level = groundLevel(building);
+    const res: { id: string; mat: OutdoorMaterial; quad: number[][] }[] = [];
+    for (const { opening: o, wall, center, u, out } of facadeOpeningsAt(building, level.id)) {
+      if (o.kind !== 'porte') continue;
+      const garage = o.productId === 'ex-porte-garage';
+      const terrace = !garage && ((o.options?.leaves ?? 1) > 1 || o.width >= 1.3);
+      const width = garage ? o.width + 0.6 : terrace ? o.width + 1 : 1.2;
+      const depth = garage ? 5.5 : terrace ? 2.2 : 1.6;
+      const id = garage ? 'gravier' : terrace ? 'dalles-pierre' : 'dalles-beton';
+      const mat = outdoorById(APRONS, id)!;
+      const s = wall.thickness / 2;
+      const p = (a: number, d: number) => [center.x + u.x * a + out.x * (s + d), center.y + u.y * a + out.y * (s + d)];
+      res.push({ id: o.id, mat, quad: [p(-width / 2, 0), p(width / 2, 0), p(width / 2, depth), p(-width / 2, depth)] });
+    }
+    return res.map((r) => {
+      const pos: number[] = [];
+      for (const i of [0, 1, 2, 0, 2, 3]) pos.push(r.quad[i][0], 0, r.quad[i][1]);
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      const uv: number[] = [];
+      for (let i = 0; i < pos.length; i += 3) uv.push(pos[i], -pos[i + 2]);
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      g.computeVertexNormals();
+      return { id: r.id, geo: g, mat: r.mat };
+    });
+  }, [building]);
+  return (
+    <>
+      {parts.map((p) => (
+        <mesh key={p.id} geometry={p.geo} position-y={-0.003} material={surfaceMaterial(p.mat.surface, false, { side: THREE.DoubleSide })} receiveShadow />
+      ))}
+    </>
+  );
 }

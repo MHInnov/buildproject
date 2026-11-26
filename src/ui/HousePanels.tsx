@@ -216,6 +216,10 @@ function OutdoorFields() {
           </label>
         )}
       </div>
+      <label className="check small">
+        <input type="checkbox" checked={o?.paths !== false} onChange={(e) => edit((x) => void (e.target.checked ? delete x.paths : (x.paths = false)))} /> Allée du garage, chemin
+        d'entrée et terrasse devant les portes-fenêtres
+      </label>
     </>
   );
 }

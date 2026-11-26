@@ -14,7 +14,7 @@ import { useUi } from '../uiState';
 import { BuildingMeshes, switchSpots, type MenuTarget } from './BuildingMeshes';
 import { VisitMenu } from './VisitMenu';
 import { GRASS, surfaceMaterial, type Surface } from './materials';
-import { Apron, Garden, lawnSurface } from './Garden';
+import { Apron, Garden, lawnSurface, Paths } from './Garden';
 import { Avatar, preloadAvatar } from './Avatar';
 import { blocked, groundAt, walkWorld, type WalkWorld } from './physics';
 import { HdrEnvironment, PostEffects } from './Realism';
@@ -96,6 +96,7 @@ function HouseGround({ building }: { building: Building }) {
       <mesh geometry={geo} rotation-x={-Math.PI / 2} position-y={-0.02} material={surfaceMaterial(parcel ? FIELD : lawnSurface(building))} receiveShadow />
       {building.site && <Garden site={building.site} lawn={lawnSurface(building)} />}
       <Apron building={building} />
+      <Paths building={building} />
     </>
   );
 }
