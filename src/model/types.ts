@@ -93,6 +93,30 @@ export interface Roof {
    * principal : emprise extérieure de l'avancée, sens du faîtage et côté par lequel elle touche la maison.
    */
   wings?: RoofWing[];
+  /** Chapelles (lucarnes à deux pans) posées sur l'égout. */
+  dormers?: Dormer[];
+}
+
+/**
+ * Chapelle : lucarne à deux pans dont la façade, percée d'une fenêtre, prolonge celle de la maison au-dessus
+ * de l'égout ; ses jouées descendent jusqu'au toit principal. Hauteurs comptées depuis l'égout (haut des murs).
+ */
+export interface Dormer {
+  id: string;
+  /** Façade (côté égout) qui la porte. */
+  side: 'x0' | 'x1' | 'y0' | 'y1';
+  /** Centre le long de l'égout (m). */
+  at: number;
+  /** Largeur hors tout de la façade de la chapelle (m). */
+  width: number;
+  /** Fenêtre : largeur, allège et linteau au-dessus de l'égout. */
+  windowWidth: number;
+  sill: number;
+  head: number;
+  /** Égout de la chapelle au-dessus de l'égout principal. */
+  height: number;
+  /** Pente des deux pans (degrés). */
+  pitch: number;
 }
 
 export interface RoofWing {

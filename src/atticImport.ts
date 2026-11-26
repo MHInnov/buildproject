@@ -6,7 +6,7 @@
 import { atticRidge, fitAttic, outerBox, sideCoverage, type KneeLine, type Side } from './model/attic';
 import { insertWall, newId } from './model/geometry';
 import { levelBelow } from './model/levels';
-import type { Building, RoofWindow } from './model/types';
+import type { Building, Dormer, RoofWindow } from './model/types';
 import { background, luminance, otsu, type Bitmap } from './model/vectorize';
 import { groundLevel } from './traceApply';
 
@@ -252,6 +252,45 @@ export function findRoofWindows(f: Frame, box: Record<Side, number>, side: Side,
 }
 
 /**
+ * Chapelles : leur façade, dans le prolongement de celle de la maison, est dessinée par deux trumeaux de
+ * brique (taches pleines contre la façade) encadrant la fenêtre. On cherche ces taches dans une bande
+ * de 5 à 30 cm derrière la face extérieure, par paires espacées d'une largeur de fenêtre.
+ */
+export function findDormers(f: Frame, box: Record<Side, number>, side: Side, span: [number, number]): { at: number; opening: number }[] {
+  const res = f.m;
+  const solidRow = (t: number) => {
+    let n = 0;
+    let all = 0;
+    for (let d = 0.05; d <= 0.3; d += res) {
+      const p = at(box, side, d, t);
+      const [x, y] = f.px(p.x, p.y);
+      all++;
+      if (inkAt(f, x, y, 0)) n++;
+    }
+    return all ? n / all : 0;
+  };
+  const piers: { t0: number; t1: number }[] = [];
+  let start: number | null = null;
+  for (let t = span[0] + 0.5; t <= span[1] - 0.5 + 1e-9; t += res) {
+    // (un scan éclaircit le noir : 60 % de la bande suffisent)
+    const solid = solidRow(t) >= 0.6;
+    if (solid && start == null) start = t;
+    if (!solid && start != null) {
+      if (t - start >= 0.12 && t - start <= 0.5) piers.push({ t0: start, t1: t });
+      start = null;
+    }
+  }
+  const out: { at: number; opening: number }[] = [];
+  for (let i = 0; i + 1 < piers.length; i++) {
+    const gap = piers[i + 1].t0 - piers[i].t1;
+    if (gap < 0.55 || gap > 1.2) continue;
+    out.push({ at: (piers[i].t1 + piers[i + 1].t0) / 2, opening: gap });
+    i++;
+  }
+  return out;
+}
+
+/**
  * Reconnaît des combles aménagés sur le plus haut niveau retracé et les met en forme : toit posé sur ce
  * niveau, murs bas, pièces fermées, fenêtres de toit. Renvoie la ligne du compte rendu, ou null.
  */
@@ -371,6 +410,16 @@ export function fitImportedAttic(b: Building, placed: Map<string, Placement>, se
       windows.push({ id: newId('rw'), x: Math.round(c.x * 100) / 100, y: Math.round(c.y * 100) / 100, width, length, productId: 'ex-fenetre-toit' });
     }
   }
+  // Chapelles côté égout : hauteurs d'usage, comptées depuis le sol de l'étage (allège 1,25 m, linteau
+  // 2,60 m, égout de la chapelle 2,75 m) et ramenées à l'égout du toit
+  const dormers: Dormer[] = [];
+  for (const side of eaves) {
+    for (const dm of findDormers(f, box, side, span)) {
+      const ww = [0.6, 0.7, 0.8, 0.9, 1.0].reduce((a, x) => (Math.abs(x - dm.opening) < Math.abs(a - dm.opening) ? x : a), 0.8);
+      const r2 = (x: number) => Math.round(x * 100) / 100;
+      dormers.push({ id: newId('dm'), side, at: r2(dm.at), width: r2(ww + 0.3), windowWidth: ww, sill: r2(Math.max(0.3, 1.25 - eave)), head: r2(2.6 - eave), height: r2(2.75 - eave), pitch: 50 });
+    }
+  }
   top.height = Math.max(top.height, 2.3);
   // Pignons prolongés d'un égout à l'autre : sans quoi un bout du triangle sous le toit resterait ouvert
   const k0 = ridge === 'x' ? 'y0' : 'x0';
@@ -395,11 +444,12 @@ export function fitImportedAttic(b: Building, placed: Map<string, Placement>, se
   } else b.roof = { type: 'deux-pans', levelId: top.id, pitch, overhang: 0.3, ridge, coveringId: null, insulationId: null };
   b.roof.eave = Math.round(eave * 100) / 100;
   b.roof.windows = windows;
+  b.roof.dormers = dormers;
   const g0 = e0 ? e0[2] - e0[3] / 2 : span[0] - 0.15;
   const g1 = e1 ? e1[2] + e1[3] / 2 : span[1] + 0.15;
   const r2 = (x: number) => Math.round(x * 100) / 100;
   b.roof.bounds = ridge === 'x' ? { x0: r2(g0), x1: r2(g1), y0: r2(box.y0), y1: r2(box.y1) } : { x0: r2(box.x0), x1: r2(box.x1), y0: r2(g0), y1: r2(g1) };
   if (/^\d+(er|e) étage$/.test(top.name)) top.name = 'Étage sous combles';
   const dm = (x: number) => x.toFixed(2).replace('.', ',');
-  return `${top.name} : combles aménagés (pignons sur deux côtés), murs bas de ${dm(kneeHeight)} m à ${ds.map(dm).join(' et ')} m des façades, pièces fermées, ${windows.length} fenêtre${windows.length > 1 ? 's' : ''} de toit${noSection ? ', pente de 45° supposée (pas de coupe)' : ''}.`;
+  return `${top.name} : combles aménagés (pignons sur deux côtés), murs bas de ${dm(kneeHeight)} m à ${ds.map(dm).join(' et ')} m des façades, pièces fermées, ${windows.length} fenêtre${windows.length > 1 ? 's' : ''} de toit${dormers.length ? `, ${dormers.length} chapelle${dormers.length > 1 ? 's' : ''}` : ''}${noSection ? ', pente de 45° supposée (pas de coupe)' : ''}.`;
 }

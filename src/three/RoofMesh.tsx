@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import type { Catalog } from '../model/catalog';
 import { productById } from '../model/catalog';
 import { roofFrame, type RoofFrame } from '../model/roof';
-import type { Building, Roof, RoofWing, RoofWindow } from '../model/types';
+import type { Building, Dormer, Roof, RoofWing, RoofWindow } from '../model/types';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { outdoorById, TIMBERS } from '../data/exterior';
 import { CEILING, FACADE, fromProduct, PLASTER, ROOF_UNDERSIDE, surfaceMaterial } from './materials';
@@ -389,6 +389,54 @@ function wingParts(f: RoofFrame, roof: Roof, wing: RoofWing, wallTop: number) {
   return { slopes: parts.slopes, walls, cap, center: P((uFace + uOut) / 2, base, cw) };
 }
 
+/**
+ * Chapelle : façade en prolongement de celle de la maison (percée de sa fenêtre), jouées jusqu'au toit
+ * principal, deux pans qui viennent mourir sur le rampant. Repère : d vers l'intérieur depuis la façade,
+ * v le long de l'égout.
+ */
+export function dormerParts(f: RoofFrame, roof: Roof, dm: Dormer) {
+  const t = Math.tan((roof.pitch * Math.PI) / 180);
+  const tp = Math.tan((dm.pitch * Math.PI) / 180);
+  const alongY = dm.side === 'x0' || dm.side === 'x1';
+  const face = dm.side === 'x0' ? f.minX : dm.side === 'x1' ? f.maxX : dm.side === 'y0' ? f.minY : f.maxY;
+  const inward = dm.side === 'x0' || dm.side === 'y0' ? 1 : -1;
+  const P = (d: number, h: number, v: number) => {
+    const w = face + inward * d;
+    return alongY ? v3(w, h, v) : v3(v, h, w);
+  };
+  const base = f.base;
+  const hw = dm.width / 2;
+  const c = dm.at;
+  const zE = base + dm.height;
+  const zR = zE + hw * tp;
+  const ww = dm.windowWidth / 2;
+  const zS = base + dm.sill;
+  const zH = base + dm.head;
+  const center = P(1, base, c);
+  // Façade : allège, trumeaux, puis le pignon au-dessus du linteau
+  const front: V[][] = [
+    [P(0, base - 0.02, c - hw), P(0, base - 0.02, c + hw), P(0, zS, c + hw), P(0, zS, c - hw)],
+    [P(0, zS, c - hw), P(0, zS, c - ww), P(0, zH, c - ww), P(0, zH, c - hw)],
+    [P(0, zS, c + ww), P(0, zS, c + hw), P(0, zH, c + hw), P(0, zH, c + ww)],
+    [P(0, zH, c - hw), P(0, zH, c + hw), P(0, zE, c + hw), P(0, zR, c), P(0, zE, c - hw)],
+  ];
+  // Jouées : du toit principal jusque sous les pans de la chapelle
+  const dIn = (z: number) => (z - base) / t;
+  const cheeks: V[][] = [c - hw, c + hw].map((v) => [P(0, base, v), P(0, zE, v), P(dIn(zE) + 0.1, zE, v)]);
+  // Pans : débord de 15 cm en façade et sur les côtés, jusqu'au rampant principal
+  const ov = 0.15;
+  const zEo = zE - ov * tp;
+  const slopes: V[][] = [-1, 1].map((sg) => {
+    const ve = c + sg * (hw + ov);
+    const poly = [P(-ov, zR, c), P(dIn(zR) + 0.12, zR, c), P(Math.max(-ov + 0.05, dIn(zEo) + 0.12), zEo, ve), P(-ov, zEo, ve)];
+    return poly;
+  });
+  // Fenêtre : au nu intérieur du parement
+  const win = { center: P(0.08, (zS + zH) / 2, c), w: dm.windowWidth, h: dm.head - dm.sill, alongY };
+  const cap = beam(P((dIn(zR) - ov) / 2, zR + 0.02, c), alongY ? v3(1, 0, 0) : v3(0, 0, 1), v3(0, 1, 0), dIn(zR) + ov + 0.1, 0.18, 0.12);
+  return { front, cheeks, slopes, win, center, cap };
+}
+
 type Click = (e: { stopPropagation: () => void; delta: number }) => void;
 
 export function RoofMesh({
@@ -432,6 +480,16 @@ export function RoofMesh({
         const wp = wingParts(f, roof, wg, tops.length ? Math.max(...tops) : f.base);
         return { slopes: wp.slopes.map((p) => slab(p, SLAB)), walls: wp.walls.map((p) => gable(p, wp.center, 0.3)), cap: wp.cap };
       }),
+      dormers: (roof.type === 'deux-pans' ? (roof.dormers ?? []) : []).map((dm) => {
+        const d = dormerParts(f, roof, dm);
+        return {
+          id: dm.id,
+          walls: [...d.front.map((p) => gable(p, d.center, 0.15)), ...d.cheeks.map((p) => gable(p, d.center, 0.15))],
+          slopes: d.slopes.map((p) => slab(p, 0.18)),
+          win: d.win,
+          cap: d.cap,
+        };
+      }),
     };
   }, [f, roof, building.walls, building.levels]);
   if (!geo || !roof) return null;
@@ -463,6 +521,27 @@ export function RoofMesh({
           <mesh geometry={wg.cap} material={surfaceMaterial({ color: `#${new THREE.Color(covering.color).multiplyScalar(0.72).getHexString()}`, roughness: 0.8 }, selected)} castShadow userData={ud} onClick={onClick} />
         </group>
       ))}
+      {geo.dormers.map((dm) => (
+        <group key={dm.id}>
+          {dm.walls.map((g, j) => (
+            <mesh key={j} geometry={g} material={surfaceMaterial(gableSurface(building, catalog), selected)} castShadow receiveShadow userData={ud} onClick={onClick} />
+          ))}
+          {dm.slopes.map((g, j) => (
+            <mesh key={`s${j}`} geometry={g} material={[top, surfaceMaterial(ROOF_UNDERSIDE, selected), edge]} castShadow receiveShadow userData={ud} onClick={onClick} />
+          ))}
+          <mesh geometry={dm.cap} material={surfaceMaterial({ color: `#${new THREE.Color(covering.color).multiplyScalar(0.72).getHexString()}`, roughness: 0.8 }, selected)} castShadow userData={ud} onClick={onClick} />
+          <group position={dm.win.center} rotation-y={dm.win.alongY ? Math.PI / 2 : 0}>
+            <mesh material={WIN_FRAME} castShadow userData={ud} onClick={onClick}>
+              <boxGeometry args={[dm.win.w, dm.win.h, 0.08]} />
+            </mesh>
+            {[-1, 1].map((sg) => (
+              <mesh key={sg} position={[0, 0, sg * 0.045]} material={PANE} userData={ud} onClick={onClick}>
+                <boxGeometry args={[dm.win.w - 0.14, dm.win.h - 0.14, 0.012]} />
+              </mesh>
+            ))}
+          </group>
+        </group>
+      ))}
       {f && (roof.windows ?? []).map((w) => <RoofWindowMesh key={w.id} win={w} roof={roof} f={f} selected={selected || selectedWindow === w.id} onClick={onWindowClick ? onWindowClick(w.id) : onClick} />)}
     </group>
   );
@@ -470,6 +549,7 @@ export function RoofMesh({
 
 const FRAME = new THREE.MeshStandardMaterial({ color: '#3d3f42', roughness: 0.5, metalness: 0.3 });
 const PANE = new THREE.MeshStandardMaterial({ color: '#5f7d93', roughness: 0.08, metalness: 0.4, envMapIntensity: 1.6 });
+const WIN_FRAME = new THREE.MeshStandardMaterial({ color: '#f2f2ee', roughness: 0.45 });
 const SKY = new THREE.MeshStandardMaterial({ color: '#cfe3f3', roughness: 0.3, emissive: '#9fc3e0', emissiveIntensity: 0.55 });
 
 /** Fenêtre de toit : cadre et vitre posés dans le pan, et le jour vu de l'intérieur. */
