@@ -1,7 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import type { AiOpeningVerdict, AiStripOpening } from './model/aiReview';
 import type { SectionFacts } from './model/sectionFacts';
-import { aiIsLocal, DEFAULT_LOCAL_URL, useSettings } from './settings';
+import { aiIsLocal, DEFAULT_LOCAL_URL, fetchBundledAi, useSettings } from './settings';
 
 /**
  * Fonctions d'IA optionnelles (activées dans le panneau d'administration).
@@ -55,7 +55,7 @@ export function localBase(): string {
 async function localError(res: Response | null, e?: unknown): Promise<Error> {
   if (!res) {
     if ((e as Error)?.name === 'TimeoutError') return new Error("l'IA locale n'a pas répondu à temps (modèle trop lourd pour cette machine ?)");
-    return new Error(`IA locale injoignable à ${localBase()} : lancez-la avec « docker compose --profile ia up » (voir le README)`);
+    return new Error(`IA locale injoignable à ${localBase()} : utilisez l'image avec IA (« -ia », voir le README)`);
   }
   let detail = '';
   try {
@@ -64,7 +64,13 @@ async function localError(res: Response | null, e?: unknown): Promise<Error> {
     /* réponse non JSON (relais nginx sans Ollama derrière) */
   }
   if (res.status === 502 || res.status === 504) return new Error('le service Ollama ne répond pas derrière le relais /ia-locale (est-il démarré ?)');
-  if (res.status === 404 && /not found/i.test(detail)) return new Error(`le modèle ${useSettings.getState().localModel} n'est pas installé : « Télécharger le modèle » dans l'administration`);
+  if (res.status === 404 && /not found/i.test(detail)) {
+    // Image tout-en-un : le modèle se télécharge peut-être encore (premier lancement)
+    const b = await fetchBundledAi();
+    if (b?.status === 'telechargement' || b?.status === 'demarrage') return new Error(`le modèle ${b.model} est en cours de téléchargement (premier lancement, quelques minutes) : l'import se fait sans IA en attendant`);
+    if (b?.status === 'erreur') return new Error(`le téléchargement du modèle ${b.model} a échoué (connexion internet ?) : relancez le conteneur (docker restart construprojet) pour réessayer`);
+    return new Error(`le modèle ${useSettings.getState().localModel} n'est pas installé : « Télécharger le modèle » dans l'administration`);
+  }
   return new Error(`IA locale : ${detail || `erreur ${res.status}`}`);
 }
 

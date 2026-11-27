@@ -4,7 +4,7 @@ import { CSV_TEMPLATE, parseCatalogFile, useImported } from '../catalogImport';
 import { commitImported } from './catalogs';
 import { ConnectorsPanel } from './ConnectorsPanel';
 import { newId } from '../model/geometry';
-import { AI_MODELS, DEFAULT_LOCAL_URL, LOCAL_MODELS, useSettings, validApiUrl, validLocalUrl } from '../settings';
+import { AI_MODELS, DEFAULT_LOCAL_URL, LOCAL_MODELS, useBundledAi, useSettings, validApiUrl, validLocalUrl } from '../settings';
 
 /** Catalogues fournisseurs : import d'un fichier CSV ou JSON. */
 function CatalogImport() {
@@ -83,6 +83,7 @@ export function AdminDialog({ onClose }: { onClose: () => void }) {
   const [status, setStatus] = useState<string | null>(null);
   const [show, setShow] = useState(false);
   const [pull, setPull] = useState<string | null>(null);
+  const bundled = useBundledAi((x) => x.info);
   const local = s.aiProvider === 'locale';
   const localInfo = LOCAL_MODELS.find((m) => m.id === s.localModel.trim());
   const test = async () => {
@@ -127,9 +128,15 @@ export function AdminDialog({ onClose }: { onClose: () => void }) {
                 <>
                   <p className="muted small">
                     Un modèle de vision open source tourne sur votre machine (ou un serveur de votre réseau) avec Ollama : les plans ne quittent pas votre réseau et rien n'est facturé.
-                    L'application reste une page web ; seule l'IA tourne à côté. Lancement : <code>docker compose --profile ia up</code> (voir le README). Il faut de préférence une
+                    L'application reste une page web ; seule l'IA tourne à côté. Le plus simple : l'image Docker avec IA (étiquette « -ia », voir le README). Il faut de préférence une
                     carte graphique NVIDIA avec 8 Go de mémoire pour le modèle conseillé ; sans carte graphique, cela marche aussi mais de 5 à 20 fois plus lentement.
                   </p>
+                  {bundled && (
+                    <p className="small">
+                      IA livrée avec l'application : {bundled.model || 'aucun modèle'}, {bundled.gpu ? 'avec carte graphique' : 'sans carte graphique (lent : relancez avec --gpus all)'}
+                      {bundled.status === 'telechargement' ? ', modèle en cours de téléchargement' : bundled.status === 'pret' ? ', prête' : bundled.status === 'erreur' ? ', téléchargement du modèle impossible' : ''}.
+                    </p>
+                  )}
                   <label className="field">
                     <span>Adresse du serveur Ollama</span>
                     <input value={s.localUrl} placeholder={DEFAULT_LOCAL_URL} onChange={(e) => s.update({ localUrl: e.target.value })} onKeyDown={(e) => e.stopPropagation()} />
