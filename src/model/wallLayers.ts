@@ -24,6 +24,22 @@ export function cavityWall(thickness: number): WallLayer[] {
   return fitLayers(base, thickness);
 }
 
+/**
+ * Façade d'une maison récente : parement brique 9 cm, isolant 6 cm, bloc béton 18 cm, enduit plâtre 1,5 cm
+ * (de l'extérieur vers l'intérieur), à l'épaisseur du mur.
+ */
+export function facadeLayers(thickness: number): WallLayer[] {
+  return fitLayers(
+    [
+      { kind: 'brique', thickness: 0.09 },
+      { kind: 'isolant', thickness: 0.06 },
+      { kind: 'bloc', thickness: 0.18 },
+      { kind: 'platre', thickness: 0.015 },
+    ],
+    thickness,
+  );
+}
+
 /** Couches remises à l'épaisseur totale du mur (au centimètre). */
 export function fitLayers(layers: WallLayer[], thickness: number): WallLayer[] {
   const sum = layers.reduce((s, l) => s + l.thickness, 0) || 1;

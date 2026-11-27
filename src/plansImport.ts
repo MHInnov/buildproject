@@ -4,7 +4,8 @@
  * les coupes donnent les hauteurs des niveaux et la forme du toit.
  */
 import { fitImportedAttic, type Placement } from './atticImport';
-import { newId } from './model/geometry';
+import { newId, pointInPolygon, wallNormal } from './model/geometry';
+import { facadeLayers } from './model/wallLayers';
 import { findFlues } from './model/chimney';
 import { removeLevel } from './model/levels';
 import { levelOutline } from './model/footprint';
@@ -549,6 +550,29 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
       b.site = { parcel };
       lines.push(`${it.name} : jardin tracé, parcelle de ${Math.round(polygonArea(parcel)).toLocaleString('fr-FR')} m² autour de la maison.`);
     }
+  }
+  // Façades : mur creux en 4 couches (brique dehors), quand le plan ne montre pas déjà sa composition
+  {
+    let n = 0;
+    for (const level of b.levels.filter((l) => done.has(l.id))) {
+      const walls = b.walls.filter((w) => w.levelId === level.id);
+      const outline = levelOutline(walls);
+      const inside = (p: { x: number; y: number }) => outline.some((poly) => pointInPolygon(p, poly));
+      for (const w of walls) {
+        if (w.kind !== 'porteur' || w.thickness < 0.25 || w.layers?.length) continue;
+        const nl = wallNormal(w, 'gauche');
+        const mid = { x: (w.a.x + w.b.x) / 2, y: (w.a.y + w.b.y) / 2 };
+        const off = w.thickness / 2 + 0.15;
+        const leftIn = inside({ x: mid.x + nl.x * off, y: mid.y + nl.y * off });
+        const rightIn = inside({ x: mid.x - nl.x * off, y: mid.y - nl.y * off });
+        if (leftIn === rightIn) continue;
+        const layers = facadeLayers(w.thickness);
+        // Couches de la face gauche à la face droite : brique du côté de l'extérieur
+        w.layers = leftIn ? [...layers].reverse() : layers;
+        n++;
+      }
+    }
+    if (n) lines.push(`Façades : ${n} tronçons de mur en 4 couches (brique 9 cm, isolant 6 cm, bloc béton 18 cm, plâtre), modifiables dans l'inspecteur.`);
   }
   // Cheminées : conduits barrés d'une diagonale au cœur d'une maçonnerie pleine, sur les plans retracés
   {
