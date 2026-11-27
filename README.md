@@ -61,7 +61,7 @@ Les projets dessinés restent dans le navigateur (stockage local), pas dans le c
 
 ## Retraçage d'un plan existant
 
-Importez le plan (image, scan ou PDF) dans l'existant : l'application reconnaît seule la façon dont les murs sont dessinés (noirs pleins, encre, gris ou en couleur, hachurés, ou en double trait), leur épaisseur, les portes (par l'arc de débattement) et les fenêtres (traits de vitrage, même un seul trait au cœur du mur), et en déduit l'échelle (largeur des portes intérieures, à défaut épaisseur des façades). « Retracer les murs » dessine le tout ; étalonner sur une cote connue reste possible pour plus de précision. L'IA, si elle est activée, nomme en plus les pièces et ajoute les ouvertures oubliées.
+Importez le plan (image, scan ou PDF) dans l'existant : l'application reconnaît seule la façon dont les murs sont dessinés (noirs pleins, encre, gris ou en couleur, hachurés, ou en double trait), leur épaisseur, les portes (par l'arc de débattement) et les fenêtres (traits de vitrage, même un seul trait au cœur du mur), et en déduit l'échelle (largeur des portes intérieures, à défaut épaisseur des façades). « Retracer les murs » dessine le tout ; étalonner sur une cote connue reste possible pour plus de précision. L'IA, si elle est activée (locale ou Claude, voir « Avec ou sans IA »), relit en plus chaque porte et fenêtre, retrouve les baies oubliées et nomme les pièces.
 
 Ce que fait le retraçage, dans l'ordre :
 
@@ -92,10 +92,58 @@ Ce que fait le retraçage, dans l'ordre :
 ## Avec ou sans IA
 
 Tout fonctionne sans IA : retraçage du plan par analyse d'image, report des éléments d'une photo par géométrie et couleur.
-Dans **Menu > Administration**, on peut activer l'option **Avec IA** (Claude, d'Anthropic) : elle lit les cotes et les pièces d'un plan, et reconnaît les éléments d'une photo. Le module IA n'est téléchargé que s'il est utilisé.
+Dans **Menu > Administration**, on peut activer l'option **Avec IA** et choisir laquelle :
 
-- **API** : renseignez soit votre propre clé (les images partent alors directement chez Anthropic, usage facturé sur le compte de la clé), soit l'**adresse de l'API** d'un serveur de l'entreprise compatible avec l'API d'Anthropic, qui garde la clé (la clé devient alors facultative). Ces réglages restent dans le navigateur.
-- **À l'import des plans**, la fenêtre « Importer tous les plans » propose **Sans IA** / **Avec IA**. Sans IA, tout est retracé sur l'appareil ; avec IA, l'IA nomme en plus les pièces et ajoute les portes et fenêtres manquées, en appelant l'API définie dans les paramètres (bouton « Paramètres de l'API… » si elle n'est pas encore renseignée).
+- **IA locale (open source)** : un modèle de vision (Qwen2.5-VL par défaut) tourne avec [Ollama](https://ollama.com) sur la machine ou un serveur du réseau. Les plans ne quittent pas le réseau, rien n'est facturé. L'application reste une page web ; seule l'IA tourne à côté, derrière le relais `/ia-locale` de l'application.
+- **Claude (API Anthropic)** : renseignez soit votre propre clé (les images partent alors directement chez Anthropic, usage facturé sur le compte de la clé), soit l'**adresse de l'API** d'un serveur de l'entreprise compatible avec l'API d'Anthropic, qui garde la clé (la clé devient alors facultative).
+
+Ces réglages restent dans le navigateur. À l'import des plans, la fenêtre « Importer tous les plans » propose **Sans IA** / **Avec IA** ; sur un plan seul, « Analyser avec l'IA » fait la même relecture.
+
+Ce que fait l'IA, après le retraçage sans IA (qui reste la base) :
+
+- **chaque porte et fenêtre trouvée est relue sur une vue rapprochée**, recadrée et tournée pour que le mur soit horizontal : vraie porte, fenêtre, porte-fenêtre, porte de garage, ou rien du tout (fausse porte lue sur un pointillé, un trait de meuble) ; côté de la charnière et sens du débattement ; porte à deux vantaux ;
+- **chaque façade est relue par tronçons de 4,5 m** pour retrouver les baies que le retraçage a manquées ;
+- **les pièces sans nom** sont nommées d'après le texte écrit dedans (ou leurs équipements) ;
+- **les coupes** : les cotes écrites donnent les hauteurs sous plafond, l'épaisseur des planchers, les allèges et linteaux des façades, le soubassement, la pente et le débord du toit ;
+- avec Claude, le plan entier est aussi lu d'un coup (noms des pièces, ouvertures).
+
+Rien n'est imposé : une fausse porte n'est retirée que si l'IA en est sûre, une fenêtre n'est jamais mise dans une cloison, et ce qui est douteux ou ajouté par l'IA est marqué d'un **« ? » orange** sur le plan. Un clic ouvre l'inspecteur, qui donne la raison (« L'IA y voit plutôt une fenêtre », « Ajoutée par l'IA… ») avec **Valider** ou **Supprimer** ; les ouvertures corrigées ou confirmées gardent une note. Toute la relecture s'annule d'un coup (Ctrl+Z).
+
+### Lancer l'IA locale
+
+Le plus simple, avec Docker Compose depuis un clone du dépôt (l'application reste sur http://localhost:7080) :
+
+```bash
+# Carte graphique NVIDIA (pilote + NVIDIA Container Toolkit) : fortement conseillé
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile ia up --build
+
+# Sans carte graphique (processeur seul, bien plus lent)
+docker compose --profile ia up --build
+```
+
+Au premier lancement, le service `ollama-modele` télécharge le modèle (≈ 6 Go pour `qwen2.5vl:7b`, gardé ensuite dans le volume `ollama`). Pour un autre modèle : `IA_MODELE=qwen2.5vl:3b docker compose --profile ia up --build`, puis choisir le même dans l'administration (le bouton « Télécharger le modèle » le fait aussi depuis la page). Ollama n'ouvre aucun port : seule l'application le joint.
+
+**Mac (Apple Silicon)** : Docker ne donne pas accès à la puce graphique. Installez plutôt Ollama sur le Mac (il utilise la puce graphique), lancez `ollama pull qwen2.5vl:7b`, puis l'application seule en lui indiquant ce serveur :
+
+```bash
+OLLAMA_URL=http://host.docker.internal:11434 docker compose up --build
+# ou, avec l'image publiée :
+docker run --rm -p 7080:80 -e OLLAMA_URL=http://host.docker.internal:11434 --add-host host.docker.internal:host-gateway ghcr.io/mhinnov/buildproject:mvp-renovation
+```
+
+Même chose sous Windows ou Linux avec Ollama déjà installé. En développement (`npm run dev`), le relais `/ia-locale` pointe sur `http://localhost:11434` (ou `OLLAMA_URL`).
+
+**Matériel nécessaire** (mémoire graphique ou, sans carte graphique, mémoire vive) :
+
+| Modèle | Téléchargement | Mémoire conseillée | Remarque |
+| --- | --- | --- | --- |
+| `qwen2.5vl:3b` | ≈ 3 Go | 6 Go | léger, se trompe plus sur le sens des portes |
+| `qwen2.5vl:7b` (par défaut) | ≈ 6 Go | 8 Go (ex. RTX 3060 / 4060) | bon compromis |
+| `qwen3-vl:8b` | ≈ 6 Go | 8 à 10 Go | plus récent |
+| `llama3.2-vision:11b` | ≈ 8 Go | 12 Go | |
+| `qwen2.5vl:32b` | ≈ 21 Go | 24 Go (ex. RTX 3090 / 4090) | le plus précis |
+
+Durée indicative pour un plan d'étage (une trentaine de vues) : 1 à 3 minutes avec une carte graphique de 8 Go, 10 à 30 minutes au processeur seul (16 Go de mémoire vive au moins pour le modèle 7B). Sur un Mac M1/M2/M3 avec 16 Go, compter 3 à 6 minutes.
 
 ## Raccourcis de la visite
 
@@ -154,7 +202,7 @@ Tout tourne dans le navigateur (« local-first ») : pas de serveur nécessaire 
 - `src/ui/` : plan 2D (SVG), panneau de propriétés, artisans, résumé.
 - `src/three/` : visite 3D (three.js via React Three Fiber), chargée seulement à l'ouverture de l'étape 3 ; `physics.ts` gère sols, escaliers et collisions.
 - `src/textures/` : textures procédurales (parquet, carrelage, brique, tuiles…).
-- `src/ai.ts`, `src/settings.ts` : option IA, désactivée par défaut.
+- `src/ai.ts`, `src/settings.ts` : option IA (locale avec Ollama, ou Claude), désactivée par défaut ; `src/aiReview.ts` et `src/model/aiReview.ts` : relecture des plans par vues rapprochées.
 
 ## Limites connues du MVP
 

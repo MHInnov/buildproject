@@ -204,6 +204,8 @@ export interface Opening {
   swing?: OpeningSwing;
   /** Volets battants (fenêtre de façade), ouverts contre le mur de part et d'autre. */
   shutters?: boolean;
+  /** Relecture par l'IA : confirmée, corrigée, ou à vérifier (ajoutée ou douteuse). Retiré une fois validé. */
+  ai?: { status: 'confirme' | 'corrige' | 'a-verifier'; note: string };
 }
 
 export interface OpeningSwing {

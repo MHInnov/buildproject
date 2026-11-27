@@ -364,6 +364,24 @@ function OpeningPanel({ id, isExisting }: { id: string; isExisting: boolean }) {
   return (
     <div className="panel">
       <h3>{o.kind === 'porte' ? 'Porte' : 'Fenêtre'}</h3>
+      {isExisting && o.ai && (
+        <div className={`ai-note ai-note--${o.ai.status}`}>
+          <p className="small">
+            {o.ai.status === 'a-verifier' ? '? ' : '✓ '}
+            {o.ai.note}
+          </p>
+          <div className="actions">
+            <button className="btn btn--small" title="Garder l'ouverture telle quelle et retirer la note" onClick={() => edit((x) => void delete x.ai)}>
+              {o.ai.status === 'a-verifier' ? 'Valider' : 'OK'}
+            </button>
+            {o.ai.status === 'a-verifier' && (
+              <button className="btn btn--small btn--danger" onClick={() => removeOpening(o.id)}>
+                Supprimer
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       {isExisting && (
         <div className="actions">
           <button

@@ -300,3 +300,8 @@ details.sub summary { cursor: pointer; font-size: 13px; }
 .align-panel h4 { margin: 0 0 4px; }
 .align-pad { display: grid; grid-template-columns: repeat(3, auto); gap: 4px; justify-content: start; align-items: center; margin: 6px 0; }
 .align-pad select { min-width: 70px; }
+/* Note de relecture par l'IA sur une porte ou une fenêtre */
+.ai-note { border-radius: 8px; padding: 6px 10px; margin: 6px 0; background: var(--bg); border-left: 3px solid #4a9a5b; }
+.ai-note p { margin: 0 0 4px; }
+.ai-note .actions { margin: 0; }
+.ai-note--a-verifier { border-left-color: #e8890c; background: var(--warn-bg); }

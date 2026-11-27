@@ -900,6 +900,36 @@ export function PlanEditor({ wallKind }: { wallKind: WallKind }) {
         );
       })}
 
+      {/* Ouvertures que l'IA a ajoutées ou dont elle doute : « ? » orange, un clic ouvre l'inspecteur */}
+      {isExisting &&
+        building.openings.map((o) => {
+          if (o.ai?.status !== 'a-verifier') return null;
+          const w = walls.find((x) => x.id === o.wallId);
+          if (!w) return null;
+          const L = wallLength(w);
+          if (L < 0.01) return null;
+          const p = lerp(w.a, w.b, o.offset / L);
+          const r = Math.max(fs * 0.9, w.thickness * 0.8);
+          return (
+            <g
+              key={`ai-${o.id}`}
+              className="ai-flag"
+              onPointerDown={(e) => {
+                if (tool !== 'select' || e.button !== 0) return;
+                e.stopPropagation();
+                select({ kind: 'opening', id: o.id });
+              }}
+              style={{ cursor: 'pointer' }}
+            >
+              <title>{o.ai.note}</title>
+              <circle cx={p.x} cy={p.y} r={r} fill="#e8890c" fillOpacity={0.85} stroke="#fff" strokeWidth={fs * 0.12} />
+              <text x={p.x} y={p.y} textAnchor="middle" dominantBaseline="central" fontSize={r * 1.3} fontWeight={700} fill="#fff">
+                ?
+              </text>
+            </g>
+          );
+        })}
+
       {/* Meubles */}
       {furniture.map((f) => {
         const p = itemProduct(catalog, f);

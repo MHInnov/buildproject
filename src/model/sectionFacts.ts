@@ -18,6 +18,8 @@ export interface SectionOpening {
 
 export interface SectionFacts {
   openings: SectionOpening[];
+  /** Hauteur sous plafond et épaisseur du plancher de chaque niveau (lues par l'IA sur les cotes). */
+  storeys?: { storey: number; height: number; slab: number | null }[];
   /** Sol du rez-de-chaussée au-dessus du terrain, en mètres. */
   plinth?: number | null;
   /** Toit : pente en degrés, débord en mètres. */
