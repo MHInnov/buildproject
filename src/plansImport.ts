@@ -5,6 +5,7 @@
  */
 import { fitImportedAttic, type Placement } from './atticImport';
 import { newId } from './model/geometry';
+import { findFlues } from './model/chimney';
 import { removeLevel } from './model/levels';
 import { levelOutline } from './model/footprint';
 import { fitSite, readSitePlan } from './model/site';
@@ -12,7 +13,7 @@ import { alignFacades, alignWalls, footprint, guessKind, isFloorKind, looksLikeS
 import { isFlat } from './model/dwelling';
 import { applySectionFacts, type SectionOpening } from './model/sectionFacts';
 import { detectWings, eaveForKnee } from './model/roof';
-import type { Building, Level } from './model/types';
+import type { Building, Chimney, Level } from './model/types';
 import { autoVectorize, type AutoVectorizeResult, type Bitmap, type TracedWall } from './model/vectorize';
 import { applyStoreys, applyTrace, groundLevel } from './traceApply';
 
@@ -547,6 +548,25 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
       const parcel = reading.parcel.map(fit.toPlan).map((p) => ({ x: Math.round(p.x * 100) / 100, y: Math.round(p.y * 100) / 100 }));
       b.site = { parcel };
       lines.push(`${it.name} : jardin tracé, parcelle de ${Math.round(polygonArea(parcel)).toLocaleString('fr-FR')} m² autour de la maison.`);
+    }
+  }
+  // Cheminées : conduits barrés d'une diagonale au cœur d'une maçonnerie pleine, sur les plans retracés
+  {
+    const found: Chimney[] = [];
+    // (un conduit monte d'ordinaire depuis le rez-de-chaussée : chaudière, foyer, poêle)
+    const g0 = groundLevel(b).elevation;
+    for (const pl of placedOn.values()) {
+      const m = pl.scale * pl.k;
+      for (const f of findFlues(pl.bmp, m)) {
+        const r2 = (x: number) => Math.round(x * 100) / 100;
+        const c: Chimney = { id: newId('ch'), x0: r2(pl.dx + f.mass.x0 * m), y0: r2(pl.dy + f.mass.y0 * m), x1: r2(pl.dx + (f.mass.x1 + 1) * m), y1: r2(pl.dy + (f.mass.y1 + 1) * m), base: g0 };
+        const same = found.find((o) => o.x0 < c.x1 && c.x0 < o.x1 && o.y0 < c.y1 && c.y0 < o.y1);
+        if (!same) found.push(c);
+      }
+    }
+    if (found.length) {
+      b.chimneys = found;
+      lines.push(`Cheminées : ${found.length === 1 ? 'une souche' : `${found.length} souches`} repérée${found.length > 1 ? 's' : ''} sur les plans.`);
     }
   }
   // Avancées (aile en L, bow-window) : leur propre toit, raccordé en noue au toit principal

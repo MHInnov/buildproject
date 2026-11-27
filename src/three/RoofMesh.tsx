@@ -542,6 +542,24 @@ export function RoofMesh({
           </group>
         </group>
       ))}
+      {f &&
+        (building.chimneys ?? []).map((c) => {
+          // Débouché 60 cm au-dessus du faîtage
+          const top = f.base + f.rise + 0.6;
+          const h = top - c.base;
+          const cx = (c.x0 + c.x1) / 2;
+          const cz = (c.y0 + c.y1) / 2;
+          const sx = c.x1 - c.x0;
+          const sz = c.y1 - c.y0;
+          return (
+            <group key={c.id}>
+              <mesh position={[cx, c.base + h / 2, cz]} geometry={boxInMetres(sx, h, sz)} material={surfaceMaterial(gableSurface(building, catalog), selected)} castShadow receiveShadow userData={ud} onClick={onClick} />
+              <mesh position={[cx, top + 0.04, cz]} material={CHIMNEY_CAP} castShadow userData={ud} onClick={onClick}>
+                <boxGeometry args={[sx + 0.1, 0.08, sz + 0.1]} />
+              </mesh>
+            </group>
+          );
+        })}
       {f && (roof.windows ?? []).map((w) => <RoofWindowMesh key={w.id} win={w} roof={roof} f={f} selected={selected || selectedWindow === w.id} onClick={onWindowClick ? onWindowClick(w.id) : onClick} />)}
     </group>
   );
@@ -549,6 +567,18 @@ export function RoofMesh({
 
 const FRAME = new THREE.MeshStandardMaterial({ color: '#3d3f42', roughness: 0.5, metalness: 0.3 });
 const PANE = new THREE.MeshStandardMaterial({ color: '#5f7d93', roughness: 0.08, metalness: 0.4, envMapIntensity: 1.6 });
+/** Pavé dont les coordonnées de texture sont en mètres (briques à la bonne taille sur chaque face). */
+function boxInMetres(sx: number, sy: number, sz: number): THREE.BufferGeometry {
+  const g = new THREE.BoxGeometry(sx, sy, sz);
+  const uv = g.getAttribute('uv') as THREE.BufferAttribute;
+  // Faces dans l'ordre +x, -x, +y, -y, +z, -z ; 4 sommets chacune
+  const dims: [number, number][] = [[sz, sy], [sz, sy], [sx, sz], [sx, sz], [sx, sy], [sx, sy]];
+  for (let f = 0; f < 6; f++) for (let i = 0; i < 4; i++) uv.setXY(f * 4 + i, uv.getX(f * 4 + i) * dims[f][0], uv.getY(f * 4 + i) * dims[f][1]);
+  uv.needsUpdate = true;
+  return g;
+}
+
+const CHIMNEY_CAP = new THREE.MeshStandardMaterial({ color: '#8d8f8c', roughness: 0.9 });
 const WIN_FRAME = new THREE.MeshStandardMaterial({ color: '#f2f2ee', roughness: 0.45 });
 const SKY = new THREE.MeshStandardMaterial({ color: '#cfe3f3', roughness: 0.3, emissive: '#9fc3e0', emissiveIntensity: 0.55 });
 

@@ -119,6 +119,16 @@ export interface Dormer {
   pitch: number;
 }
 
+export interface Chimney {
+  id: string;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  /** Altitude du pied (m) : sol du rez-de-chaussée d'ordinaire. */
+  base: number;
+}
+
 export interface RoofWing {
   x0: number;
   y0: number;
@@ -281,6 +291,8 @@ export interface Building {
   plinth?: number;
   /** Revêtements extérieurs (pelouse, abords de la maison) ; absent : pelouse par défaut, sans abords. */
   outdoor?: Outdoor;
+  /** Souches de cheminée (lues sur les plans) : emprise de la maçonnerie et altitude de départ. */
+  chimneys?: Chimney[];
 }
 
 /** Revêtements extérieurs, voir data/exterior.ts. */
