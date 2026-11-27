@@ -550,6 +550,30 @@ function WallMesh({ wall, elevation, openings, catalog, facing, profile, selecte
             );
           }),
       )}
+      {/* Volets battants, ouverts à plat contre la façade de part et d'autre de la fenêtre */}
+      {outSide &&
+        openings
+          .filter((o) => o.shutters)
+          .flatMap((o) =>
+            [-1, 1].map((sg) => {
+              const leaf = o.width / 2;
+              const x = o.offset + sg * (o.width / 2 + leaf / 2 + 0.01);
+              const z = (outSide === 'gauche' ? 1 : -1) * (th / 2 + 0.02);
+              return (
+                <group key={`vo-${o.id}-${sg}`} position={[x, o.sill + o.height / 2, z]}>
+                  <mesh material={SHUTTER} castShadow receiveShadow userData={{ sel: { kind: 'opening', id: o.id } }} onClick={onOpeningClick(o.id)}>
+                    <boxGeometry args={[leaf, o.height, 0.03]} />
+                  </mesh>
+                  {/* Lames horizontales */}
+                  {Array.from({ length: Math.max(4, Math.round(o.height / 0.12)) }, (_, i) => i).map((i, _, arr) => (
+                    <mesh key={i} position={[0, -o.height / 2 + ((i + 0.5) * o.height) / arr.length, (outSide === 'gauche' ? 1 : -1) * 0.017]} material={SHUTTER_SLAT}>
+                      <boxGeometry args={[leaf - 0.06, 0.02, 0.006]} />
+                    </mesh>
+                  ))}
+                </group>
+              );
+            }),
+          )}
       {openings.map((o) => {
         // Portes intérieures ouvertes par défaut ; portes de garage et d'entrée fermées (on les voit de dehors)
         const isOpen = isDoorOpen(building, o, !!toggled[o.id]);
@@ -572,6 +596,8 @@ function WallMesh({ wall, elevation, openings, catalog, facing, profile, selecte
   );
 }
 
+const SHUTTER = new THREE.MeshStandardMaterial({ color: '#2f4a3a', roughness: 0.6 });
+const SHUTTER_SLAT = new THREE.MeshStandardMaterial({ color: '#253d2f', roughness: 0.6 });
 const isGarage = (o: Opening) => !!o.productId?.includes('garage');
 
 /** Tablier qui monte ou descend en douceur. */

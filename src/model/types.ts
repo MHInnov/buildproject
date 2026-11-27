@@ -202,6 +202,8 @@ export interface Opening {
    * ou droite du mur. Absent : charnière côté a, vers la pièce.
    */
   swing?: OpeningSwing;
+  /** Volets battants (fenêtre de façade), ouverts contre le mur de part et d'autre. */
+  shutters?: boolean;
 }
 
 export interface OpeningSwing {

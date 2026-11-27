@@ -400,6 +400,11 @@ function OpeningPanel({ id, isExisting }: { id: string; isExisting: boolean }) {
         <NumberField label="Position (m)" value={o.offset} disabled={!sizable} onChange={(v) => edit((x) => void (x.offset = Math.min(maxOffset, Math.max(o.width / 2, v))))} />
       </div>
       {product?.generic && <GenericOptions product={product} options={o.options} dims={{ w: o.width, h: o.height }} onChange={(opt) => setOpeningOptions(o.id, opt)} />}
+      {o.kind === 'fenetre' && (
+        <label className="check small">
+          <input type="checkbox" checked={!!o.shutters} onChange={(e) => edit((x) => void (e.target.checked ? (x.shutters = true) : delete x.shutters))} /> Volets battants (en façade)
+        </label>
+      )}
       {o.kind === 'porte' && sizable && !product?.id.includes('garage') && (
         <>
           <h4>Sens d'ouverture</h4>

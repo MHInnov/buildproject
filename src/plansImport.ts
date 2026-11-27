@@ -6,13 +6,13 @@
 import { fitImportedAttic, type Placement } from './atticImport';
 import { newId, pointInPolygon, wallNormal } from './model/geometry';
 import { facadeLayers } from './model/wallLayers';
-import { findFlues } from './model/chimney';
+import { findFlues, inkMask } from './model/chimney';
 import { removeLevel } from './model/levels';
 import { levelOutline } from './model/footprint';
 import { fitSite, readSitePlan } from './model/site';
 import { alignFacades, alignWalls, footprint, guessKind, isFloorKind, looksLikeSection, planSimilarity, readSection, storeysFromSection, type PlanKind, type SectionReading } from './model/plans';
 import { isFlat } from './model/dwelling';
-import { applySectionFacts, type SectionOpening } from './model/sectionFacts';
+import { applySectionFacts, facadeOpeningsAt, type SectionOpening } from './model/sectionFacts';
 import { detectWings, eaveForKnee } from './model/roof';
 import type { Building, Chimney, Level } from './model/types';
 import { autoVectorize, type AutoVectorizeResult, type Bitmap, type TracedWall } from './model/vectorize';
@@ -550,6 +550,45 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
       b.site = { parcel };
       lines.push(`${it.name} : jardin tracé, parcelle de ${Math.round(polygonArea(parcel)).toLocaleString('fr-FR')} m² autour de la maison.`);
     }
+  }
+  // Volets battants : dessinés ouverts contre la façade, un trait fin parallèle au mur juste devant sa face
+  // extérieure, de chaque côté de la fenêtre, sur une demi-largeur de baie
+  {
+    let n = 0;
+    for (const [levelId, pl] of placedOn) {
+      const m = pl.scale * pl.k;
+      const f = { w: pl.bmp.width, h: pl.bmp.height, ink: inkMask(pl.bmp) };
+      const inkAt = (x: number, y: number) => {
+        const px = Math.round((x - pl.dx) / m);
+        const py = Math.round((y - pl.dy) / m);
+        return px >= 0 && py >= 0 && px < f.w && py < f.h && f.ink[py * f.w + px] === 1;
+      };
+      for (const fo of facadeOpeningsAt(b, levelId)) {
+        const o = fo.opening;
+        if (o.kind !== 'fenetre' || o.width < 0.5) continue;
+        const face = fo.wall.thickness / 2;
+        const side = (s: 1 | -1) => {
+          let best = 0;
+          for (let d = 0.02; d <= 0.15; d += m) {
+            let hit = 0;
+            let all = 0;
+            for (let a = o.width / 2 + 0.05; a <= o.width / 2 + o.width * 0.45; a += m) {
+              const x = fo.center.x + fo.u.x * a * s + fo.out.x * (face + d);
+              const y = fo.center.y + fo.u.y * a * s + fo.out.y * (face + d);
+              all++;
+              if (inkAt(x, y)) hit++;
+            }
+            if (all) best = Math.max(best, hit / all);
+          }
+          return best;
+        };
+        if (side(1) >= 0.6 && side(-1) >= 0.6) {
+          o.shutters = true;
+          n++;
+        }
+      }
+    }
+    if (n) lines.push(`Volets battants : ${n} fenêtre${n > 1 ? 's' : ''} (volets dessinés ouverts contre la façade).`);
   }
   // Châssis latéraux d'une porte (vitrages étroits contre elle) : toute hauteur, comme la porte
   for (const o of b.openings) {

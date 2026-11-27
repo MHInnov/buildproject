@@ -12,12 +12,18 @@ export interface FluePx {
  * dont l'encre se range d'un seul côté d'une diagonale, entourés de noir.
  * `m` : mètres par pixel.
  */
-export function findFlues(bmp: Bitmap, m: number): FluePx[] {
-  const { width: w, height: h } = bmp;
+/** Encre d'un plan (trait, même adouci par un scan) : 1 = encre. */
+export function inkMask(bmp: Bitmap): Uint8Array {
   const lum = luminance(bmp);
   const t = Math.max(otsu(lum), background(lum) - 60);
-  const ink = new Uint8Array(w * h);
+  const ink = new Uint8Array(bmp.width * bmp.height);
   for (let i = 0; i < lum.length; i++) ink[i] = lum[i] <= t ? 1 : 0;
+  return ink;
+}
+
+export function findFlues(bmp: Bitmap, m: number): FluePx[] {
+  const { width: w, height: h } = bmp;
+  const ink = inkMask(bmp);
   const lo = Math.round(0.12 / m);
   const hi = Math.round(0.5 / m);
   // Composantes blanches (4-connexité), bornées en taille
