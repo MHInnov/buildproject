@@ -841,6 +841,33 @@ function traceMask(source: Uint8Array, ink: Uint8Array, w: number, h: number, sc
     const faces = rows.length === 2 && rows.every((t) => Math.abs(Math.abs(t + 0.5 - cc) - th / 2) <= Math.max(2, th * 0.2));
     return faces && !doorSwing(dark, w, h, horizontal, cc, th, g0, g1, 1.25 / scale)?.full;
   };
+  /** Morceaux d'une baie entre les trumeaux pleins (15 à 70 cm, noirs sur toute l'épaisseur) qu'elle contient. */
+  const splitAtPiers = (horizontal: boolean, cc: number, th: number, g0: number, g1: number): [number, number][] => {
+    const t0 = Math.ceil(cc - th / 2);
+    const t1 = Math.floor(cc + th / 2);
+    const full = (k: number) => {
+      let n = 0;
+      for (let t = t0; t <= t1; t++) if (dark[horizontal ? t * w + k : k * w + t]) n++;
+      // (le trumeau de maçonnerie, sans le parement dessiné à part : 60 % de l'épaisseur lue)
+      return n >= 0.6 * (t1 - t0 + 1);
+    };
+    const out: [number, number][] = [];
+    let a = g0;
+    let run = 0;
+    for (let k = Math.ceil(g0); k <= Math.floor(g1); k++) {
+      if (k < g1 && full(k)) {
+        run++;
+        continue;
+      }
+      if (run >= 0.15 / scale && run <= 0.7 / scale && k - run - a >= 0.25 / scale) {
+        out.push([a, k - run]);
+        a = k;
+      }
+      run = 0;
+    }
+    if (g1 - a >= 0.25 / scale) out.push([a, g1]);
+    return out;
+  };
   let merged = true;
   while (merged) {
     merged = false;
@@ -849,7 +876,9 @@ function traceMask(source: Uint8Array, ink: Uint8Array, w: number, h: number, sc
         if (A === B || A.horizontal !== B.horizontal) continue;
         if (Math.abs(A.c - B.c) > Math.max(A.th, B.th) / 2 || Math.abs(A.th - B.th) > Math.max(A.th, B.th) * 0.5) continue;
         const gap = B.s - A.e;
-        if (gap < minGap || gap > maxGap) continue;
+        if (gap > maxGap) continue;
+        // Vitrage étroit (imposte, châssis latéral d'une porte d'entrée, 30 à 45 cm) : seulement avec ses traits de vitrage
+        if (gap < minGap && (gap < 0.3 / scale || !isGlazing(dark, w, A.horizontal, (A.c + B.c) / 2, Math.max(A.th, B.th), A.e, B.s))) continue;
         // Un mur perpendiculaire dans le trou ? Alors ce n'est pas une ouverture.
         const crossing = segs.some((P) => P.horizontal !== A.horizontal && P.c > A.e + 1 && P.c < B.s - 1 && P.s <= A.c + A.th && P.e >= A.c - A.th);
         if (crossing) continue;
@@ -881,7 +910,18 @@ function traceMask(source: Uint8Array, ink: Uint8Array, w: number, h: number, sc
         const kind = arc || !glass ? 'porte' : 'fenetre';
         const joined: Seg = { horizontal: A.horizontal, s: A.s, e: B.e, c: (A.c * (A.e - A.s) + B.c * (B.e - B.s)) / (A.e - A.s + B.e - B.s), th };
         for (const o of openingsPx) if (o.seg === A || o.seg === B) o.seg = joined;
-        openingsPx.push({ seg: joined, at: (A.e + B.s) / 2, width: gap, kind, source: 'trou', ...(sw ? { swing: sw } : {}), ...(glazed ? { glazed } : {}) });
+        // Trumeaux pleins dans une large baie (porte d'entrée et ses châssis latéraux, fenêtres jumelées) : trop
+        // courts pour être lus comme des murs, ils séparent pourtant plusieurs ouvertures
+        const parts = gap > 1.2 / scale ? splitAtPiers(A.horizontal, (A.c + B.c) / 2, th, A.e, B.s) : null;
+        if (parts && parts.length > 1) {
+          for (const [p0, p1] of parts) {
+            const psw = doorSwing(dark, w, h, A.horizontal, (A.c + B.c) / 2, th, p0, p1, 1.25 / scale);
+            const pgl = isGlazing(dark, w, A.horizontal, (A.c + B.c) / 2, th, p0, p1);
+            const door = !!psw && (psw.full || !pgl);
+            if (!door && !pgl && p1 - p0 < 0.6 / scale) continue;
+            openingsPx.push({ seg: joined, at: (p0 + p1) / 2, width: p1 - p0, kind: door || !pgl ? 'porte' : 'fenetre', source: 'trou', ...(door ? { swing: psw! } : {}), ...(pgl ? { glazed: true } : {}) });
+          }
+        } else openingsPx.push({ seg: joined, at: (A.e + B.s) / 2, width: gap, kind, source: 'trou', ...(sw ? { swing: sw } : {}), ...(glazed ? { glazed } : {}) });
         segs.splice(segs.indexOf(A), 1);
         segs.splice(segs.indexOf(B), 1);
         segs.push(joined);
@@ -988,7 +1028,7 @@ function traceMask(source: Uint8Array, ink: Uint8Array, w: number, h: number, sc
       while (i < glass.length && (glass[i] || (i + 1 < glass.length && glass[i + 1]))) i++;
       const len = i - a + 3; // les 3 premiers pixels servent de référence
       const at = Math.ceil(S.s) + a - 3 + len / 2;
-      if (len < 0.4 / scale || len > 3.2 / scale) continue;
+      if (len < 0.3 / scale || len > 3.2 / scale) continue;
       // Une baie est encadrée de mur des deux côtés : pas collée à un bout du mur (angle, jonction)
       if (at - len / 2 - S.s < 0.1 / scale || S.e - (at + len / 2) < 0.1 / scale) continue;
       // … et fermée par un tableau à chaque bout : un trait en travers de toute l'épaisseur du mur.

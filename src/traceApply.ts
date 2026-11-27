@@ -70,6 +70,9 @@ export function applyTrace(b: Building, levelId: string, r: VectorizeResult, dx:
       };
       if (o.kind === 'porte' && o.swing) op.swing = swingOnPiece(wall, piece, o.swing);
       if (o.kind === 'porte' && (o.leaves ?? 1) > 1) op.options = { leaves: o.leaves };
+      // Même baie lue deux fois (une large et ses morceaux entre trumeaux) : la première lecture reste
+      const twin = b.openings.find((x) => x.wallId === op.wallId && Math.abs(x.offset - op.offset) < ((x.width + op.width) / 2) * 0.6);
+      if (twin) continue;
       b.openings.push(op);
     }
   }
