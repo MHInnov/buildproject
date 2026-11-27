@@ -1,0 +1,632 @@
+import { useMemo } from 'react';
+import * as THREE from 'three';
+import type { Catalog } from '../model/catalog';
+import { productById } from '../model/catalog';
+import { roofFrame, type RoofFrame } from '../model/roof';
+import type { Building, Dormer, Roof, RoofWing, RoofWindow } from '../model/types';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { outdoorById, TIMBERS } from '../data/exterior';
+import { CEILING, FACADE, fromProduct, ROOF_UNDERSIDE, surfaceMaterial } from './materials';
+
+type V = THREE.Vector3;
+const v3 = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+
+function normalOf(poly: V[]): V {
+  // Méthode de Newell
+  const n = v3(0, 0, 0);
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    n.x += (a.y - b.y) * (a.z + b.z);
+    n.y += (a.z - b.z) * (a.x + b.x);
+    n.z += (a.x - b.x) * (a.y + b.y);
+  }
+  return n.normalize();
+}
+
+/**
+ * Plaque épaisse (pan de toiture) à partir d'un polygone convexe :
+ * dessus (couverture, groupe 0), dessous (groupe 1), chants (groupe 2).
+ * Coordonnées de texture en mètres : u le long de l'égout, v dans le sens de la pente.
+ */
+function slab(polyIn: V[], thickness: number): THREE.BufferGeometry {
+  let poly = polyIn;
+  let n = normalOf(poly);
+  if (n.y < 0) {
+    poly = [...poly].reverse();
+    n = n.negate();
+  }
+  const nh = v3(n.x, 0, n.z);
+  const e1 = nh.lengthSq() > 1e-6 ? v3(-nh.z, 0, nh.x).normalize() : v3(1, 0, 0);
+  const e2 = new THREE.Vector3().crossVectors(n, e1).normalize();
+  const o = poly[0];
+  const bottom = poly.map((p) => p.clone().addScaledVector(n, -thickness));
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const push = (p: V, u: number, w: number) => {
+    pos.push(p.x, p.y, p.z);
+    uv.push(u, w);
+  };
+  const proj = (p: V) => [p.clone().sub(o).dot(e1), p.clone().sub(o).dot(e2)] as const;
+  const g = new THREE.BufferGeometry();
+  let count = 0;
+  // Dessus
+  for (let i = 1; i < poly.length - 1; i++) for (const p of [poly[0], poly[i], poly[i + 1]]) push(p, ...proj(p));
+  g.addGroup(0, (poly.length - 2) * 3, 0);
+  count += (poly.length - 2) * 3;
+  // Dessous (ordre inversé)
+  for (let i = 1; i < bottom.length - 1; i++) for (const p of [bottom[0], bottom[i + 1], bottom[i]]) push(p, ...proj(p));
+  g.addGroup(count, (poly.length - 2) * 3, 1);
+  count += (poly.length - 2) * 3;
+  // Chants
+  const start = count;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    const c = bottom[(i + 1) % poly.length];
+    const d = bottom[i];
+    const L = a.distanceTo(b);
+    for (const [p, u, w] of [[a, 0, 0], [d, 0, thickness], [c, L, thickness], [a, 0, 0], [c, L, thickness], [b, L, 0]] as [V, number, number][]) push(p, u, w);
+    count += 6;
+  }
+  g.addGroup(start, count - start, 2);
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.computeVertexNormals();
+  return g;
+}
+
+interface Parts {
+  slopes: V[][];
+  /** Pignons et murs hauts sous toiture (polygones verticaux, épaissis vers l'intérieur). */
+  gables: V[][];
+}
+
+/** Géométrie de la toiture, construite dans un repère où le faîtage suit l'axe x, puis remise en place. */
+export function roofParts(f: RoofFrame, roof: Roof): Parts {
+  const swap = roof.type === 'quatre-pans' ? f.maxY - f.minY > f.maxX - f.minX : roof.ridge === 'y';
+  // Repère canonique : u le long du faîtage, w en travers
+  const u0 = swap ? f.minY : f.minX;
+  const u1 = swap ? f.maxY : f.maxX;
+  const w0 = swap ? f.minX : f.minY;
+  const w1 = swap ? f.maxX : f.maxY;
+  const P = (u: number, h: number, w: number) => (swap ? v3(w, h, u) : v3(u, h, w));
+  const ov = roof.overhang;
+  const t = Math.tan((roof.pitch * Math.PI) / 180);
+  const base = f.base;
+  const hE = base - ov * t;
+  const cw = (w0 + w1) / 2;
+  const slopes: V[][] = [];
+  const gables: V[][] = [];
+  if (roof.type === 'deux-pans') {
+    const hR = base + ((w1 - w0) / 2) * t;
+    slopes.push([P(u0 - ov, hE, w0 - ov), P(u1 + ov, hE, w0 - ov), P(u1 + ov, hR, cw), P(u0 - ov, hR, cw)]);
+    slopes.push([P(u0 - ov, hR, cw), P(u1 + ov, hR, cw), P(u1 + ov, hE, w1 + ov), P(u0 - ov, hE, w1 + ov)]);
+    gables.push([P(u0, base, w0), P(u0, base, w1), P(u0, hR, cw)]);
+    gables.push([P(u1, base, w0), P(u1, base, w1), P(u1, hR, cw)]);
+  } else if (roof.type === 'quatre-pans') {
+    const hw = (w1 - w0) / 2;
+    const hR = base + hw * t;
+    const r0 = Math.min(u0 + hw, (u0 + u1) / 2);
+    const r1 = Math.max(u1 - hw, (u0 + u1) / 2);
+    const a = P(u0 - ov, hE, w0 - ov);
+    const b = P(u1 + ov, hE, w0 - ov);
+    const c = P(u1 + ov, hE, w1 + ov);
+    const d = P(u0 - ov, hE, w1 + ov);
+    const R0 = P(r0, hR, cw);
+    const R1 = P(r1, hR, cw);
+    slopes.push(r1 - r0 > 0.01 ? [a, b, R1, R0] : [a, b, R0]);
+    slopes.push(r1 - r0 > 0.01 ? [R0, R1, c, d] : [R0, c, d]);
+    slopes.push([d, a, R0]);
+    slopes.push([b, c, R1]);
+  } else if (roof.type === 'monopente') {
+    const hHigh = base + (w1 - w0 + ov) * t;
+    const top = base + (w1 - w0) * t;
+    slopes.push([P(u0 - ov, hE, w0 - ov), P(u1 + ov, hE, w0 - ov), P(u1 + ov, hHigh, w1 + ov), P(u0 - ov, hHigh, w1 + ov)]);
+    gables.push([P(u0, base, w0), P(u0, base, w1), P(u0, top, w1)]);
+    gables.push([P(u1, base, w0), P(u1, base, w1), P(u1, top, w1)]);
+    gables.push([P(u0, base, w1), P(u1, base, w1), P(u1, top, w1), P(u0, top, w1)]);
+  } else {
+    const h = base + 0.3;
+    slopes.push([P(u0 - ov, h, w0 - ov), P(u1 + ov, h, w0 - ov), P(u1 + ov, h, w1 + ov), P(u0 - ov, h, w1 + ov)]);
+  }
+  return { slopes, gables };
+}
+
+/** Pignon : polygone vertical épaissi vers l'intérieur de la maison. */
+function gable(poly: V[], center: V, thickness: number): THREE.BufferGeometry {
+  const n = normalOf(poly);
+  const c = poly.reduce((s, p) => s.add(p), v3(0, 0, 0)).multiplyScalar(1 / poly.length);
+  // On épaissit vers le centre de la maison.
+  const dir = n.dot(center.clone().sub(c)) > 0 ? n : n.clone().negate();
+  const outer = poly;
+  const inner = poly.map((p) => p.clone().addScaledVector(dir, thickness));
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const hAxis = v3(-dir.z, 0, dir.x).normalize();
+  const push = (p: V) => {
+    pos.push(p.x, p.y, p.z);
+    uv.push(p.dot(hAxis), p.y);
+  };
+  for (let i = 1; i < outer.length - 1; i++) {
+    for (const p of [outer[0], outer[i], outer[i + 1]]) push(p);
+    for (const p of [inner[0], inner[i + 1], inner[i]]) push(p);
+  }
+  for (let i = 0; i < outer.length; i++) {
+    const a = outer[i];
+    const b = outer[(i + 1) % outer.length];
+    const c2 = inner[(i + 1) % outer.length];
+    const d = inner[i];
+    for (const p of [a, d, c2, a, c2, b]) push(p);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.computeVertexNormals();
+  return g;
+}
+
+/** Épaisseur des pans dessinés (couverture, liteaux et chevrons). */
+const SLAB = 0.24;
+
+/**
+ * Pièce de bois de section wd × ht et de longueur len, centrée en c, le long de dir, sa hauteur selon up.
+ * Coordonnées de texture en mètres, le fil du bois dans la longueur.
+ */
+function beam(c: V, dir: V, up: V, len: number, wd: number, ht: number): THREE.BufferGeometry {
+  const g = new THREE.BoxGeometry(len, ht, wd);
+  const uv = g.attributes.uv as THREE.BufferAttribute;
+  // Faces de BoxGeometry : +x, -x, +y, -y, +z, -z (4 sommets chacune)
+  const scale: [number, number][] = [[wd, ht], [wd, ht], [len, wd], [len, wd], [len, ht], [len, ht]];
+  for (let i = 0; i < uv.count; i++) {
+    const [a, b] = scale[Math.floor(i / 4)];
+    uv.setXY(i, uv.getX(i) * a, uv.getY(i) * b);
+  }
+  const x = dir.clone().normalize();
+  const z = new THREE.Vector3().crossVectors(x, up).normalize();
+  const y = new THREE.Vector3().crossVectors(z, x).normalize();
+  g.applyMatrix4(new THREE.Matrix4().makeBasis(x, y, z).setPosition(c));
+  return g;
+}
+
+/**
+ * Charpente sous la couverture : faîtage, pannes et chevrons (tous les 60 cm).
+ * Combles perdus : tout est visible. Combles aménagés : les chevrons ne se voient que sous le débord,
+ * pannes et faîtage seulement s'ils sont laissés apparents.
+ */
+export function roofTimber(f: RoofFrame, roof: Roof): THREE.BufferGeometry | null {
+  if (roof.type !== 'deux-pans' && roof.type !== 'monopente') return null;
+  const swap = roof.ridge === 'y';
+  const u0 = swap ? f.minY : f.minX;
+  const u1 = swap ? f.maxY : f.maxX;
+  const w0 = swap ? f.minX : f.minY;
+  const w1 = swap ? f.maxX : f.maxY;
+  const P = (u: number, h: number, w: number) => (swap ? v3(w, h, u) : v3(u, h, w));
+  const t = Math.tan((roof.pitch * Math.PI) / 180);
+  const cos = Math.cos((roof.pitch * Math.PI) / 180);
+  const drop = SLAB / cos;
+  const ov = roof.overhang;
+  const attic = roof.eave != null;
+  const parts: THREE.BufferGeometry[] = [];
+  const U = swap ? v3(0, 0, 1) : v3(1, 0, 0);
+  const UP = v3(0, 1, 0);
+  // Un pan : de l'égout (w = e) vers le haut (w = top), sens s = ±1
+  const side = (e: number, top: number, s: number, ridge: boolean) => {
+    const under = (w: number) => f.base + (w - e) * s * t - drop;
+    const span = Math.abs(top - e);
+    // Pannes : une au milieu, deux sur les grands pans
+    const n = span > 4.5 ? 2 : 1;
+    for (let k = 1; k <= n; k++) {
+      if (attic && !roof.exposedBeams) break;
+      const wm = e + (s * span * k) / (n + 1);
+      const topY = under(wm - s * 0.05);
+      parts.push(beam(P((u0 + u1) / 2, topY - 0.1, wm), U, UP, u1 - u0, 0.1, 0.2));
+    }
+    // Chevrons, perpendiculaires au faîtage, juste sous la couverture
+    const n2 = v3(0, 1, -s * t).normalize(); // normale du pan dans le repère (u, h, w)
+    const from = e - s * ov;
+    const to = attic ? e : ridge ? top - s * 0.06 : top;
+    const L = Math.abs(to - from) / cos;
+    if (L < 0.1) return;
+    const wc = (from + to) / 2;
+    const hc = under(wc) - 0.045 / cos;
+    const dirC = v3(0, t, s).normalize();
+    const nUp = swap ? v3(n2.z, n2.y, 0) : v3(0, n2.y, n2.z);
+    const dir = swap ? v3(dirC.z, dirC.y, 0) : v3(0, dirC.y, dirC.z);
+    for (let u = u0 + 0.05; u <= u1 - 0.02; u += 0.6) parts.push(beam(P(u, hc, wc), dir, nUp, L, 0.06, 0.09));
+  };
+  if (roof.type === 'deux-pans') {
+    const cw = (w0 + w1) / 2;
+    side(w0, cw, 1, true);
+    side(w1, cw, -1, true);
+    if (!attic || roof.exposedBeams) {
+      const hR = f.base + (cw - w0) * t - drop - 0.06 * t;
+      parts.push(beam(P((u0 + u1) / 2, hR - 0.13, cw), U, UP, u1 - u0, 0.12, 0.26));
+    }
+  } else {
+    side(w0, w1, 1, false);
+  }
+  if (!parts.length) return null;
+  const g = mergeGeometries(parts.map((p) => p.toNonIndexed()));
+  parts.forEach((p) => p.dispose());
+  return g;
+}
+
+/** Pignons au-dessus des murs : même parement que les façades du niveau (le plus fréquent), brique sinon. */
+function gableSurface(b: Building, catalog: Catalog) {
+  return facadeSurface(b, catalog, b.roof?.levelId);
+}
+
+/** Parement de façade le plus fréquent (d'un niveau, ou de toute la maison). */
+export function facadeSurface(b: Building, catalog: Catalog, levelId?: string) {
+  const count = new Map<string, number>();
+  for (const w of b.walls) {
+    if ((levelId && w.levelId !== levelId) || w.thickness < 0.15) continue;
+    for (const id of [w.finish.gauche, w.finish.droite]) {
+      const p = productById(catalog, id);
+      if (p && (p.tags.includes('façade') || ['bricks', 'stone'].includes(p.pattern?.kind ?? ''))) count.set(p.id, (count.get(p.id) ?? 0) + 1);
+    }
+  }
+  const best = [...count].sort((x, y) => y[1] - x[1])[0];
+  return best ? fromProduct(productById(catalog, best[0]), FACADE) : FACADE;
+}
+
+/**
+ * Sous-face des débords (lambris sous l'avancée du toit, côté extérieur) : sous des combles aménagés le
+ * dessous du toit est un plafond blanc, mais dehors, sous les débords, on voit le bois.
+ */
+function soffit(f: RoofFrame, roof: Roof): THREE.BufferGeometry | null {
+  if ((roof.type !== 'deux-pans' && roof.type !== 'monopente') || roof.overhang < 0.02) return null;
+  const swap = roof.ridge === 'y';
+  const u0 = swap ? f.minY : f.minX;
+  const u1 = swap ? f.maxY : f.maxX;
+  const w0 = swap ? f.minX : f.minY;
+  const w1 = swap ? f.maxX : f.maxY;
+  const ov = roof.overhang;
+  const t = Math.tan((roof.pitch * Math.PI) / 180);
+  const drop = SLAB / Math.cos((roof.pitch * Math.PI) / 180) + 0.004;
+  const two = roof.type === 'deux-pans';
+  const cw = (w0 + w1) / 2;
+  const H = (w: number) => f.base + (two ? Math.min(w - w0, w1 - w) : w - w0) * t - drop;
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const quad = (ua: number, ub: number, wa: number, wb: number) => {
+    const c = [
+      [ua, wa],
+      [ub, wa],
+      [ub, wb],
+      [ua, wb],
+    ];
+    for (const i of [0, 1, 2, 0, 2, 3]) {
+      const [u, w] = c[i];
+      const p = swap ? [w, H(w), u] : [u, H(w), w];
+      pos.push(p[0], p[1], p[2]);
+      uv.push(u, w);
+    }
+  };
+  // Le long des égouts (et du haut d'un monopente), sur toute la longueur débords compris
+  quad(u0 - ov, u1 + ov, w0 - ov, w0);
+  quad(u0 - ov, u1 + ov, w1, w1 + ov);
+  // Le long des pignons, entre les égouts (en deux parties de part et d'autre du faîtage)
+  for (const [ua, ub] of [
+    [u0 - ov, u0],
+    [u1, u1 + ov],
+  ]) {
+    if (two) {
+      quad(ua, ub, w0, cw);
+      quad(ua, ub, cw, w1);
+    } else quad(ua, ub, w0, w1);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.computeVertexNormals();
+  return g;
+}
+
+/** Faîtage : rangée de tuiles faîtières (ou bande d'ardoise) qui couvre la jonction des deux pans. */
+function ridgeCap(f: RoofFrame, roof: Roof): THREE.BufferGeometry | null {
+  if (roof.type !== 'deux-pans') return null;
+  const swap = roof.ridge === 'y';
+  const u0 = (swap ? f.minY : f.minX) - roof.overhang;
+  const u1 = (swap ? f.maxY : f.maxX) + roof.overhang;
+  const w0 = swap ? f.minX : f.minY;
+  const w1 = swap ? f.maxX : f.maxY;
+  const cw = (w0 + w1) / 2;
+  const h = f.base + (cw - w0) * Math.tan((roof.pitch * Math.PI) / 180);
+  const c = swap ? v3(cw, h, (u0 + u1) / 2) : v3((u0 + u1) / 2, h, cw);
+  const dir = swap ? v3(0, 0, 1) : v3(1, 0, 0);
+  const up = swap ? v3(1, 1, 0) : v3(0, 1, 1);
+  return beam(c, dir, up.normalize(), u1 - u0, 0.22, 0.22);
+}
+
+/**
+ * Toit d'une avancée : deux pans de même pente et même égout que le toit principal, faîtage
+ * perpendiculaire. Il entre dans le toit principal jusqu'à ce que son faîtage rencontre le pan (la noue
+ * se dessine à l'intersection). Pignon au bout libre, et murs remontés du haut des murs de l'avancée
+ * jusqu'à l'égout.
+ */
+function wingParts(f: RoofFrame, roof: Roof, wing: RoofWing, wallTop: number) {
+  const swap = wing.ridge === 'y';
+  const t = Math.tan((roof.pitch * Math.PI) / 180);
+  const w0 = swap ? wing.x0 : wing.y0;
+  const w1 = swap ? wing.x1 : wing.y1;
+  const hw = (w1 - w0) / 2;
+  const inLow = wing.attach === (swap ? 'y0' : 'x0');
+  const ua = swap ? wing.y0 : wing.x0;
+  const ub = swap ? wing.y1 : wing.x1;
+  // Bout côté maison prolongé dans le toit principal, de la demi-largeur de l'avancée
+  const uIn = inLow ? ua - hw - 0.05 : ub + hw + 0.05;
+  const uOut = inLow ? ub : ua;
+  const frame: RoofFrame = {
+    ...f,
+    minX: swap ? w0 : Math.min(uIn, uOut),
+    maxX: swap ? w1 : Math.max(uIn, uOut),
+    minY: swap ? Math.min(uIn, uOut) : w0,
+    maxY: swap ? Math.max(uIn, uOut) : w1,
+    rise: hw * t,
+  };
+  const r: Roof = { ...roof, type: 'deux-pans', ridge: wing.ridge };
+  const parts = roofParts(frame, r);
+  // roofParts : pignons à u0 puis u1 ; on garde celui du bout libre
+  const outer = parts.gables[inLow ? 1 : 0];
+  const P = (u: number, h: number, w: number) => (swap ? v3(w, h, u) : v3(u, h, w));
+  const base = f.base;
+  const cw = (w0 + w1) / 2;
+  const hR = base + hw * t;
+  const uFace = inLow ? ua : ub;
+  const walls: V[][] = [];
+  if (wallTop < base - 0.02) {
+    walls.push([P(uOut, wallTop, w0), P(uOut, wallTop, w1), P(uOut, base, w1), P(uOut, hR, cw), P(uOut, base, w0)]);
+    walls.push([P(uFace, wallTop, w0), P(uOut, wallTop, w0), P(uOut, base, w0), P(uFace, base, w0)]);
+    walls.push([P(uFace, wallTop, w1), P(uOut, wallTop, w1), P(uOut, base, w1), P(uFace, base, w1)]);
+  } else walls.push(outer);
+  // Faîtière de l'avancée, du pignon jusqu'au toit principal
+  const u0c = Math.min(uIn, uOut) - (inLow ? 0 : roof.overhang);
+  const u1c = Math.max(uIn, uOut) + (inLow ? roof.overhang : 0);
+  const c = P((u0c + u1c) / 2, hR, cw);
+  const cap = beam(c, swap ? v3(0, 0, 1) : v3(1, 0, 0), (swap ? v3(1, 1, 0) : v3(0, 1, 1)).normalize(), u1c - u0c, 0.22, 0.22);
+  return { slopes: parts.slopes, walls, cap, center: P((uFace + uOut) / 2, base, cw) };
+}
+
+/**
+ * Chapelle : façade en prolongement de celle de la maison (percée de sa fenêtre), jouées jusqu'au toit
+ * principal, deux pans qui viennent mourir sur le rampant. Repère : d vers l'intérieur depuis la façade,
+ * v le long de l'égout.
+ */
+export function dormerParts(f: RoofFrame, roof: Roof, dm: Dormer) {
+  const t = Math.tan((roof.pitch * Math.PI) / 180);
+  const tp = Math.tan((dm.pitch * Math.PI) / 180);
+  const alongY = dm.side === 'x0' || dm.side === 'x1';
+  const face = dm.side === 'x0' ? f.minX : dm.side === 'x1' ? f.maxX : dm.side === 'y0' ? f.minY : f.maxY;
+  const inward = dm.side === 'x0' || dm.side === 'y0' ? 1 : -1;
+  const P = (d: number, h: number, v: number) => {
+    const w = face + inward * d;
+    return alongY ? v3(w, h, v) : v3(v, h, w);
+  };
+  const base = f.base;
+  const hw = dm.width / 2;
+  const c = dm.at;
+  const zE = base + dm.height;
+  const zR = zE + hw * tp;
+  const ww = dm.windowWidth / 2;
+  const zS = base + dm.sill;
+  const zH = base + dm.head;
+  const center = P(1, base, c);
+  // Façade : allège, trumeaux, puis le pignon au-dessus du linteau
+  const front: V[][] = [
+    [P(0, base - 0.02, c - hw), P(0, base - 0.02, c + hw), P(0, zS, c + hw), P(0, zS, c - hw)],
+    [P(0, zS, c - hw), P(0, zS, c - ww), P(0, zH, c - ww), P(0, zH, c - hw)],
+    [P(0, zS, c + ww), P(0, zS, c + hw), P(0, zH, c + hw), P(0, zH, c + ww)],
+    [P(0, zH, c - hw), P(0, zH, c + hw), P(0, zE, c + hw), P(0, zR, c), P(0, zE, c - hw)],
+  ];
+  // Jouées : du toit principal jusque sous les pans de la chapelle
+  const dIn = (z: number) => (z - base) / t;
+  const cheeks: V[][] = [c - hw, c + hw].map((v) => [P(0, base, v), P(0, zE, v), P(dIn(zE) + 0.1, zE, v)]);
+  // Pans : débord de 15 cm en façade et sur les côtés, jusqu'au rampant principal
+  const ov = 0.15;
+  const zEo = zE - ov * tp;
+  const slopes: V[][] = [-1, 1].map((sg) => {
+    const ve = c + sg * (hw + ov);
+    const poly = [P(-ov, zR, c), P(dIn(zR) + 0.12, zR, c), P(Math.max(-ov + 0.05, dIn(zEo) + 0.12), zEo, ve), P(-ov, zEo, ve)];
+    return poly;
+  });
+  // Fenêtre : au nu intérieur du parement
+  const win = { center: P(0.08, (zS + zH) / 2, c), w: dm.windowWidth, h: dm.head - dm.sill, alongY };
+  const cap = beam(P((dIn(zR) - ov) / 2, zR + 0.02, c), alongY ? v3(1, 0, 0) : v3(0, 0, 1), v3(0, 1, 0), dIn(zR) + ov + 0.1, 0.18, 0.12);
+  return { front, cheeks, slopes, win, center, cap };
+}
+
+type Click = (e: { stopPropagation: () => void; delta: number }) => void;
+
+export function RoofMesh({
+  building,
+  catalog,
+  selected,
+  onClick,
+  selectedWindow,
+  onWindowClick,
+}: {
+  building: Building;
+  catalog: Catalog;
+  selected: boolean;
+  onClick?: Click;
+  selectedWindow?: string | null;
+  onWindowClick?: (id: string) => Click;
+}) {
+  const roof = building.roof;
+  const f = useMemo(() => roofFrame(building), [building]);
+  const geo = useMemo(() => {
+    if (!f || !roof) return null;
+    const parts = roofParts(f, roof);
+    const center = v3((f.minX + f.maxX) / 2, f.base, (f.minY + f.maxY) / 2);
+    return {
+      slopes: parts.slopes.map((p) => slab(p, roof.type === 'plat' ? 0.3 : SLAB)),
+      timber: roofTimber(f, roof),
+      cap: ridgeCap(f, roof),
+      soffit: soffit(f, roof),
+      // Combles aménagés : les pignons sont les murs de l'étage, montés jusqu'au rampant
+      gables: roof.eave != null ? [] : parts.gables.map((p) => gable(p, center, 0.3)),
+      wings: (roof.type === 'deux-pans' ? (roof.wings ?? []) : []).map((wg) => {
+        // Haut des murs sous l'avancée (souvent un rez-de-chaussée seul)
+        const tops = building.walls
+          .filter((w) => {
+            const l = building.levels.find((x) => x.id === w.levelId);
+            const mx = (w.a.x + w.b.x) / 2;
+            const my = (w.a.y + w.b.y) / 2;
+            return l && mx >= wg.x0 - 0.05 && mx <= wg.x1 + 0.05 && my >= wg.y0 - 0.05 && my <= wg.y1 + 0.05;
+          })
+          .map((w) => building.levels.find((x) => x.id === w.levelId)!.elevation + w.height);
+        const wp = wingParts(f, roof, wg, tops.length ? Math.max(...tops) : f.base);
+        return { slopes: wp.slopes.map((p) => slab(p, SLAB)), walls: wp.walls.map((p) => gable(p, wp.center, 0.3)), cap: wp.cap };
+      }),
+      dormers: (roof.type === 'deux-pans' ? (roof.dormers ?? []) : []).map((dm) => {
+        const d = dormerParts(f, roof, dm);
+        return {
+          id: dm.id,
+          walls: [...d.front.map((p) => gable(p, d.center, 0.15)), ...d.cheeks.map((p) => gable(p, d.center, 0.15))],
+          slopes: d.slopes.map((p) => slab(p, 0.18)),
+          win: d.win,
+          cap: d.cap,
+        };
+      }),
+    };
+  }, [f, roof, building.walls, building.levels]);
+  if (!geo || !roof) return null;
+  const covering = fromProduct(productById(catalog, roof.coveringId), { color: '#9c4f36', pattern: { kind: 'rooftiles', w: 0.22, h: 0.3 }, roughness: 0.85 });
+  const top = surfaceMaterial(covering, selected);
+  // Sous des combles aménagés, le rampant est plafonné
+  const under = surfaceMaterial(roof.eave != null ? CEILING : ROOF_UNDERSIDE, selected);
+  // Rives et bandeaux d'égout : planche peinte foncée, comme la couverture
+  const edge = surfaceMaterial(FASCIA, selected);
+  const ud = { sel: { kind: 'roof', id: 'roof' } };
+  return (
+    <group>
+      {geo.slopes.map((g, i) => (
+        <mesh key={i} geometry={g} material={[top, under, edge]} castShadow receiveShadow userData={ud} onClick={onClick} />
+      ))}
+      {geo.soffit && <mesh geometry={geo.soffit} material={surfaceMaterial(ROOF_UNDERSIDE, selected, { side: THREE.DoubleSide })} receiveShadow userData={ud} onClick={onClick} />}
+      {geo.cap && <mesh geometry={geo.cap} material={surfaceMaterial({ color: `#${new THREE.Color(covering.color).multiplyScalar(0.72).getHexString()}`, roughness: 0.8 }, selected)} castShadow receiveShadow userData={ud} onClick={onClick} />}
+      {geo.timber && <mesh geometry={geo.timber} material={surfaceMaterial((outdoorById(TIMBERS, roof.timber) ?? TIMBERS[0]).surface, selected)} castShadow receiveShadow userData={ud} onClick={onClick} />}
+      {geo.gables.map((g, i) => (
+        <mesh key={`g${i}`} geometry={g} material={surfaceMaterial(gableSurface(building, catalog), selected)} castShadow receiveShadow userData={ud} onClick={onClick} />
+      ))}
+      {geo.wings.map((wg, i) => (
+        <group key={`w${i}`}>
+          {wg.slopes.map((g, j) => (
+            <mesh key={j} geometry={g} material={[top, surfaceMaterial(ROOF_UNDERSIDE, selected), edge]} castShadow receiveShadow userData={ud} onClick={onClick} />
+          ))}
+          {wg.walls.map((g, j) => (
+            <mesh key={`p${j}`} geometry={g} material={surfaceMaterial(gableSurface(building, catalog), selected)} castShadow receiveShadow userData={ud} onClick={onClick} />
+          ))}
+          <mesh geometry={wg.cap} material={surfaceMaterial({ color: `#${new THREE.Color(covering.color).multiplyScalar(0.72).getHexString()}`, roughness: 0.8 }, selected)} castShadow userData={ud} onClick={onClick} />
+        </group>
+      ))}
+      {geo.dormers.map((dm) => (
+        <group key={dm.id}>
+          {dm.walls.map((g, j) => (
+            <mesh key={j} geometry={g} material={surfaceMaterial(gableSurface(building, catalog), selected)} castShadow receiveShadow userData={ud} onClick={onClick} />
+          ))}
+          {dm.slopes.map((g, j) => (
+            <mesh key={`s${j}`} geometry={g} material={[top, surfaceMaterial(ROOF_UNDERSIDE, selected), edge]} castShadow receiveShadow userData={ud} onClick={onClick} />
+          ))}
+          <mesh geometry={dm.cap} material={surfaceMaterial({ color: `#${new THREE.Color(covering.color).multiplyScalar(0.72).getHexString()}`, roughness: 0.8 }, selected)} castShadow userData={ud} onClick={onClick} />
+          <group position={dm.win.center} rotation-y={dm.win.alongY ? Math.PI / 2 : 0}>
+            <mesh material={WIN_FRAME} castShadow userData={ud} onClick={onClick}>
+              <boxGeometry args={[dm.win.w, dm.win.h, 0.08]} />
+            </mesh>
+            {[-1, 1].map((sg) => (
+              <mesh key={sg} position={[0, 0, sg * 0.045]} material={PANE} userData={ud} onClick={onClick}>
+                <boxGeometry args={[dm.win.w - 0.14, dm.win.h - 0.14, 0.012]} />
+              </mesh>
+            ))}
+          </group>
+        </group>
+      ))}
+      {f &&
+        (building.chimneys ?? []).map((c) => {
+          // Débouché 60 cm au-dessus du faîtage
+          const top = f.base + f.rise + 0.6;
+          const h = top - c.base;
+          const cx = (c.x0 + c.x1) / 2;
+          const cz = (c.y0 + c.y1) / 2;
+          const sx = c.x1 - c.x0;
+          const sz = c.y1 - c.y0;
+          return (
+            <group key={c.id}>
+              <mesh position={[cx, c.base + h / 2, cz]} geometry={boxInMetres(sx, h, sz)} material={surfaceMaterial(gableSurface(building, catalog), selected)} castShadow receiveShadow userData={ud} onClick={onClick} />
+              <mesh position={[cx, top + 0.04, cz]} material={CHIMNEY_CAP} castShadow userData={ud} onClick={onClick}>
+                <boxGeometry args={[sx + 0.1, 0.08, sz + 0.1]} />
+              </mesh>
+            </group>
+          );
+        })}
+      {f && (roof.windows ?? []).map((w) => <RoofWindowMesh key={w.id} win={w} roof={roof} f={f} selected={selected || selectedWindow === w.id} onClick={onWindowClick ? onWindowClick(w.id) : onClick} />)}
+    </group>
+  );
+}
+
+const FRAME = new THREE.MeshStandardMaterial({ color: '#3d3f42', roughness: 0.5, metalness: 0.3 });
+const PANE = new THREE.MeshStandardMaterial({ color: '#5f7d93', roughness: 0.08, metalness: 0.4, envMapIntensity: 1.6 });
+/** Pavé dont les coordonnées de texture sont en mètres (briques à la bonne taille sur chaque face). */
+function boxInMetres(sx: number, sy: number, sz: number): THREE.BufferGeometry {
+  const g = new THREE.BoxGeometry(sx, sy, sz);
+  const uv = g.getAttribute('uv') as THREE.BufferAttribute;
+  // Faces dans l'ordre +x, -x, +y, -y, +z, -z ; 4 sommets chacune
+  const dims: [number, number][] = [[sz, sy], [sz, sy], [sx, sz], [sx, sz], [sx, sy], [sx, sy]];
+  for (let f = 0; f < 6; f++) for (let i = 0; i < 4; i++) uv.setXY(f * 4 + i, uv.getX(f * 4 + i) * dims[f][0], uv.getY(f * 4 + i) * dims[f][1]);
+  uv.needsUpdate = true;
+  return g;
+}
+
+const FASCIA = { color: '#3b3330', roughness: 0.7 };
+const CHIMNEY_CAP = new THREE.MeshStandardMaterial({ color: '#8d8f8c', roughness: 0.9 });
+const WIN_FRAME = new THREE.MeshStandardMaterial({ color: '#f2f2ee', roughness: 0.45 });
+const SKY = new THREE.MeshStandardMaterial({ color: '#cfe3f3', roughness: 0.3, emissive: '#9fc3e0', emissiveIntensity: 0.55 });
+
+/** Fenêtre de toit : cadre et vitre posés dans le pan, et le jour vu de l'intérieur. */
+function RoofWindowMesh({ win, roof, f, selected, onClick }: { win: RoofWindow; roof: Roof; f: RoofFrame; selected: boolean; onClick?: (e: { stopPropagation: () => void; delta: number }) => void }) {
+  const place = useMemo(() => {
+    if (roof.type !== 'deux-pans' && roof.type !== 'monopente') return null;
+    const th = (roof.pitch * Math.PI) / 180;
+    const t = Math.tan(th);
+    const alongX = roof.ridge === 'x';
+    const c = alongX ? win.y : win.x;
+    const lo = alongX ? f.minY : f.minX;
+    const hi = alongX ? f.maxY : f.maxX;
+    const loSide = roof.type === 'monopente' || c < (lo + hi) / 2;
+    const d = loSide ? c - lo : hi - c;
+    const h = f.base + Math.max(0, d) * t;
+    // Repère du pan : u le long du faîtage, s en montant la pente, n la normale vers le ciel
+    const sgn = loSide ? 1 : -1;
+    const u = alongX ? v3(1, 0, 0) : v3(0, 0, 1);
+    const sUp = alongX ? v3(0, Math.sin(th), sgn * Math.cos(th)) : v3(sgn * Math.cos(th), Math.sin(th), 0);
+    const n = new THREE.Vector3().crossVectors(sUp, u).normalize();
+    if (n.y < 0) n.negate();
+    // Repère direct (sinon, sur le second pan, la rotation est fausse et la fenêtre sort du toit)
+    const ux = new THREE.Vector3().crossVectors(n, sUp).normalize();
+    const m = new THREE.Matrix4().makeBasis(ux, n, sUp);
+    const q = new THREE.Quaternion().setFromRotationMatrix(m);
+    const center = v3(win.x, h, win.y);
+    const L = win.length / Math.cos(th);
+    return { q, center, n, L };
+  }, [win, roof, f]);
+  if (!place) return null;
+  const { q, center, n, L } = place;
+  const at = (k: number) => center.clone().addScaledVector(n, k).toArray() as [number, number, number];
+  const ud = { sel: { kind: 'roofWindow', id: win.id } };
+  return (
+    <group>
+      <mesh position={at(0.03)} quaternion={q} material={selected ? surfaceMaterial({ color: '#3d3f42' }, true) : FRAME} userData={ud} onClick={onClick} castShadow>
+        <boxGeometry args={[win.width, 0.07, L]} />
+      </mesh>
+      <mesh position={at(0.07)} quaternion={q} material={PANE} userData={ud} onClick={onClick}>
+        <boxGeometry args={[win.width - 0.12, 0.02, L - 0.12]} />
+      </mesh>
+      {/* Côté intérieur : le jour du ciel dans l'épaisseur du toit */}
+      <mesh position={at(-0.13)} quaternion={q} material={SKY} userData={ud} onClick={onClick}>
+        <boxGeometry args={[win.width - 0.1, 0.3, L - 0.1]} />
+      </mesh>
+    </group>
+  );
+}

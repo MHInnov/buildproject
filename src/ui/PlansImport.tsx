@@ -1,0 +1,380 @@
+import { useRef, useState } from 'react';
+import { aiReadPlan, aiReadSection } from '../ai';
+import { applySectionFacts } from '../model/sectionFacts';
+import { putAsset, shrinkImage } from '../assets';
+import { isFloorKind, PLAN_KIND_LABELS, parseDrawingScale, pdfScale, type PlanKind, type SectionReading } from '../model/plans';
+import type { Bitmap, TracedWall } from '../model/vectorize';
+import { decode, isPdf, nextFrame, pdfPages, type PlanPage } from '../planFiles';
+import { analysePlan, classifyPages, importPlans, levelFor, type ImportReport, type PlanInput } from '../plansImport';
+import { aiIsLocal, aiReady, apiConfigured, useSettings } from '../settings';
+import { reviewLevel } from '../aiReview';
+import { AdminDialog } from './AdminDialog';
+import { useStore } from '../store';
+import { applyAiReading, applyStoreys } from '../traceApply';
+import { ocrRoomNames } from '../ocr';
+
+interface Item {
+  id: string;
+  label: string;
+  thumb: string;
+  dataUrl: string;
+  width: number;
+  height: number;
+  bmp: Bitmap;
+  k: number;
+  kind: PlanKind;
+  /** Échelle d'après le PDF, en m par pixel de l'image enregistrée. */
+  knownScale: number | null;
+  scaleText: string | null;
+  /** Le nom du fichier ou la page indiquait le niveau. */
+  hinted: boolean;
+  summary: string;
+  /** Pourquoi la page est écartée (doublon, plan en trop). */
+  note?: string;
+  walls: TracedWall[];
+  rooms: number;
+  doors: number;
+  section: SectionReading | null;
+}
+
+const KIND_ORDER: PlanKind[] = ['cave', 'rdc', 'etage1', 'etage2', 'etage3', 'combles', 'coupe', 'implantation', 'ignorer'];
+
+/**
+ * Import de tout le dossier de plans d'un coup : plans de chaque niveau et coupes, en images ou PDF
+ * de plusieurs pages. Chaque page est classée automatiquement (modifiable), puis tout est retracé ensemble.
+ */
+export function PlansImport({ onClose }: { onClose: () => void }) {
+  const editExisting = useStore((s) => s.editExisting);
+  const setLevel = useStore((s) => s.setLevel);
+  const settings = useSettings();
+  const input = useRef<HTMLInputElement>(null);
+  const [items, setItems] = useState<Item[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [report, setReport] = useState<ImportReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [useAi, setUseAi] = useState(aiReady(settings));
+  const [showAdmin, setShowAdmin] = useState(false);
+  const apiOk = apiConfigured(settings);
+
+  async function addFiles(files: File[]) {
+    setError(null);
+    setReport(null);
+    const added: Item[] = [];
+    try {
+      for (const f of files) {
+        setBusy(`Lecture de ${f.name}…`);
+        await nextFrame();
+        const pages: PlanPage[] = isPdf(f) ? await pdfPages(f) : [{ canvas: await toCanvas(f), text: '', pxPerPt: null, label: f.name }];
+        for (const pg of pages) {
+          setBusy(`Analyse de ${pg.label}…`);
+          await nextFrame();
+          const shrunk = await shrinkImage(pg.canvas, 2400, 0.86);
+          const { bmp, k } = await decode(shrunk.dataUrl, 1600);
+          const a = analysePlan(bmp, pg.label, pg.text);
+          const denom = parseDrawingScale(pg.text);
+          // pxPerPt est donné pour le canvas rendu ; l'image enregistrée a pu être réduite
+          const knownScale = denom && pg.pxPerPt ? pdfScale(pg.pxPerPt * (shrunk.width / pg.canvas.width), denom) : null;
+          const thumb = await shrinkImage(pg.canvas, 220, 0.7);
+          const t = a.trace;
+          added.push({
+            id: `${Date.now()}-${added.length}`,
+            label: pg.label,
+            thumb: thumb.dataUrl,
+            dataUrl: shrunk.dataUrl,
+            width: shrunk.width,
+            height: shrunk.height,
+            bmp,
+            k,
+            kind: a.kind,
+            knownScale,
+            scaleText: denom ? `1/${denom}` : null,
+            hinted: !!a.hint && a.hint === a.kind,
+            walls: t?.walls ?? [],
+            rooms: t?.rooms ?? 0,
+            doors: t?.openings.filter((o) => o.kind === 'porte').length ?? 0,
+            section: a.section,
+            summary:
+              a.kind === 'coupe' && a.section
+                ? `${a.section.slabs.length} planchers${a.section.roof ? `, toit ${a.section.roof.type === 'plat' ? 'plat' : `en pente (${a.section.roof.pitch}°)`}` : ''}`
+                : t
+                  ? `${t.walls.length} murs, ${t.rooms} pièces`
+                  : 'aucun mur reconnu',
+          });
+        }
+      }
+      // Les plans sans indication de niveau sont pris dans l'ordre des fichiers ; doublons et plans en trop écartés
+      setBusy('Comparaison des pages…');
+      await nextFrame();
+      const all = [...items, ...added];
+      const sorted = classifyPages(all.map((x) => ({ kind: x.kind, hinted: x.hinted || items.includes(x), name: x.label, walls: x.walls, rooms: x.rooms, doors: x.doors, section: x.section })));
+      setItems(all.map((x, i) => ({ ...x, kind: sorted[i].kind, note: sorted[i].note ?? (items.includes(x) ? x.note : undefined) })));
+    } catch (e) {
+      setError(`Impossible de lire ce fichier (${(e as Error).message}).`);
+      if (added.length) setItems([...items, ...added]);
+    }
+    setBusy(null);
+  }
+
+  async function run() {
+    setError(null);
+    const used = items.filter((x) => x.kind !== 'ignorer');
+    const b0 = useStore.getState().project.existing;
+    // Une seule confirmation pour tous les niveaux qui ont déjà des murs
+    const replaced = new Map<string, number>();
+    const probe = structuredClone(b0);
+    for (const it of used.filter((x) => isFloorKind(x.kind))) {
+      const l = levelFor(probe, it.kind);
+      const n = b0.walls.filter((w) => w.levelId === l.id).length;
+      if (n) replaced.set(l.name, n);
+    }
+    if (replaced.size && !confirm(`Remplacer les murs déjà dessinés (${[...replaced].map(([n, c]) => `${n} : ${c} murs`).join(', ')}) par le retraçage des plans ?`)) return;
+    setBusy('Retraçage de tous les plans…');
+    await nextFrame();
+    try {
+      const inputs: PlanInput[] = [];
+      for (const it of used) {
+        inputs.push({ kind: it.kind, bmp: it.bmp, k: it.k, assetId: await putAsset(it.dataUrl), width: it.width, height: it.height, name: it.label, knownScale: it.knownScale });
+      }
+      let rep: ImportReport | null = null;
+      editExisting((b) => void (rep = importPlans(b, inputs)));
+      const r = rep as ImportReport | null;
+      if (!r) throw new Error('rien à importer');
+      // Sans IA, ou avec l'IA locale : noms des pièces lus sur les plans par l'OCR local (l'IA locale ne nomme
+      // ensuite que les pièces restées sans nom)
+      if (!(useAi && apiConfigured()) || aiIsLocal()) {
+        const b1 = useStore.getState().project.existing;
+        for (const it of used.filter((x) => isFloorKind(x.kind))) {
+          const l = b1.levels.find((x) => x.underlay?.assetId && inputs.find((i) => i.name === it.label)?.assetId === x.underlay.assetId);
+          if (!l?.underlay) continue;
+          setBusy(`Lecture des noms des pièces, ${it.label}…`);
+          try {
+            const rooms = await ocrRoomNames(it.dataUrl, it.width, it.height, (d, n) => setBusy(`Lecture des noms des pièces, ${it.label} (${Math.round((100 * d) / n)} %)…`));
+            const ul = l.underlay;
+            editExisting((b) => applyAiReading(b, l.id, ul, { rooms, openings: [] }));
+            if (rooms.length) r.lines.push(`${l.name} : ${rooms.length} noms de pièces lus sur le plan (${rooms.map((x) => x.name).join(', ')}).`);
+          } catch (e) {
+            r.warnings.push(`Lecture des noms des pièces, ${it.label} : ${(e as Error).message}`);
+          }
+        }
+      }
+      // IA facultative. Claude lit d'abord le plan entier (noms des pièces, ouvertures manquées) ; puis, avec
+      // Claude comme avec l'IA locale, chaque ouverture et chaque façade est relue sur une vue rapprochée
+      if (useAi && apiConfigured()) {
+        const local = aiIsLocal();
+        const b1 = useStore.getState().project.existing;
+        for (const it of used.filter((x) => isFloorKind(x.kind))) {
+          const l = b1.levels.find((x) => x.underlay?.assetId && inputs.find((i) => i.name === it.label)?.assetId === x.underlay.assetId);
+          if (!l?.underlay) continue;
+          try {
+            if (!local) {
+              setBusy(`L'IA lit ${it.label}…`);
+              const res = await aiReadPlan(it.dataUrl, it.width, it.height);
+              const ul = l.underlay;
+              editExisting((b) => applyAiReading(b, l.id, ul, res));
+              r.lines.push(`${l.name} : ${res.rooms.length} pièces nommées par l'IA.`);
+            }
+            const rv = await reviewLevel(l.id, setBusy, { rooms: local });
+            r.lines.push(...rv.lines);
+            r.warnings.push(...rv.warnings);
+          } catch (e) {
+            r.warnings.push(`IA, ${it.label} : ${(e as Error).message}`);
+          }
+        }
+      }
+      // IA : cotes des coupes (hauteurs sous plafond, allèges, linteaux, soubassement, toit), plus sûres que le dessin
+      if (useAi && apiConfigured()) {
+        let storeysDone = false;
+        for (const it of used.filter((x) => x.kind === 'coupe')) {
+          setBusy(`L'IA lit les cotes de ${it.label}…`);
+          try {
+            const facts = await aiReadSection(it.dataUrl);
+            let notes: string[] = [];
+            editExisting((b) => {
+              notes = applySectionFacts(b, facts);
+              // Hauteurs sous plafond : la première coupe qui en donne fait foi, comme pour la lecture du dessin
+              const st = (facts.storeys ?? []).filter((x) => x.height >= 1.6 && x.height <= 6).sort((m, n) => m.storey - n.storey);
+              if (storeysDone || !st.length) return;
+              const sorted = [...b.levels].sort((m, n) => m.elevation - n.elevation);
+              const g = sorted.indexOf([...b.levels].sort((m, n) => Math.abs(m.elevation) - Math.abs(n.elevation))[0]);
+              const first = sorted[g + st[0].storey];
+              // Niveaux consécutifs seulement : un trou dans la liste décalerait les étages
+              const run = st.filter((x, i) => x.storey === st[0].storey + i);
+              if (!first) return;
+              const changed = applyStoreys(b, run.map((x) => ({ height: Math.round(x.height * 100) / 100, slab: x.slab ?? 0 })), first.id);
+              if (changed.length) {
+                storeysDone = true;
+                notes.push(`hauteurs sous plafond : ${changed.map((id) => b.levels.find((l) => l.id === id)!).map((l) => `${l.name} ${l.height.toFixed(2).replace('.', ',')} m`).join(', ')}`);
+              }
+            });
+            r.lines.push(...notes.map((n) => `${it.label} (IA) : ${n}`));
+          } catch (e) {
+            r.warnings.push(`IA, ${it.label} : ${(e as Error).message}`);
+          }
+        }
+      }
+      // Une seule fois la phrase commune à tous les niveaux relus
+      r.lines = r.lines.filter((l, i) => r.lines.indexOf(l) === i);
+      if (r.levelId) setLevel(r.levelId);
+      setReport(r);
+    } catch (e) {
+      setError(`Import impossible : ${(e as Error).message}.`);
+    }
+    setBusy(null);
+  }
+
+  const floors = items.filter((x) => isFloorKind(x.kind));
+  const dup = KIND_ORDER.filter((k) => isFloorKind(k) && floors.filter((x) => x.kind === k).length > 1);
+
+  return (
+    <div className="modal" role="dialog" aria-modal="true" aria-labelledby="plans-title" onClick={busy ? undefined : onClose}>
+      <div className="modal__box modal__box--wide" onClick={(e) => e.stopPropagation()}>
+        <h2 id="plans-title">Importer tous les plans</h2>
+        <p className="muted small">
+          Déposez d'un coup tous les plans de la maison : un plan par niveau (cave, rez-de-chaussée, étages, combles) et les coupes. Images ou PDF, même de plusieurs pages. Chaque
+          page est reconnue d'après son nom, son cartouche et son dessin ; corrigez si besoin. Tout est ensuite retracé ensemble : même échelle pour tous les plans (lue sur le PDF
+          quand le cartouche l'indique), étages calés sur le rez-de-chaussée, hauteurs sous plafond et toit lus sur la coupe.
+        </p>
+        <div className="ai-choice">
+          <span>Aide de l'IA :</span>
+          <div className="segmented segmented--small" role="radiogroup" aria-label="Aide de l'IA">
+            <button type="button" role="radio" aria-checked={!useAi} className={useAi ? '' : 'is-active'} onClick={() => setUseAi(false)} disabled={!!busy}>
+              Sans IA
+            </button>
+            <button type="button" role="radio" aria-checked={useAi} className={useAi ? 'is-active' : ''} onClick={() => setUseAi(true)} disabled={!!busy}>
+              Avec IA
+            </button>
+          </div>
+          <span className="muted small">
+            {useAi
+              ? apiOk
+                ? settings.aiProvider === 'locale'
+                  ? `Après le tracé, l'IA locale (${settings.localModel}) relit chaque porte et fenêtre, cherche les baies oubliées, nomme les pièces et lit les cotes des coupes. Rien ne quitte votre réseau ; compter de 1 à 5 minutes par plan selon la carte graphique.`
+                  : "Après le tracé, Claude nomme les pièces, relit chaque porte et fenêtre, cherche les baies oubliées et lit les cotes des coupes (appel à l'API définie dans les paramètres)."
+                : "Aucune IA n'est définie : l'import se fera sans IA tant qu'elle n'est pas renseignée."
+              : 'Tout est retracé sur cet appareil, sans envoyer les plans.'}
+          </span>
+          {useAi && (
+            <button
+              type="button"
+              className="btn btn--small"
+              onClick={() => {
+                // Ouvre l'administration sur la partie IA, où se règle l'adresse de l'API
+                if (!settings.aiEnabled) settings.update({ aiEnabled: true });
+                setShowAdmin(true);
+              }}
+              disabled={!!busy}
+            >
+              Paramètres de l'IA…
+            </button>
+          )}
+        </div>
+        <input
+          ref={input}
+          type="file"
+          multiple
+          accept="image/*,application/pdf,.pdf"
+          hidden
+          onChange={(e) => {
+            const fs = [...(e.target.files ?? [])];
+            e.target.value = '';
+            if (fs.length) void addFiles(fs);
+          }}
+        />
+        <div
+          className="dropzone"
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            const fs = [...e.dataTransfer.files].filter((f) => isPdf(f) || f.type.startsWith('image/'));
+            if (fs.length) void addFiles(fs);
+          }}
+        >
+          <button className="btn btn--primary" onClick={() => input.current?.click()} disabled={!!busy}>
+            Choisir les fichiers…
+          </button>
+          <span className="muted small">ou glissez-les ici</span>
+        </div>
+        {items.length > 0 && (
+          <ul className="plan-list">
+            {items.map((it) => (
+              <li key={it.id}>
+                <img src={it.thumb} alt="" />
+                <div>
+                  <strong>{it.label}</strong>
+                  <span className="muted small">
+                    {it.summary}
+                    {it.scaleText ? ` · échelle ${it.scaleText}` : ''}
+                    {it.note && it.kind === 'ignorer' ? ` · écartée : ${it.note}` : ''}
+                  </span>
+                </div>
+                <select
+                  value={it.kind}
+                  aria-label={`Contenu de ${it.label}`}
+                  onChange={(e) => setItems(items.map((x) => (x.id === it.id ? { ...x, kind: e.target.value as PlanKind, hinted: true, note: undefined } : x)))}
+                >
+                  {KIND_ORDER.map((k) => (
+                    <option key={k} value={k}>
+                      {PLAN_KIND_LABELS[k]}
+                    </option>
+                  ))}
+                </select>
+                <button className="link" onClick={() => setItems(items.filter((x) => x.id !== it.id))} aria-label={`Retirer ${it.label}`}>
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {dup.length > 0 && <p className="warning">Deux plans pour le même niveau ({dup.map((k) => PLAN_KIND_LABELS[k]).join(', ')}) : un seul sera retracé.</p>}
+        {items.length > 0 && !floors.length && <p className="warning">Ajoutez au moins un plan de niveau : la coupe seule ne donne pas les murs.</p>}
+        {busy && <p className="muted small">{busy}</p>}
+        {error && <p className="warning">{error}</p>}
+        {report && (
+          <ul className="log">
+            {report.lines.map((l, i) => (
+              <li key={i}>✓ {l}</li>
+            ))}
+            {report.warnings.map((l, i) => (
+              <li key={`w${i}`}>⚠ {l}</li>
+            ))}
+          </ul>
+        )}
+        <div className="actions">
+          {report ? (
+            <button className="btn btn--primary" onClick={onClose}>
+              Terminer
+            </button>
+          ) : (
+            <>
+              <button className="btn" onClick={onClose} disabled={!!busy}>
+                Annuler
+              </button>
+              <button className="btn btn--primary" onClick={() => void run()} disabled={!!busy || !floors.length}>
+                Retracer {floors.length > 1 ? `les ${floors.length} niveaux` : 'le niveau'}
+                {items.some((x) => x.kind === 'coupe') ? ' et lire la coupe' : ''}
+              </button>
+            </>
+          )}
+        </div>
+        {report && <p className="muted small">Vérifiez chaque niveau avec les onglets au-dessus du plan ; « Annuler » (Ctrl+Z) revient à l'état d'avant l'import.</p>}
+      </div>
+      {showAdmin && (
+        <div onClick={(e) => e.stopPropagation()}>
+          <AdminDialog onClose={() => setShowAdmin(false)} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+async function toCanvas(f: File): Promise<HTMLCanvasElement> {
+  const img = await createImageBitmap(f);
+  const c = document.createElement('canvas');
+  c.width = img.width;
+  c.height = img.height;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.drawImage(img, 0, 0);
+  return c;
+}

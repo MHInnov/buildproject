@@ -1,0 +1,51 @@
+# Lancer l'application en local : docker compose up --build
+# puis ouvrir http://localhost:7080
+#
+# Avec l'IA locale (modèle de vision open source, rien n'est envoyé dehors) :
+#   docker compose --profile ia up --build
+# Avec une carte graphique NVIDIA (fortement conseillé) :
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile ia up --build
+# Autre modèle : IA_MODELE=qwen2.5vl:3b docker compose --profile ia up --build
+# Ollama déjà installé sur le poste (Mac : il utilise la puce graphique) :
+#   OLLAMA_URL=http://host.docker.internal:11434 docker compose up --build
+services:
+  app:
+    build: .
+    image: construprojet:local
+    ports:
+      - "7080:80"
+    environment:
+      OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # IA locale : serveur Ollama, joignable seulement par l'application (relais /ia-locale), pas de port ouvert
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ia"]
+    volumes:
+      - ollama:/root/.ollama
+    environment:
+      OLLAMA_KEEP_ALIVE: 15m
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  # Télécharge le modèle de vision au premier lancement (une seule fois, gardé dans le volume « ollama »)
+  ollama-modele:
+    image: ollama/ollama:latest
+    profiles: ["ia"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["ollama", "pull", "${IA_MODELE:-qwen2.5vl:7b}"]
+    restart: "no"
+
+volumes:
+  ollama:

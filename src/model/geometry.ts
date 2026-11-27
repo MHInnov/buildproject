@@ -1,0 +1,379 @@
+import type { Building, Opening, Point, Room, RoomLabel, Wall, WallSide } from './types';
+
+export const EPS = 0.01; // 1 cm
+
+export const dist = (p: Point, q: Point) => Math.hypot(p.x - q.x, p.y - q.y);
+export const samePoint = (p: Point, q: Point, eps = EPS) => dist(p, q) < eps;
+export const wallLength = (w: Wall) => dist(w.a, w.b);
+
+export function lerp(p: Point, q: Point, t: number): Point {
+  return { x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t };
+}
+
+/** Projection d'un point sur un segment : paramètre t (0..1) et distance. */
+export function projectOnSegment(p: Point, a: Point, b: Point): { t: number; d: number; point: Point } {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return { t: 0, d: dist(p, a), point: a };
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  const point = { x: a.x + t * dx, y: a.y + t * dy };
+  return { t, d: dist(p, point), point };
+}
+
+/** Normale unitaire du côté « gauche » du mur (sens a → b). */
+export function wallNormal(w: Wall, side: WallSide = 'gauche'): Point {
+  const L = wallLength(w) || 1;
+  const n = { x: -(w.b.y - w.a.y) / L, y: (w.b.x - w.a.x) / L };
+  return side === 'gauche' ? n : { x: -n.x, y: -n.y };
+}
+
+export function signedArea(poly: Point[]): number {
+  let s = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i];
+    const q = poly[(i + 1) % poly.length];
+    s += p.x * q.y - q.x * p.y;
+  }
+  return s / 2;
+}
+
+export function perimeter(poly: Point[]): number {
+  let s = 0;
+  for (let i = 0; i < poly.length; i++) s += dist(poly[i], poly[(i + 1) % poly.length]);
+  return s;
+}
+
+export function centroid(poly: Point[]): Point {
+  const a = signedArea(poly);
+  if (Math.abs(a) < 1e-9) {
+    const n = poly.length || 1;
+    return { x: poly.reduce((s, p) => s + p.x, 0) / n, y: poly.reduce((s, p) => s + p.y, 0) / n };
+  }
+  let cx = 0;
+  let cy = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i];
+    const q = poly[(i + 1) % poly.length];
+    const f = p.x * q.y - q.x * p.y;
+    cx += (p.x + q.x) * f;
+    cy += (p.y + q.y) * f;
+  }
+  return { x: cx / (6 * a), y: cy / (6 * a) };
+}
+
+export function pointInPolygon(p: Point, poly: Point[]): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i];
+    const b = poly[j];
+    if (a.y > p.y !== b.y > p.y && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
+/** Un point garanti à l'intérieur du polygone (centroïde, sinon recherche le long d'une ligne). */
+export function interiorPoint(poly: Point[], holes: Point[][] = []): Point {
+  const c = centroid(poly);
+  if (!holes.length) {
+    if (pointInPolygon(c, poly)) return c;
+    const ys = poly.map((p) => p.y);
+    const y = (Math.min(...ys) + Math.max(...ys)) / 2 + 1e-4;
+    const cuts: number[] = [];
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const a = poly[i];
+      const b = poly[j];
+      if (a.y > y !== b.y > y) cuts.push(((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x);
+    }
+    cuts.sort((m, n) => m - n);
+    return cuts.length >= 2 ? { x: (cuts[0] + cuts[1]) / 2, y } : c;
+  }
+  const ok = (p: Point) => pointInPolygon(p, poly) && !holes.some((h) => pointInPolygon(p, h));
+  const clearance = (p: Point) => Math.min(...[poly, ...holes].flatMap((ring) => ring.map((a, i) => projectOnSegment(p, a, ring[(i + 1) % ring.length]).d)));
+  if (ok(c) && clearance(c) > 0.6) return c;
+  // Point le plus dégagé d'une grille : loin des murs et hors des îlots.
+  const xs = poly.map((p) => p.x);
+  const ys = poly.map((p) => p.y);
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  let best: Point | null = null;
+  let bestD = -1;
+  const n = 24;
+  for (let i = 1; i < n; i++)
+    for (let j = 1; j < n; j++) {
+      const p = { x: x0 + ((x1 - x0) * i) / n, y: y0 + ((y1 - y0) * j) / n };
+      if (!ok(p)) continue;
+      const d = clearance(p);
+      if (d > bestD) {
+        bestD = d;
+        best = p;
+      }
+    }
+  return best ? { x: Math.round(best.x * 100) / 100, y: Math.round(best.y * 100) / 100 } : c;
+}
+
+/** Le point est-il dans la pièce (et pas dans une pièce enclavée) ? */
+export function inRoom(p: Point, room: { polygon: Point[]; holes?: Point[][] }): boolean {
+  return pointInPolygon(p, room.polygon) && !(room.holes ?? []).some((h) => pointInPolygon(p, h));
+}
+
+const key = (p: Point) => `${Math.round(p.x * 100)},${Math.round(p.y * 100)}`;
+
+/** Identifiant stable d'une pièce sans étiquette, dérivé de son niveau et de sa position. */
+export const autoRoomId = (levelId: string, p: Point) => `auto:${levelId}:${Math.round(p.x * 100)}:${Math.round(p.y * 100)}`;
+
+export function parseAutoRoomId(id: string): { levelId: string; at: Point } | null {
+  const m = /^auto:(?:(.+):)?(-?\d+):(-?\d+)$/.exec(id);
+  return m ? { levelId: m[1] ?? 'rdc', at: { x: Number(m[2]) / 100, y: Number(m[3]) / 100 } } : null;
+}
+
+interface HalfEdge {
+  from: string;
+  to: string;
+  wallId: string;
+  angle: number;
+  used: boolean;
+}
+
+/**
+ * Détecte les pièces (faces fermées du graphe des murs).
+ * Les murs doivent se rejoindre par leurs extrémités (le plan découpe les murs aux jonctions en T).
+ */
+export function detectRooms(building: Building): Room[] {
+  const levelIds = [...new Set(building.walls.map((w) => w.levelId))];
+  return levelIds.flatMap((lid) => detectLevelRooms(building, lid));
+}
+
+function detectLevelRooms(building: Building, levelId: string): Room[] {
+  const levelWalls = building.walls.filter((w) => w.levelId === levelId);
+  const nodes = new Map<string, Point>();
+  const out = new Map<string, HalfEdge[]>();
+  for (const w of levelWalls) {
+    if (wallLength(w) < EPS) continue;
+    const ka = key(w.a);
+    const kb = key(w.b);
+    if (ka === kb) continue;
+    // Les angles se calculent sur les nœuds (et non sur les extrémités de chaque mur, qui peuvent
+    // différer d'une fraction de millimètre après une découpe) pour que le parcours retrouve l'arête retour.
+    if (!nodes.has(ka)) nodes.set(ka, w.a);
+    if (!nodes.has(kb)) nodes.set(kb, w.b);
+    const na = nodes.get(ka)!;
+    const nb = nodes.get(kb)!;
+    const ab: HalfEdge = { from: ka, to: kb, wallId: w.id, angle: Math.atan2(nb.y - na.y, nb.x - na.x), used: false };
+    const ba: HalfEdge = { from: kb, to: ka, wallId: w.id, angle: Math.atan2(na.y - nb.y, na.x - nb.x), used: false };
+    if (!out.has(ka)) out.set(ka, []);
+    if (!out.has(kb)) out.set(kb, []);
+    out.get(ka)!.push(ab);
+    out.get(kb)!.push(ba);
+  }
+  for (const list of out.values()) list.sort((m, n) => m.angle - n.angle);
+
+  const faces: { poly: Point[]; wallIds: string[] }[] = [];
+  for (const list of out.values()) {
+    for (const start of list) {
+      if (start.used) continue;
+      const poly: Point[] = [];
+      const wallIds: string[] = [];
+      let e: HalfEdge = start;
+      let guard = 0;
+      while (!e.used && guard++ < 10000) {
+        e.used = true;
+        poly.push(nodes.get(e.from)!);
+        wallIds.push(e.wallId);
+        // À l'arrivée, on prend l'arête sortante qui suit (dans l'ordre angulaire) l'arête retour.
+        const around = out.get(e.to)!;
+        const back = Math.atan2(nodes.get(e.from)!.y - nodes.get(e.to)!.y, nodes.get(e.from)!.x - nodes.get(e.to)!.x);
+        let idx = around.findIndex((h) => h.to === e.from && Math.abs(h.angle - back) < 1e-9);
+        if (idx < 0) idx = 0;
+        e = around[(idx - 1 + around.length) % around.length];
+      }
+      if (poly.length >= 3) faces.push({ poly, wallIds });
+    }
+  }
+
+  const wallsById = new Map(levelWalls.map((w) => [w.id, w]));
+  // Aire intérieure approchée : on retire la demi-épaisseur des murs le long du périmètre.
+  const innerArea = (poly: Point[], wallIds: string[], a: number) => {
+    let inner = a;
+    for (let i = 0; i < wallIds.length; i++) {
+      const w = wallsById.get(wallIds[i]);
+      if (w) inner -= dist(poly[i], poly[(i + 1) % poly.length]) * (w.thickness / 2);
+    }
+    return inner;
+  };
+  const cand = faces
+    .map((f) => ({ ...f, simple: simplify(f.poly), a: signedArea(f.poly) }))
+    .filter((f) => f.a > 0.05)
+    .map((f) => ({ ...f, probe: interiorPoint(f.simple) }));
+  // Une pièce dessinée à l'intérieur d'une autre sans la toucher (îlot) : elle est retirée de la pièce qui l'entoure.
+  const parent = cand.map((f, i) => {
+    let best = -1;
+    cand.forEach((g, j) => {
+      if (j !== i && g.a > f.a && pointInPolygon(f.probe, g.simple) && (best < 0 || g.a < cand[best].a)) best = j;
+    });
+    return best;
+  });
+  const holesOf = cand.map((_, j) => cand.filter((__, i) => parent[i] === j));
+  // Chaque étiquette va à la plus petite pièce qui la contient.
+  const owner = new Map<string, number>();
+  for (const r of building.rooms) {
+    if (r.levelId !== levelId) continue;
+    let best = -1;
+    cand.forEach((g, j) => {
+      if (pointInPolygon(r.at, g.simple) && (best < 0 || g.a < cand[best].a)) best = j;
+    });
+    if (best >= 0 && ![...owner.values()].includes(best)) owner.set(r.id, best);
+  }
+  const rooms: Room[] = [];
+  cand.forEach((f, j) => {
+    const poly = f.simple;
+    const holes = holesOf[j].map((h) => h.simple);
+    const labelId = [...owner.entries()].find(([, k]) => k === j)?.[0];
+    const label = labelId ? building.rooms.find((r) => r.id === labelId) : undefined;
+    const at = label ? label.at : interiorPoint(poly, holes);
+    const finalLabel: RoomLabel = label ?? { id: autoRoomId(levelId, at), levelId, at, name: 'Pièce', floorProductId: null };
+    let inner = innerArea(f.poly, f.wallIds, f.a);
+    // L'îlot retire sa surface et l'épaisseur de ses murs.
+    for (const h of holesOf[j]) inner -= 2 * h.a - innerArea(h.poly, h.wallIds, h.a);
+    const uniqueWalls = [...new Set([...f.wallIds, ...holesOf[j].flatMap((h) => h.wallIds)])];
+    rooms.push({ label: finalLabel, polygon: poly, area: Math.max(0, inner), perimeter: perimeter(poly) + holes.reduce((s0, h) => s0 + perimeter(h), 0), wallIds: uniqueWalls, ...(holes.length ? { holes } : {}) });
+  });
+  return rooms;
+}
+
+/** Retire les sommets alignés et les doublons consécutifs. */
+function simplify(poly: Point[]): Point[] {
+  const res: Point[] = [];
+  for (let i = 0; i < poly.length; i++) {
+    const prev = poly[(i - 1 + poly.length) % poly.length];
+    const cur = poly[i];
+    const next = poly[(i + 1) % poly.length];
+    if (samePoint(prev, cur)) continue;
+    const cross = (cur.x - prev.x) * (next.y - cur.y) - (cur.y - prev.y) * (next.x - cur.x);
+    if (Math.abs(cross) < 1e-6) continue;
+    res.push(cur);
+  }
+  return res.length >= 3 ? res : poly;
+}
+
+/** Côté du mur tourné vers la pièce, ou null si le mur n'en fait pas partie. */
+export function wallSideFacingRoom(w: Wall, room: Room): WallSide | null {
+  const mid = lerp(w.a, w.b, 0.5);
+  for (const side of ['gauche', 'droite'] as WallSide[]) {
+    const n = wallNormal(w, side);
+    const p = { x: mid.x + n.x * (w.thickness / 2 + 0.05), y: mid.y + n.y * (w.thickness / 2 + 0.05) };
+    if (inRoom(p, room)) return side;
+  }
+  return null;
+}
+
+/** Surface d'une face de mur, ouvertures déduites (m²). */
+export function wallFaceArea(w: Wall, openings: Opening[]): number {
+  const holes = openings.filter((o) => o.wallId === w.id).reduce((s, o) => s + o.width * o.height, 0);
+  return Math.max(0, wallLength(w) * w.height - holes);
+}
+
+let counter = 0;
+export function newId(prefix: string): string {
+  counter = (counter + 1) % 1e6;
+  return `${prefix}-${Date.now().toString(36)}${counter.toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+}
+
+/**
+ * Coupe un mur en deux au point p. Les ouvertures sont réaffectées au bon tronçon.
+ * Les identifiants des tronçons sont déterministes (id.1 et id.2).
+ */
+export function splitWall(b: Building, wallId: string, p: Point): void {
+  const w = b.walls.find((x) => x.id === wallId);
+  if (!w) return;
+  const L = wallLength(w);
+  const { t, point } = projectOnSegment(p, w.a, w.b);
+  const cut = t * L;
+  if (cut < EPS || L - cut < EPS) return;
+  const w1: Wall = { ...w, id: `${w.id}.1`, b: point, finish: { ...w.finish } };
+  const w2: Wall = { ...w, id: `${w.id}.2`, a: point, finish: { ...w.finish } };
+  b.walls = b.walls.flatMap((x) => (x.id === wallId ? [w1, w2] : [x]));
+  for (const o of b.openings) {
+    if (o.wallId !== wallId) continue;
+    if (o.offset <= cut) o.wallId = w1.id;
+    else {
+      o.wallId = w2.id;
+      o.offset -= cut;
+    }
+  }
+}
+
+/** Ajoute un mur en créant les jonctions en T avec les murs existants. */
+export function insertWall(b: Building, wall: Wall): void {
+  // 1. Les extrémités du nouveau mur qui tombent au milieu d'un mur existant (même niveau) le coupent.
+  for (const p of [wall.a, wall.b]) {
+    for (const w of b.walls.filter((x) => x.levelId === wall.levelId)) {
+      const pr = projectOnSegment(p, w.a, w.b);
+      if (pr.d < EPS * 2 && !samePoint(p, w.a) && !samePoint(p, w.b)) splitWall(b, w.id, p);
+    }
+  }
+  // 2. Les extrémités de murs existants qui tombent au milieu du nouveau mur le coupent.
+  const cuts: number[] = [];
+  for (const w of b.walls) {
+    if (w.levelId !== wall.levelId) continue;
+    for (const p of [w.a, w.b]) {
+      const pr = projectOnSegment(p, wall.a, wall.b);
+      if (pr.d < EPS * 2 && pr.t > 0.001 && pr.t < 0.999) cuts.push(pr.t);
+    }
+  }
+  const ts = [...new Set(cuts.map((t) => Math.round(t * 1e4) / 1e4))].sort((m, n) => m - n);
+  if (ts.length === 0) {
+    b.walls.push(wall);
+    return;
+  }
+  const bounds = [0, ...ts, 1];
+  for (let i = 0; i < bounds.length - 1; i++) {
+    b.walls.push({
+      ...wall,
+      id: `${wall.id}.${i + 1}`,
+      a: lerp(wall.a, wall.b, bounds[i]),
+      b: lerp(wall.a, wall.b, bounds[i + 1]),
+      finish: { ...wall.finish },
+    });
+  }
+}
+
+export function cloneBuilding(b: Building): Building {
+  return structuredClone(b);
+}
+
+/** Aimantation : extrémités de murs proches, puis grille. */
+export function snapPoint(p: Point, b: Building, grid = 0.1, radius = 0.25): Point {
+  let best: Point | null = null;
+  let bestD = radius;
+  for (const w of b.walls) {
+    for (const q of [w.a, w.b]) {
+      const d = dist(p, q);
+      if (d < bestD) {
+        best = q;
+        bestD = d;
+      }
+    }
+  }
+  if (best) return { ...best };
+  for (const w of b.walls) {
+    const pr = projectOnSegment(p, w.a, w.b);
+    if (pr.d < radius / 2) {
+      // On glisse sur le mur, en arrondissant la position le long du mur à la grille.
+      const L = wallLength(w);
+      const along = Math.round((pr.t * L) / grid) * grid;
+      return lerp(w.a, w.b, Math.max(0, Math.min(1, along / L)));
+    }
+  }
+  return { x: Math.round(p.x / grid) * grid, y: Math.round(p.y / grid) * grid };
+}
+
+/** Bloque l'angle à 0/45/90° si le segment en est proche. */
+export function snapAngle(a: Point, p: Point, toleranceDeg = 6): Point {
+  const ang = Math.atan2(p.y - a.y, p.x - a.x);
+  const step = Math.PI / 4;
+  const snapped = Math.round(ang / step) * step;
+  if (Math.abs(snapped - ang) > (toleranceDeg * Math.PI) / 180) return p;
+  const L = dist(a, p);
+  return { x: a.x + Math.cos(snapped) * L, y: a.y + Math.sin(snapped) * L };
+}

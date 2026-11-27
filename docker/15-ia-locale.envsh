@@ -1,0 +1,10 @@
+#!/bin/sh
+# Adresse de l'IA locale (OLLAMA_URL) : le résolveur DNS de nginx ne lit pas /etc/hosts. Un nom qui n'y est
+# connu (host.docker.internal sous Linux, ajouté par « extra_hosts: host-gateway ») est remplacé par son adresse IP.
+h=$(echo "${OLLAMA_URL:-}" | sed -E 's#^[a-zA-Z]+://([^/:]+).*#\1#')
+ip=$(awk -v h="$h" '$1 !~ /^#/ && $1 !~ /:/ { for (i = 2; i <= NF; i++) if ($i == h) { print $1; exit } }' /etc/hosts)
+if [ -n "$h" ] && [ -n "$ip" ]; then
+  OLLAMA_URL=$(echo "$OLLAMA_URL" | sed "s#://$h#://$ip#")
+  export OLLAMA_URL
+  echo "IA locale : $h -> $ip"
+fi

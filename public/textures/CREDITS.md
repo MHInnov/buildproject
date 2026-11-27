@@ -1,0 +1,70 @@
+# Textures photo de la visite 3D
+
+Toutes ces textures (couleur, relief et rugosité) viennent de [ambientCG](https://ambientcg.com),
+sous licence **CC0 1.0** (domaine public). Elles sont réduites et recompressées par `scripts/build-textures.py`.
+
+| Dossier | Matériau ambientCG |
+| --- | --- |
+| oak-planks | [WoodFloor051](https://ambientcg.com/view?id=WoodFloor051) |
+| old-planks | [WoodFloor042](https://ambientcg.com/view?id=WoodFloor042) |
+| herringbone | [WoodFloor052](https://ambientcg.com/view?id=WoodFloor052) |
+| tiles-large | [Tiles107](https://ambientcg.com/view?id=Tiles107) |
+| tiles-old | [Tiles142](https://ambientcg.com/view?id=Tiles142) |
+| terracotta | [Tiles027](https://ambientcg.com/view?id=Tiles027) |
+| cement | [Tiles131](https://ambientcg.com/view?id=Tiles131) |
+| subway | [Tiles009](https://ambientcg.com/view?id=Tiles009) |
+| zellige | [Tiles023](https://ambientcg.com/view?id=Tiles023) |
+| marble | [Marble018](https://ambientcg.com/view?id=Marble018) |
+| brick | [Bricks097](https://ambientcg.com/view?id=Bricks097) |
+| stone | [Bricks096](https://ambientcg.com/view?id=Bricks096) |
+| plaster | [Plaster001](https://ambientcg.com/view?id=Plaster001) |
+| crepi | [Plaster003](https://ambientcg.com/view?id=Plaster003) |
+| wallpaper | [Wallpaper001A](https://ambientcg.com/view?id=Wallpaper001A) |
+| paneling | [Planks008](https://ambientcg.com/view?id=Planks008) |
+| concrete | [Concrete016](https://ambientcg.com/view?id=Concrete016) |
+| carpet | [Carpet012](https://ambientcg.com/view?id=Carpet012) |
+| rooftiles | [RoofingTiles014A](https://ambientcg.com/view?id=RoofingTiles014A) |
+| slate | [RoofingTiles003](https://ambientcg.com/view?id=RoofingTiles003) |
+| zinc | [Metal009](https://ambientcg.com/view?id=Metal009) |
+| grass | [Grass004](https://ambientcg.com/view?id=Grass004) |
+| fabric | [Fabric030](https://ambientcg.com/view?id=Fabric030) |
+| wood | [Wood022](https://ambientcg.com/view?id=Wood022) |
+| tuiles-canal | [RoofingTiles006](https://ambientcg.com/view?id=RoofingTiles006) |
+| tuiles-canal-anciennes | [RoofingTiles007](https://ambientcg.com/view?id=RoofingTiles007) |
+| tuiles-plates | [RoofingTiles011A](https://ambientcg.com/view?id=RoofingTiles011A) |
+| tuiles-plates-anciennes | [RoofingTiles011B](https://ambientcg.com/view?id=RoofingTiles011B) |
+| tuiles-beton | [RoofingTiles013A](https://ambientcg.com/view?id=RoofingTiles013A) |
+| ardoise-ecailles | [RoofingTiles001](https://ambientcg.com/view?id=RoofingTiles001) |
+| ardoise-ancienne | [RoofingTiles004](https://ambientcg.com/view?id=RoofingTiles004) |
+| charpente-chene | [Wood076](https://ambientcg.com/view?id=Wood076) |
+| charpente-sapin | [Wood094](https://ambientcg.com/view?id=Wood094) |
+| bois-brut | [Wood086](https://ambientcg.com/view?id=Wood086) |
+| plancher-ancien | [Planks036A](https://ambientcg.com/view?id=Planks036A) |
+| plancher-sapin | [Planks033A](https://ambientcg.com/view?id=Planks033A) |
+| parquet-mosaique | [WoodFloor022](https://ambientcg.com/view?id=WoodFloor022) |
+| tomettes | [Tiles065](https://ambientcg.com/view?id=Tiles065) |
+| carrelage-ancien | [Tiles028](https://ambientcg.com/view?id=Tiles028) |
+| brique-rouge | [Bricks082A](https://ambientcg.com/view?id=Bricks082A) |
+| brique-ancienne | [Bricks077](https://ambientcg.com/view?id=Bricks077) |
+| brique-jaune | [Bricks081A](https://ambientcg.com/view?id=Bricks081A) |
+| pierre-calcaire | [Bricks084](https://ambientcg.com/view?id=Bricks084) |
+| moellons | [Bricks078](https://ambientcg.com/view?id=Bricks078) |
+| meuliere | [Bricks075A](https://ambientcg.com/view?id=Bricks075A) |
+| enduit-ancien | [PaintedPlaster015](https://ambientcg.com/view?id=PaintedPlaster015) |
+| enduit-ecaille | [PaintedPlaster014](https://ambientcg.com/view?id=PaintedPlaster014) |
+| enduit-taloche | [PaintedPlaster017](https://ambientcg.com/view?id=PaintedPlaster017) |
+| bardage-bois | [WoodSiding008](https://ambientcg.com/view?id=WoodSiding008) |
+| bardage-gris | [WoodSiding003](https://ambientcg.com/view?id=WoodSiding003) |
+| bardage-peint | [WoodSiding009](https://ambientcg.com/view?id=WoodSiding009) |
+| gazon | [Grass001](https://ambientcg.com/view?id=Grass001) |
+| herbe-jardin | [Grass007](https://ambientcg.com/view?id=Grass007) |
+| terre | [Ground039](https://ambientcg.com/view?id=Ground039) |
+| gravier | [Gravel022](https://ambientcg.com/view?id=Gravel022) |
+| gravier-blanc | [Gravel023](https://ambientcg.com/view?id=Gravel023) |
+| gravillons | [Gravel037](https://ambientcg.com/view?id=Gravel037) |
+| pave-granit | [PavingStones049](https://ambientcg.com/view?id=PavingStones049) |
+| paves-anciens | [PavingStones010](https://ambientcg.com/view?id=PavingStones010) |
+| pave-beton | [PavingStones033](https://ambientcg.com/view?id=PavingStones033) |
+| dalles-pierre | [PavingStones069](https://ambientcg.com/view?id=PavingStones069) |
+| dalles-beton | [PavingStones029](https://ambientcg.com/view?id=PavingStones029) |
+| terrasse-bois | [Planks029S](https://ambientcg.com/view?id=Planks029S) |
