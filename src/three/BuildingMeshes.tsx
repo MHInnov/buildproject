@@ -1,3 +1,4 @@
+import { isDoorOpen } from '../model/doorState';
 import { useFrame, type ThreeEvent } from '@react-three/fiber';
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
@@ -231,6 +232,7 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
                     selected={isSel('wall', w.id)}
                     selectedOpening={selection?.kind === 'opening' ? selection.id : null}
                     toggled={toggled}
+                    building={building}
                     onClick={click({ kind: 'wall', id: w.id })}
                     onOpeningClick={(id) => click({ kind: 'opening', id })}
                     onOpeningToggle={toggle}
@@ -467,8 +469,9 @@ export function wallPieces(w: Wall, openings: Opening[]): Piece[] {
   return pieces.filter((p) => p.x1 - p.x0 > 0.001 && p.y1 - p.y0 > 0.001);
 }
 
-function WallMesh({ wall, elevation, openings, catalog, facing, profile, selected, selectedOpening, toggled, onClick, onOpeningClick, onOpeningToggle }: {
+function WallMesh({ wall, elevation, openings, catalog, facing, profile, selected, selectedOpening, toggled, building, onClick, onOpeningClick, onOpeningToggle }: {
   wall: Wall;
+  building: Building;
   profile?: WallProfile | null;
   elevation: number;
   openings: Opening[];
@@ -548,8 +551,8 @@ function WallMesh({ wall, elevation, openings, catalog, facing, profile, selecte
           }),
       )}
       {openings.map((o) => {
-        // Portes ouvertes par défaut, sauf les portes de garage (fermées : on les voit de dehors)
-        const isOpen = o.kind === 'porte' && !isGarage(o) ? !toggled[o.id] : !!toggled[o.id];
+        // Portes intérieures ouvertes par défaut ; portes de garage et d'entrée fermées (on les voit de dehors)
+        const isOpen = isDoorOpen(building, o, !!toggled[o.id]);
         const handle = onOpeningClick(o.id);
         return (
           <OpeningMesh

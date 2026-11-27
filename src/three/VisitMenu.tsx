@@ -1,3 +1,4 @@
+import { isDoorOpen } from '../model/doorState';
 import { useEffect } from 'react';
 import { addFloorZone, addOpeningAt, moveFurniture, removeFloorZone, removeFurniture, removeOpening, removeWall, removeRoofWindow } from '../actions';
 import { productById } from '../model/catalog';
@@ -37,7 +38,7 @@ function itemsFor(t: MenuTarget, b: Building): { title: string; items: Item[] } 
   if (sel.kind === 'opening') {
     const o = b.openings.find((x) => x.id === sel.id);
     if (!o) return { title: 'Ouverture', items: [] };
-    const open = o.kind === 'porte' && !o.productId?.includes('garage') ? !ui.toggled[o.id] : !!ui.toggled[o.id];
+    const open = isDoorOpen(b, o, !!ui.toggled[o.id]);
     return {
       title: o.kind === 'porte' ? 'Porte' : 'Fenêtre',
       items: [

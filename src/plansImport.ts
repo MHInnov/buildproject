@@ -551,6 +551,14 @@ export function importPlans(b: Building, items: PlanInput[]): ImportReport {
       lines.push(`${it.name} : jardin tracé, parcelle de ${Math.round(polygonArea(parcel)).toLocaleString('fr-FR')} m² autour de la maison.`);
     }
   }
+  // Châssis latéraux d'une porte (vitrages étroits contre elle) : toute hauteur, comme la porte
+  for (const o of b.openings) {
+    if (o.kind !== 'fenetre' || o.width > 0.5) continue;
+    const door = b.openings.find((d) => d.wallId === o.wallId && d.kind === 'porte' && Math.abs(d.offset - o.offset) - (d.width + o.width) / 2 < 0.5);
+    if (!door) continue;
+    o.sill = 0.1;
+    o.height = Math.round((door.sill + door.height - 0.1) * 100) / 100;
+  }
   // Façades : mur creux en 4 couches (brique dehors), quand le plan ne montre pas déjà sa composition
   {
     let n = 0;

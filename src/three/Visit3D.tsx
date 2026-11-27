@@ -1,3 +1,4 @@
+import { isDoorOpen } from '../model/doorState';
 import { isFlat } from '../model/dwelling';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -392,8 +393,8 @@ function PersoRig({ world, levelId, onHint }: { world: WalkWorld; levelId: strin
     const { fwd, side, run } = axis(keys.current);
     const ui = useUi.getState();
     const isOpen = (id: string) => {
-      const o = worldRef.current.b.openings.find((x) => x.id === id);
-      return o?.kind === 'porte' && !o.productId?.includes('garage') ? !ui.toggled[id] : !!ui.toggled[id];
+      const b = worldRef.current.b;
+      return isDoorOpen(b, b.openings.find((x) => x.id === id), !!ui.toggled[id]);
     };
     let moving = false;
     // Gauche / droite : le personnage tourne sur lui-même ; avancer / reculer : dans le sens où il regarde.
@@ -579,8 +580,8 @@ function WalkRig({ world, levelId, onPick, onUnlock, onMenu }: { world: WalkWorl
     const { fwd, side, run } = axis(keys.current);
     const ui = useUi.getState();
     const isOpen = (id: string) => {
-      const o = worldRef.current.b.openings.find((x) => x.id === id);
-      return o?.kind === 'porte' && !o.productId?.includes('garage') ? !ui.toggled[id] : !!ui.toggled[id];
+      const b = worldRef.current.b;
+      return isDoorOpen(b, b.openings.find((x) => x.id === id), !!ui.toggled[id]);
     };
     const k = keys.current;
     // Tourner et regarder au clavier : pas besoin de la souris en marchant (pavé tactile bloqué pendant la frappe).
