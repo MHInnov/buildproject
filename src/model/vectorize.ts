@@ -1073,7 +1073,7 @@ function traceMask(source: Uint8Array, ink: Uint8Array, w: number, h: number, sc
         run = idx >= 0 && idx < dark.length && dark[idx] ? run + 1 : 0;
         if (run > best) best = run;
       }
-      hollow.push(best <= 3);
+      hollow.push(best <= Math.max(3, thick - 1));
       if (best >= thick) solidN++;
     }
     // Il faut un vrai mur plein : noir au cœur sur l'essentiel de sa longueur
