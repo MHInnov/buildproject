@@ -10,6 +10,7 @@ import { aiReady, apiConfigured, useSettings } from '../settings';
 import { AdminDialog } from './AdminDialog';
 import { useStore } from '../store';
 import { applyAiReading } from '../traceApply';
+import { ocrRoomNames } from '../ocr';
 
 interface Item {
   id: string;
@@ -151,6 +152,23 @@ export function PlansImport({ onClose }: { onClose: () => void }) {
             r.lines.push(`${l.name} : ${res.rooms.length} pièces nommées par l'IA.`);
           } catch (e) {
             r.warnings.push(`IA, ${it.label} : ${(e as Error).message}`);
+          }
+        }
+      }
+      // Sans IA : noms des pièces lus sur les plans par l'OCR local
+      if (!(useAi && apiConfigured())) {
+        const b1 = useStore.getState().project.existing;
+        for (const it of used.filter((x) => isFloorKind(x.kind))) {
+          const l = b1.levels.find((x) => x.underlay?.assetId && inputs.find((i) => i.name === it.label)?.assetId === x.underlay.assetId);
+          if (!l?.underlay) continue;
+          setBusy(`Lecture des noms des pièces, ${it.label}…`);
+          try {
+            const rooms = await ocrRoomNames(it.dataUrl, it.width, it.height, (d, n) => setBusy(`Lecture des noms des pièces, ${it.label} (${Math.round((100 * d) / n)} %)…`));
+            const ul = l.underlay;
+            editExisting((b) => applyAiReading(b, l.id, ul, { rooms, openings: [] }));
+            if (rooms.length) r.lines.push(`${l.name} : ${rooms.length} noms de pièces lus sur le plan (${rooms.map((x) => x.name).join(', ')}).`);
+          } catch (e) {
+            r.warnings.push(`Lecture des noms des pièces, ${it.label} : ${(e as Error).message}`);
           }
         }
       }
