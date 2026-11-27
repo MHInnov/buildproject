@@ -6,7 +6,7 @@ import { roofFrame, type RoofFrame } from '../model/roof';
 import type { Building, Dormer, Roof, RoofWing, RoofWindow } from '../model/types';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { outdoorById, TIMBERS } from '../data/exterior';
-import { CEILING, FACADE, fromProduct, PLASTER, ROOF_UNDERSIDE, surfaceMaterial } from './materials';
+import { CEILING, FACADE, fromProduct, ROOF_UNDERSIDE, surfaceMaterial } from './materials';
 
 type V = THREE.Vector3;
 const v3 = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
@@ -497,7 +497,8 @@ export function RoofMesh({
   const top = surfaceMaterial(covering, selected);
   // Sous des combles aménagés, le rampant est plafonné
   const under = surfaceMaterial(roof.eave != null ? CEILING : ROOF_UNDERSIDE, selected);
-  const edge = surfaceMaterial(PLASTER, selected);
+  // Rives et bandeaux d'égout : planche peinte foncée, comme la couverture
+  const edge = surfaceMaterial(FASCIA, selected);
   const ud = { sel: { kind: 'roof', id: 'roof' } };
   return (
     <group>
@@ -578,6 +579,7 @@ function boxInMetres(sx: number, sy: number, sz: number): THREE.BufferGeometry {
   return g;
 }
 
+const FASCIA = { color: '#3b3330', roughness: 0.7 };
 const CHIMNEY_CAP = new THREE.MeshStandardMaterial({ color: '#8d8f8c', roughness: 0.9 });
 const WIN_FRAME = new THREE.MeshStandardMaterial({ color: '#f2f2ee', roughness: 0.45 });
 const SKY = new THREE.MeshStandardMaterial({ color: '#cfe3f3', roughness: 0.3, emissive: '#9fc3e0', emissiveIntensity: 0.55 });
