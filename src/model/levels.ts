@@ -36,7 +36,10 @@ export function onLevel(b: Building, levelId: string): Building {
     openings: b.openings.filter((o) => ids.has(o.wallId)),
     rooms: b.rooms.filter((r) => r.levelId === levelId),
     furniture: b.furniture.filter((f) => f.levelId === levelId),
+    floorZones: (b.floorZones ?? []).filter((z) => z.levelId === levelId),
     roof: b.roof,
+    site: b.site,
+    outdoor: b.outdoor,
   };
 }
 
@@ -55,6 +58,7 @@ export function migrateProject(raw: unknown): Project | null {
   b.openings ??= [];
   b.rooms ??= [];
   b.furniture ??= [];
+  b.floorZones ??= [];
   b.roof ??= null;
   for (const op of p.operations ?? []) {
     if (op.type === 'addWall') op.wall.levelId ??= first;
@@ -68,4 +72,16 @@ export function migrateProject(raw: unknown): Project | null {
     artisans: p.artisans ?? [],
     assignments: p.assignments ?? {},
   };
+}
+
+/** Retire un niveau et tout ce qu'il contient ; le toit passe au plus haut des niveaux restants. */
+export function removeLevel(b: Building, id: string): void {
+  const walls = new Set(b.walls.filter((w) => w.levelId === id).map((w) => w.id));
+  b.levels = b.levels.filter((x) => x.id !== id);
+  b.walls = b.walls.filter((w) => !walls.has(w.id));
+  b.openings = b.openings.filter((o) => !walls.has(o.wallId));
+  b.rooms = b.rooms.filter((r) => r.levelId !== id);
+  b.furniture = b.furniture.filter((f) => f.levelId !== id);
+  if (b.floorZones) b.floorZones = b.floorZones.filter((z) => z.levelId !== id);
+  if (b.roof?.levelId === id && b.levels.length) b.roof.levelId = [...b.levels].sort((p, q) => q.elevation - p.elevation)[0].id;
 }

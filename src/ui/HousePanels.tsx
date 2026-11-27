@@ -1,13 +1,16 @@
+import { isFlat, setDwellingKind } from '../model/dwelling';
 import { useMemo } from 'react';
+import { NumberInput } from './NumberInput';
 import { setCondition, setRoofCovering, setRoofInsulation } from '../actions';
 import { productById } from '../model/catalog';
 import { euro } from '../model/estimate';
 import { detectRooms, newId } from '../model/geometry';
-import { levelById } from '../model/levels';
-import { areaAboveHeight, roofArea, roofFrame } from '../model/roof';
+import { levelById, removeLevel } from '../model/levels';
+import { areaAboveHeight, eaveForKnee, isSloped, kneeHeight, roofArea, roofFrame } from '../model/roof';
 import { CONDITION_LABELS, ROOF_LABELS, type Building, type Condition, type Level, type RoofType } from '../model/types';
 import { useBuilding, useStore } from '../store';
 import { ProductPicker } from './ProductPicker';
+import { APRONS, DEFAULT_APRON_WIDTH, DEFAULT_LAWN, LAWNS, TIMBERS } from '../data/exterior';
 
 const m2 = (n: number) => `${n.toLocaleString('fr-BE', { maximumFractionDigits: 1 })} m²`;
 const m = (n: number) => `${n.toLocaleString('fr-BE', { maximumFractionDigits: 2 })} m`;
@@ -35,10 +38,11 @@ export function LevelTabs() {
   const setLevel = useStore((s) => s.setLevel);
   const select = useStore((s) => s.select);
   const roof = useStore((s) => s.project.existing.roof);
+  const flat = useStore((s) => isFlat(s.project.existing));
   const sorted = [...levels].sort((a, b) => b.elevation - a.elevation);
   return (
     <div className="levelbar no-print" role="tablist" aria-label="Niveaux">
-      {roof && (
+      {roof && !flat && (
         <button className="levelbar__roof" onClick={() => select({ kind: 'roof', id: 'roof' })} title="Toiture">
           ⌂ Toit
         </button>
@@ -70,6 +74,41 @@ function nextLevel(b: Building, where: 'above' | 'below'): Level {
   return { id: newId('lv'), name: 'Cave', elevation: Math.round((bottom.elevation - 2.2 - 0.25) * 100) / 100, height: 2.2, slab: 0.25 };
 }
 
+/** Maison ou appartement, en tête du panneau de l'existant. */
+export function DwellingField() {
+  const b = useStore((s) => s.project.existing);
+  const editExisting = useStore((s) => s.editExisting);
+  const flat = isFlat(b);
+  return (
+    <>
+      <h4>Type de logement</h4>
+      <div className="segmented segmented--small" role="group" aria-label="Type de logement">
+        <button className={!flat ? 'is-active' : ''} onClick={() => flat && editExisting((x) => setDwellingKind(x, 'maison'))}>
+          Maison
+        </button>
+        <button className={flat ? 'is-active' : ''} onClick={() => !flat && editExisting((x) => setDwellingKind(x, 'appartement'))}>
+          Appartement
+        </button>
+      </div>
+      {flat && (
+        <>
+          <p className="muted small">Dans un immeuble : pas de toiture ni de jardin, le plafond du dernier niveau est la dalle de l'étage au-dessus.</p>
+          <label className="field">
+            <span>Étage dans l'immeuble</span>
+            <select value={b.storey ?? 0} onChange={(e) => editExisting((x) => void (x.storey = Number(e.target.value)))}>
+              {Array.from({ length: 21 }, (_, i) => (
+                <option key={i} value={i}>
+                  {i === 0 ? 'Rez-de-chaussée' : i === 1 ? '1er étage' : `${i}e étage`}
+                </option>
+              ))}
+            </select>
+          </label>
+        </>
+      )}
+    </>
+  );
+}
+
 /** Panneau « maison » : niveaux et toiture, quand rien n'est sélectionné à l'étape existant. */
 export function HouseOverview() {
   const b = useStore((s) => s.project.existing);
@@ -88,16 +127,23 @@ export function HouseOverview() {
     });
     setLevel(l.id);
   };
+  const flat = isFlat(b);
   return (
     <>
       <h4>Niveaux</h4>
       <p className="muted small">Cliquez sur l'onglet du niveau affiché (en haut à droite du plan) pour régler sa hauteur sous plafond.</p>
       <div className="actions">
-        <button className="btn" onClick={() => addLevel('above')}>+ Étage ou combles</button>
-        <button className="btn" onClick={() => addLevel('below')}>+ Cave</button>
+        <button className="btn" onClick={() => addLevel('above')}>{flat ? '+ Niveau au-dessus (duplex)' : '+ Étage ou combles'}</button>
+        {!flat && <button className="btn" onClick={() => addLevel('below')}>+ Cave</button>}
       </div>
-      <h4>Toiture</h4>
-      {b.roof ? (
+      {!flat && (
+        <label className="field">
+          <span>Sol du rez-de-chaussée au-dessus du terrain (soubassement, m)</span>
+          <NumberInput min={0} max={1.5} value={b.plinth ?? 0} onChange={(v) => editExisting((x) => void (v > 0 ? (x.plinth = v) : delete x.plinth))} />
+        </label>
+      )}
+      {flat ? null : <h4>Toiture</h4>}
+      {flat ? null : b.roof ? (
         <button className="btn" onClick={() => select({ kind: 'roof', id: 'roof' })}>
           {ROOF_LABELS[b.roof.type]} · {b.roof.pitch}° · {productById(useStore.getState().catalog, b.roof.coveringId)?.name ?? 'couverture ?'}
         </button>
@@ -113,6 +159,67 @@ export function HouseOverview() {
           + Ajouter une toiture
         </button>
       )}
+      {!flat && <OutdoorFields />}
+      {!flat && b.site && (
+        <>
+          <h4>Jardin</h4>
+          <p className="muted small">
+            Parcelle de {Math.round(Math.abs(b.site.parcel.reduce((s, p, i) => s + p.x * b.site!.parcel[(i + 1) % b.site!.parcel.length].y - b.site!.parcel[(i + 1) % b.site!.parcel.length].x * p.y, 0)) / 2).toLocaleString('fr-FR')} m², lue sur le plan d'implantation.
+          </p>
+          <button className="btn" onClick={() => editExisting((x) => void delete x.site)}>
+            Retirer le jardin
+          </button>
+        </>
+      )}
+    </>
+  );
+}
+
+/** Extérieurs : sol du jardin et abords de la maison (rendu de la visite 3D). */
+function OutdoorFields() {
+  const o = useStore((s) => s.project.existing.outdoor);
+  const editExisting = useStore((s) => s.editExisting);
+  const edit = (fn: (x: NonNullable<Building['outdoor']>) => void) =>
+    editExisting((b) => {
+      b.outdoor ??= {};
+      fn(b.outdoor);
+    });
+  return (
+    <>
+      <h4>Extérieurs</h4>
+      <div className="fields">
+        <label className="field">
+          <span>Jardin</span>
+          <select value={o?.lawn ?? DEFAULT_LAWN} onChange={(e) => edit((x) => void (x.lawn = e.target.value))}>
+            {LAWNS.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field" title="Bande au pied des façades : terrasse, allée, gravier">
+          <span>Abords de la maison</span>
+          <select value={o?.apron ?? ''} onChange={(e) => edit((x) => void (x.apron = e.target.value || null))}>
+            <option value="">Aucun (jardin jusqu'aux murs)</option>
+            {APRONS.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        {o?.apron && (
+          <label className="field">
+            <span>Largeur des abords (m)</span>
+            <NumberInput min={0.3} max={8} value={o.apronWidth ?? DEFAULT_APRON_WIDTH} onChange={(v) => edit((x) => void (x.apronWidth = v))} />
+          </label>
+        )}
+      </div>
+      <label className="check small">
+        <input type="checkbox" checked={o?.paths !== false} onChange={(e) => edit((x) => void (e.target.checked ? delete x.paths : (x.paths = false)))} /> Allée du garage, chemin
+        d'entrée et terrasse devant les portes-fenêtres
+      </label>
     </>
   );
 }
@@ -140,15 +247,12 @@ export function LevelPanel({ id }: { id: string }) {
       <div className="fields">
         <label className="field">
           <span>Hauteur sous plafond (m)</span>
-          <input
-            type="number"
-            step={0.05}
+          <NumberInput
             min={0.5}
+            max={10}
             value={l.height}
             disabled={ro}
-            onChange={(e) => {
-              const v = Number(e.target.value);
-              if (!(v > 0.3)) return;
+            onChange={(v) => {
               // Les murs du niveau suivent la nouvelle hauteur.
               edit((x, bb) => {
                 for (const w of bb.walls) if (w.levelId === id && Math.abs(w.height - x.height) < 0.01) w.height = v;
@@ -159,11 +263,11 @@ export function LevelPanel({ id }: { id: string }) {
         </label>
         <label className="field">
           <span>Altitude du sol (m)</span>
-          <input type="number" step={0.05} value={l.elevation} disabled={ro} onChange={(e) => edit((x) => void (x.elevation = Number(e.target.value)))} />
+          <NumberInput value={l.elevation} disabled={ro} onChange={(v) => edit((x) => void (x.elevation = v))} />
         </label>
         <label className="field">
           <span>Épaisseur du plancher (m)</span>
-          <input type="number" step={0.01} min={0.05} value={l.slab} disabled={ro} onChange={(e) => edit((x) => void (x.slab = Math.max(0.05, Number(e.target.value))))} />
+          <NumberInput min={0.05} max={2} value={l.slab} disabled={ro} onChange={(v) => edit((x) => void (x.slab = v))} />
         </label>
       </div>
       <p className="muted small">Pour des combles, la hauteur sous plafond est celle des murs bas (jambettes) ; la toiture fait le reste.</p>
@@ -173,15 +277,7 @@ export function LevelPanel({ id }: { id: string }) {
             className="btn btn--danger"
             onClick={() => {
               if (!confirm(`Supprimer « ${l.name} » et tout ce qu'il contient ?`)) return;
-              editExisting((bb) => {
-                const walls = new Set(bb.walls.filter((w) => w.levelId === id).map((w) => w.id));
-                bb.levels = bb.levels.filter((x) => x.id !== id);
-                bb.walls = bb.walls.filter((w) => !walls.has(w.id));
-                bb.openings = bb.openings.filter((o) => !walls.has(o.wallId));
-                bb.rooms = bb.rooms.filter((r) => r.levelId !== id);
-                bb.furniture = bb.furniture.filter((f) => f.levelId !== id);
-                if (bb.roof?.levelId === id) bb.roof.levelId = [...bb.levels].sort((p, q) => q.elevation - p.elevation)[0].id;
-              });
+              editExisting((bb) => removeLevel(bb, id));
               setLevel(b.levels.find((x) => x.id !== id)!.id);
             }}
           >
@@ -251,12 +347,26 @@ export function RoofPanel() {
             {roof.type !== 'plat' && (
               <label className="field">
                 <span>Pente (°)</span>
-                <input type="number" min={5} max={70} value={roof.pitch} onChange={(e) => edit((r) => void (r.pitch = Math.min(70, Math.max(5, Number(e.target.value)))))} />
+                <NumberInput
+                  min={5}
+                  max={70}
+                  digits={0}
+                  value={roof.pitch}
+                  onChange={(v) =>
+                    editExisting((b) => {
+                      if (!b.roof) return;
+                      // Étage sous combles : les murs extérieurs gardent leur hauteur sous la pente
+                      const knee = kneeHeight(b, b.roof);
+                      b.roof.pitch = v;
+                      if (knee != null) b.roof.eave = eaveForKnee(b, b.roof, knee);
+                    })
+                  }
+                />
               </label>
             )}
             <label className="field">
               <span>Débord (m)</span>
-              <input type="number" step={0.05} min={0} value={roof.overhang} onChange={(e) => edit((r) => void (r.overhang = Math.max(0, Number(e.target.value))))} />
+              <NumberInput min={0} max={3} value={roof.overhang} onChange={(v) => edit((r) => void (r.overhang = v))} />
             </label>
             {(roof.type === 'deux-pans' || roof.type === 'monopente') && (
               <label className="field">
@@ -268,9 +378,30 @@ export function RoofPanel() {
               </label>
             )}
           </div>
+          {isSloped(roof) && <AtticFields />}
+          {isSloped(roof) && (
+            <div className="fields">
+              <label className="field" title="Bois des chevrons, pannes et faîtage, visibles dans la visite 3D">
+                <span>Charpente</span>
+                <select value={roof.timber ?? TIMBERS[0].id} onChange={(e) => edit((r) => void (r.timber = e.target.value))}>
+                  {TIMBERS.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {roof.eave != null && (
+                <label className="toggle">
+                  <input type="checkbox" checked={!!roof.exposedBeams} onChange={(e) => edit((r) => void (r.exposedBeams = e.target.checked || undefined))} /> Poutres apparentes
+                </label>
+              )}
+            </div>
+          )}
           <ConditionField value={roof.condition} onChange={(c) => setCondition({ kind: 'roof', id: 'roof' }, c)} />
         </>
       )}
+      {isSloped(roof) && <RoofWindowsBlock />}
       <h4>
         {isExisting ? 'Couverture actuelle' : 'Nouvelle couverture'} {covering ? `: ${covering.name}` : ''}
       </h4>
@@ -298,5 +429,98 @@ export function RoofPanel() {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Étage sous combles (chambres mansardées) : le toit part plus bas que le haut des murs de l'étage, les murs
+ * extérieurs côté égout sont en partie sous la pente et le rampant forme le plafond.
+ */
+function AtticFields() {
+  const existing = useStore((s) => s.project.existing);
+  const editExisting = useStore((s) => s.editExisting);
+  const roof = existing.roof!;
+  const knee = kneeHeight(existing, roof);
+  const on = knee != null;
+  const toggle = (v: boolean) =>
+    editExisting((b) => {
+      const r = b.roof;
+      const l = r && levelById(b, r.levelId);
+      if (!r || !l) return;
+      if (!v) {
+        delete r.eave;
+        return;
+      }
+      let k = 1;
+      // Ancienne saisie (niveau aussi haut que ses murs bas) : l'étage reprend une hauteur normale, ses murs bas deviennent la pente
+      if (l.height < 1.8) {
+        k = l.height;
+        const old = l.height;
+        l.height = 2.5;
+        for (const w of b.walls) if (w.levelId === l.id && Math.abs(w.height - old) < 0.01) w.height = l.height;
+      }
+      r.eave = eaveForKnee(b, r, k);
+    });
+  return (
+    <>
+      <label className="toggle">
+        <input type="checkbox" checked={on} onChange={(e) => toggle(e.target.checked)} /> Étage aménagé sous la pente (chambres mansardées)
+      </label>
+      {on && (
+        <>
+          <div className="fields">
+            <label className="field" title="Hauteur, à l'intérieur, où la pente du toit rencontre les murs extérieurs côté gouttière">
+              <span>Murs extérieurs sous la pente (m)</span>
+              <NumberInput
+                min={0}
+                max={2.4}
+                value={knee}
+                onChange={(v) =>
+                  editExisting((b) => {
+                    if (b.roof) b.roof.eave = eaveForKnee(b, b.roof, v);
+                  })
+                }
+              />
+            </label>
+          </div>
+          <p className="muted small">
+            Les murs extérieurs de l'étage côté gouttière s'arrêtent sous la pente, les pignons montent jusqu'au faîtage et le rampant fait le plafond. Les
+            zones de moins de 1,80 m sont hachurées sur le plan. Pour la lumière, posez des fenêtres de toit.
+          </p>
+        </>
+      )}
+    </>
+  );
+}
+
+/** Fenêtres de toit : nombre et bouton pour en poser (outil du plan, sur le niveau sous le toit). */
+function RoofWindowsBlock() {
+  const building = useBuilding();
+  const setTool = useStore((s) => s.setTool);
+  const setLevel = useStore((s) => s.setLevel);
+  const select = useStore((s) => s.select);
+  const roof = building.roof!;
+  const n = roof.windows?.length ?? 0;
+  return (
+    <>
+      <h4>Fenêtres de toit {n ? `(${n})` : ''}</h4>
+      <div className="actions">
+        <button
+          className="btn"
+          onClick={() => {
+            setLevel(roof.levelId);
+            select(null);
+            setTool('roofWindow');
+          }}
+        >
+          + Fenêtre de toit (Velux)
+        </button>
+        {(roof.windows ?? []).map((w, i) => (
+          <button key={w.id} className="btn btn--small" onClick={() => select({ kind: 'roofWindow', id: w.id })}>
+            n° {i + 1}
+          </button>
+        ))}
+      </div>
+    </>
   );
 }

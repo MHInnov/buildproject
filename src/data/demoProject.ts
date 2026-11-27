@@ -1,6 +1,6 @@
 import { detectRooms, insertWall, wallSideFacingRoom } from '../model/geometry';
 import { defaultLevel } from '../model/levels';
-import type { Building, Project, Wall, WallKind } from '../model/types';
+import type { Building, DwellingKind, Project, Wall, WallKind } from '../model/types';
 
 const H = 2.6;
 const KNEE = 1.0;
@@ -112,13 +112,13 @@ export function demoProject(): Project {
   };
 }
 
-export function emptyProject(): Project {
+export function emptyProject(kind: DwellingKind = 'maison'): Project {
   return {
     version: 2,
-    name: 'Nouveau projet',
+    name: kind === 'appartement' ? 'Mon appartement' : 'Nouveau projet',
     postalCode: '',
     olderThan10Years: true,
-    existing: { levels: [defaultLevel()], walls: [], openings: [], rooms: [], furniture: [], roof: null },
+    existing: { ...(kind === 'appartement' ? { kind, storey: 0 } : {}), levels: [defaultLevel()], walls: [], openings: [], rooms: [], furniture: [], roof: null },
     operations: [],
     viewpoints: [],
     artisans: [],

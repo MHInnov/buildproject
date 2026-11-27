@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { NumberInput } from './NumberInput';
 import { removeViewpoint, updateViewpoint } from '../actions';
 import { aiReadPhoto, type AiPhotoElement } from '../ai';
 import { putAsset, shrinkImage, useAsset } from '../assets';
@@ -44,6 +45,40 @@ export function ViewpointPanel({ id }: { id: string }) {
     setLog((l) => [`${r.ok ? '✓' : '⚠'} ${r.message}`, ...l].slice(0, 6));
     return r.ok;
   };
+
+  if (!isExisting)
+    return (
+      <div className="panel">
+        <h3>{v.caption || 'Point de vue'}</h3>
+        {photo ? (
+          <div className="photo photo--static">
+            <img src={photo} alt={v.caption || 'Photo du point de vue'} />
+          </div>
+        ) : (
+          <p className="muted small">Pas encore de photo pour ce point de vue.</p>
+        )}
+        <p className="muted small">
+          En projet, le point de vue est figé : c'est la photo de la situation existante, sur laquelle on applique vos modifications (démolitions, peintures, sols, meubles…). Pour le déplacer
+          ou changer la photo, revenez à l'étape « Existant ».
+        </p>
+        <div className="actions">
+          {photo && (
+            <button
+              className="btn btn--primary"
+              onClick={() => {
+                useUi.getState().set({ viewFrom: id });
+                setStep('visite');
+              }}
+            >
+              Voir la photo du projet
+            </button>
+          )}
+          <button className="btn" onClick={() => setStep('existant')}>
+            Modifier dans l'existant
+          </button>
+        </div>
+      </div>
+    );
 
   return (
     <div className="panel">
@@ -136,7 +171,7 @@ export function ViewpointPanel({ id }: { id: string }) {
                   setBusy(true);
                   try {
                     const list = catalog.products
-                      .filter((p) => ['sol', 'peinture', 'mur', 'faience', 'porte', 'fenetre', 'meuble'].includes(p.category) && (isExisting || !p.existingOnly))
+                      .filter((p) => !p.hidden && ['sol', 'peinture', 'mur', 'faience', 'porte', 'fenetre', 'meuble'].includes(p.category) && (isExisting || !p.existingOnly))
                       .map((p) => ({ id: p.id, name: p.name, kind: p.category }));
                     setFound(await aiReadPhoto(photo, list));
                   } catch (e) {
@@ -196,15 +231,15 @@ export function ViewpointPanel({ id }: { id: string }) {
       <div className="fields">
         <label className="field">
           <span>Direction (°)</span>
-          <input type="number" value={v.direction} onChange={(e) => updateViewpoint(id, (x) => void (x.direction = Number(e.target.value) % 360))} />
+          <NumberInput digits={0} value={v.direction} onChange={(n) => updateViewpoint(id, (x) => void (x.direction = ((n % 360) + 360) % 360))} />
         </label>
         <label className="field">
           <span>Angle de vue (°)</span>
-          <input type="number" min={30} max={120} value={v.fov} onChange={(e) => updateViewpoint(id, (x) => void (x.fov = Math.min(120, Math.max(30, Number(e.target.value)))))} />
+          <NumberInput digits={0} min={30} max={120} value={v.fov} onChange={(n) => updateViewpoint(id, (x) => void (x.fov = n))} />
         </label>
         <label className="field">
           <span>Hauteur de l'appareil (m)</span>
-          <input type="number" step={0.05} min={0.3} max={2.5} value={v.eye} onChange={(e) => updateViewpoint(id, (x) => void (x.eye = Number(e.target.value)))} />
+          <NumberInput min={0.3} max={2.5} value={v.eye} onChange={(n) => updateViewpoint(id, (x) => void (x.eye = n))} />
         </label>
       </div>
       <p className="muted small">
@@ -219,7 +254,7 @@ export function ViewpointPanel({ id }: { id: string }) {
               setStep('visite');
             }}
           >
-            Comparer en 3D
+            Comparer à la maquette 3D
           </button>
         )}
         {photo && (

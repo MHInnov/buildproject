@@ -51,7 +51,7 @@ export function HdrEnvironment({ preset, night }: { preset: HdrPreset; night: bo
     };
   }, [gl, scene, preset]);
   useEffect(() => {
-    scene.environmentIntensity = night ? 0.05 : 0.65;
+    scene.environmentIntensity = night ? 0.05 : 0.85;
     scene.background = skyTexture(night);
   }, [night, preset, scene]);
   return null;
@@ -60,6 +60,7 @@ export function HdrEnvironment({ preset, night }: { preset: HdrPreset; night: bo
 /** Occlusion ambiante + sortie (tons neutres, sRGB). Monté seulement en qualité haute. */
 export function PostEffects() {
   const { gl, scene, camera, size } = useThree();
+  const dpr = useThree((s) => s.viewport.dpr);
   const composer = useMemo(() => {
     // Rendu intermédiaire antialiasé (MSAA) et en demi-flottant pour garder les hautes lumières
     const rt = new THREE.WebGLRenderTarget(size.width, size.height, { samples: 4, type: THREE.HalfFloatType });
@@ -77,7 +78,7 @@ export function PostEffects() {
   useEffect(() => {
     composer.setPixelRatio(gl.getPixelRatio());
     composer.setSize(size.width, size.height);
-  }, [composer, gl, size]);
+  }, [composer, gl, size, dpr]);
   useEffect(() => () => composer.dispose(), [composer]);
   // Priorité 1 : on prend la main sur le rendu de la scène
   useFrame(() => composer.render(), 1);

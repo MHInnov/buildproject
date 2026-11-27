@@ -45,6 +45,8 @@ export interface Level {
   /** Épaisseur du plancher au-dessus, en mètres. */
   slab: number;
   underlay?: Underlay;
+  /** Calage sur le niveau du dessous : à vérifier après un import, validé par l'utilisateur. */
+  alignment?: 'a-verifier' | 'valide';
 }
 
 export type RoofType = 'deux-pans' | 'quatre-pans' | 'monopente' | 'plat';
@@ -69,6 +71,86 @@ export interface Roof {
   coveringId: string | null;
   insulationId: string | null;
   condition?: Condition;
+  /**
+   * Hauteur de l'égout (dessus de la couverture au droit des façades), au-dessus du sol du niveau qui
+   * porte le toit. Des combles aménagés ont leurs murs bas en retrait : le toit part plus bas.
+   * Absent : le haut des murs de ce niveau.
+   */
+  eave?: number;
+  /** Fenêtres de toit (type Velux). */
+  windows?: RoofWindow[];
+  /** Bois de la charpente (voir data/exterior.ts) ; absent : sapin. */
+  timber?: string;
+  /** Combles aménagés : pannes et faîtage laissés apparents sous le rampant. */
+  exposedBeams?: boolean;
+  /**
+   * Emprise du toit (faces extérieures, avant débord), quand elle ne se déduit pas des murs : combles
+   * importés d'un plan, dont les pignons fixent la largeur d'égout à égout.
+   */
+  bounds?: { x0: number; y0: number; x1: number; y1: number };
+  /**
+   * Avancées couvertes de leur propre toit à deux pans (même pente, même égout), raccordé en noue au toit
+   * principal : emprise extérieure de l'avancée, sens du faîtage et côté par lequel elle touche la maison.
+   */
+  wings?: RoofWing[];
+  /** Chapelles (lucarnes à deux pans) posées sur l'égout. */
+  dormers?: Dormer[];
+}
+
+/**
+ * Chapelle : lucarne à deux pans dont la façade, percée d'une fenêtre, prolonge celle de la maison au-dessus
+ * de l'égout ; ses jouées descendent jusqu'au toit principal. Hauteurs comptées depuis l'égout (haut des murs).
+ */
+export interface Dormer {
+  id: string;
+  /** Façade (côté égout) qui la porte. */
+  side: 'x0' | 'x1' | 'y0' | 'y1';
+  /** Centre le long de l'égout (m). */
+  at: number;
+  /** Largeur hors tout de la façade de la chapelle (m). */
+  width: number;
+  /** Fenêtre : largeur, allège et linteau au-dessus de l'égout. */
+  windowWidth: number;
+  sill: number;
+  head: number;
+  /** Égout de la chapelle au-dessus de l'égout principal. */
+  height: number;
+  /** Pente des deux pans (degrés). */
+  pitch: number;
+}
+
+export interface Chimney {
+  id: string;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  /** Altitude du pied (m) : sol du rez-de-chaussée d'ordinaire. */
+  base: number;
+}
+
+export interface RoofWing {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  ridge: 'x' | 'y';
+  /** Bout du faîtage contre la maison (le pignon est à l'autre bout). */
+  attach: 'x0' | 'x1' | 'y0' | 'y1';
+}
+
+/** Fenêtre de toit, posée dans un pan. Position et dimensions en projection sur le plan. */
+export interface RoofWindow {
+  id: string;
+  /** Centre, en mètres. */
+  x: number;
+  y: number;
+  /** Largeur le long de l'égout (m). */
+  width: number;
+  /** Longueur dans le sens de la pente, mesurée sur le plan (projection horizontale, m). */
+  length: number;
+  productId: string | null;
+  condition?: Condition;
 }
 
 export interface Wall {
@@ -84,6 +166,19 @@ export interface Wall {
   /** Revêtement de chaque face (id produit catalogue), null = enduit brut. */
   finish: Record<WallSide, string | null>;
   condition?: Condition;
+  /**
+   * Composition d'un mur à plusieurs couches (mur creux : parement en brique, coulisse, bloc béton), de la face
+   * gauche à la face droite. Absente pour un mur d'un seul matériau.
+   */
+  layers?: WallLayer[];
+}
+
+export type WallLayerKind = 'brique' | 'bloc' | 'beton' | 'isolant' | 'vide' | 'pierre' | 'bois' | 'platre';
+
+export interface WallLayer {
+  kind: WallLayerKind;
+  /** Épaisseur en mètres. */
+  thickness: number;
 }
 
 export type OpeningKind = 'porte' | 'fenetre';
@@ -100,6 +195,34 @@ export interface Opening {
   sill: number;
   productId: string | null;
   condition?: Condition;
+  /** Réglages d'un modèle générique (couleur, vantaux, variante). */
+  options?: ItemOptions;
+  /**
+   * Sens d'ouverture d'une porte : charnière du côté de wall.a ou de wall.b, débattement vers la face gauche
+   * ou droite du mur. Absent : charnière côté a, vers la pièce.
+   */
+  swing?: OpeningSwing;
+  /** Volets battants (fenêtre de façade), ouverts contre le mur de part et d'autre. */
+  shutters?: boolean;
+  /** Relecture par l'IA : confirmée, corrigée, ou à vérifier (ajoutée ou douteuse). Retiré une fois validé. */
+  ai?: { status: 'confirme' | 'corrige' | 'a-verifier'; note: string };
+}
+
+export interface OpeningSwing {
+  hinge: 'a' | 'b';
+  side: WallSide;
+}
+
+/** Réglages d'un objet générique paramétrable (voir model/generic.ts). */
+export interface ItemOptions {
+  /** Couleur choisie (sinon celle du produit). */
+  color?: string;
+  /** Nombre de vantaux : porte simple ou double, fenêtre à 1, 2 ou 3 ouvrants. */
+  leaves?: number;
+  /** Variante du modèle (porte vitrée, fenêtre coulissante, porte de garage basculante…). */
+  style?: string;
+  /** Dimensions d'un meuble, en mètres (largeur, profondeur, hauteur). */
+  size?: { w: number; d: number; h: number };
 }
 
 /**
@@ -114,6 +237,27 @@ export interface RoomLabel {
   name: string;
   floorProductId: string | null;
   floorCondition?: Condition;
+  /** Hauteur sous plafond propre à la pièce (sinon celle du niveau), en mètres. */
+  ceilingHeight?: number;
+  /** Sol plus haut (+) ou plus bas (−) que le niveau : marche, estrade, pièce en contrebas, en mètres. */
+  floorOffset?: number;
+}
+
+/**
+ * Zone de sol : un revêtement posé sur une partie seulement d'une pièce
+ * (tapis de carrelage devant l'évier, coin parquet…). Rectangle aligné sur le plan.
+ */
+export interface FloorZone {
+  id: string;
+  levelId: string;
+  /** Coin haut gauche, en mètres. */
+  x: number;
+  y: number;
+  /** Largeur (selon x) et profondeur (selon y), en mètres. */
+  w: number;
+  h: number;
+  productId: string | null;
+  condition?: Condition;
 }
 
 export interface FurnitureItem {
@@ -124,16 +268,52 @@ export interface FurnitureItem {
   y: number;
   /** Rotation en degrés. */
   rotation: number;
+  /** Réglages d'un meuble générique (couleur, dimensions, variante). */
+  options?: ItemOptions;
 }
 
+/** Maison (toiture, jardin) ou appartement (dans un immeuble : ni toit ni terrain). */
+export type DwellingKind = 'maison' | 'appartement';
+
 export interface Building {
+  /** Type de logement ; absent : maison (anciens projets). */
+  kind?: DwellingKind;
+  /** Appartement : étage dans l'immeuble (0 = rez-de-chaussée). */
+  storey?: number;
   /** Niveaux, du plus bas au plus haut. */
   levels: Level[];
   walls: Wall[];
   openings: Opening[];
   rooms: RoomLabel[];
   furniture: FurnitureItem[];
+  /** Sols posés sur une partie de pièce (absent dans les anciens projets). */
+  floorZones?: FloorZone[];
   roof: Roof | null;
+  /** Terrain autour de la maison, lu sur le plan d'implantation (absent sinon). */
+  site?: Site;
+  /** Sol du rez-de-chaussée au-dessus du terrain (soubassement), en mètres ; absent : de plain-pied. */
+  plinth?: number;
+  /** Revêtements extérieurs (pelouse, abords de la maison) ; absent : pelouse par défaut, sans abords. */
+  outdoor?: Outdoor;
+  /** Souches de cheminée (lues sur les plans) : emprise de la maçonnerie et altitude de départ. */
+  chimneys?: Chimney[];
+}
+
+/** Revêtements extérieurs, voir data/exterior.ts. */
+export interface Outdoor {
+  /** Sol du jardin et du terrain autour. */
+  lawn?: string;
+  /** Abords : bande autour de la maison (terrasse, allée, gravier), absente si null. */
+  apron?: string | null;
+  /** Largeur des abords, en mètres. */
+  apronWidth?: number;
+  /** Allée, chemin et terrasse devant les portes du rez-de-chaussée ; absent : affichés. */
+  paths?: boolean;
+}
+
+/** Parcelle : contour en mètres, dans le repère du plan (la maison à sa place). */
+export interface Site {
+  parcel: Point[];
 }
 
 /**
@@ -174,14 +354,23 @@ export type Operation =
   | { type: 'addWall'; wall: Wall }
   | { type: 'addOpening'; opening: Opening }
   | { type: 'removeOpening'; openingId: string }
-  | { type: 'replaceOpening'; openingId: string; productId: string }
+  | { type: 'replaceOpening'; openingId: string; productId: string; options?: ItemOptions }
   | { type: 'setFloor'; roomId: string; productId: string }
+  | { type: 'addFloorZone'; zone: FloorZone }
+  | { type: 'setFloorZone'; zoneId: string; productId: string }
+  | { type: 'removeFloorZone'; zoneId: string }
+  | { type: 'setWallHeight'; wallId: string; height: number }
+  | { type: 'setRoomHeights'; roomId: string; ceilingHeight?: number; floorOffset?: number }
   | { type: 'setWallFinish'; wallId: string; side: WallSide; productId: string }
   | { type: 'addFurniture'; item: FurnitureItem }
   | { type: 'removeFurniture'; furnitureId: string }
   | { type: 'moveFurniture'; furnitureId: string; x: number; y: number; rotation: number }
+  | { type: 'setFurnitureOptions'; furnitureId: string; options?: ItemOptions }
   | { type: 'setRoofCovering'; productId: string }
-  | { type: 'setRoofInsulation'; productId: string };
+  | { type: 'setRoofInsulation'; productId: string }
+  | { type: 'addRoofWindow'; window: RoofWindow }
+  | { type: 'removeRoofWindow'; windowId: string }
+  | { type: 'replaceRoofWindow'; windowId: string; productId: string };
 
 export interface Project {
   version: 2;

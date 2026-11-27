@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import type { Pattern, Product } from '../model/catalog';
 import { patternTile } from '../textures/patterns';
+import { applyPhoto, photoFor } from './photoMaterials';
 
 /**
- * Matériaux 3D à partir des textures dessinées par l'application.
+ * Matériaux 3D : textures photo (voir photoMaterials.ts), ou textures dessinées en repli.
  * Les coordonnées de texture des géométries sont en mètres : la répétition vaut 1 / taille du module,
  * ce qui garde les carreaux et les lames à leur taille réelle.
  */
@@ -40,18 +41,23 @@ export interface Surface {
 export const fromProduct = (p: Product | undefined, fallback: Surface): Surface =>
   p ? { color: p.color, pattern: p.pattern, roughness: p.roughness } : fallback;
 
-/** Matériau d'une surface, mis en cache (un seul par aspect). */
+/** Matériau d'une surface, mis en cache (un seul par aspect). Les surfaces à motif reçoivent une texture photo. */
 export function surfaceMaterial(s: Surface, selected = false, opts: { side?: THREE.Side; bump?: number } = {}): THREE.MeshStandardMaterial {
   const key = `${s.color}|${JSON.stringify(s.pattern ?? null)}|${s.roughness}|${s.metalness}|${selected ? 1 : 0}|${opts.side ?? 0}|${opts.bump ?? ''}`;
   let m = matCache.get(key);
   if (m) return m;
-  m = new THREE.MeshStandardMaterial({ color: s.pattern ? '#ffffff' : s.color, roughness: s.roughness ?? 0.85, metalness: s.metalness ?? 0, side: opts.side ?? THREE.FrontSide });
-  if (s.pattern) {
+  m = new THREE.MeshStandardMaterial({ color: s.color, roughness: s.roughness ?? 0.85, metalness: s.metalness ?? 0, side: opts.side ?? THREE.FrontSide });
+  const photo = s.pattern ? photoFor(s.pattern) : null;
+  if (s.pattern && photo) {
+    applyPhoto(m, photo, s.pattern, s.color, s.roughness, { normal: opts.bump });
+  } else if (s.pattern) {
+    // Motif sans photo équivalente : texture dessinée
     const { map } = texture(s.pattern, s.color);
+    m.color.set('#ffffff');
     m.map = map;
     if (BUMPY.has(s.pattern.kind)) {
       m.bumpMap = map;
-      m.bumpScale = opts.bump ?? (s.pattern.kind === 'plaster' || s.pattern.kind === 'carpet' ? 0.6 : 1.2);
+      m.bumpScale = opts.bump ?? 1.2;
     }
   }
   if (selected) {
@@ -75,7 +81,7 @@ export const FACADE: Surface = { color: '#9b5a40', pattern: { kind: 'bricks', w:
 export const PLASTER: Surface = { color: '#f1efe9', pattern: { kind: 'plaster' }, roughness: 0.92 };
 export const CEILING: Surface = { color: '#fbfaf7', pattern: { kind: 'plaster' }, roughness: 0.95 };
 export const RAW_FLOOR: Surface = { color: '#b9b2a6', pattern: { kind: 'concrete', w: 1, h: 1 }, roughness: 0.9 };
-export const ROOF_UNDERSIDE: Surface = { color: '#c9a77a', pattern: { kind: 'paneling', w: 0.6 }, roughness: 0.8 };
+export const ROOF_UNDERSIDE: Surface = { color: '#c9a77a', pattern: { kind: 'paneling', w: 0.12 }, roughness: 0.8 };
 
 /**
  * Boîte dont les coordonnées de texture sont en mètres.
@@ -135,4 +141,4 @@ export function skyTexture(night: boolean): THREE.Texture {
 }
 
 /** Gazon autour de la maison. */
-export const GRASS: Surface = { color: '#6f8f4e', pattern: { kind: 'carpet' }, roughness: 1 };
+export const GRASS: Surface = { color: '#5f7f3e', pattern: { kind: 'carpet', photo: 'grass' }, roughness: 1 };

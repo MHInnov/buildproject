@@ -15,6 +15,8 @@ interface UiState {
   toggled: Record<string, boolean>;
   /** Visite 3D : lumières allumées, par pièce. */
   lights: Record<string, boolean>;
+  /** Niveau du dessous mis en couleur pour caler l'étage affiché dessus. */
+  alignLevel: boolean;
   toggle: (id: string) => void;
   toggleLight: (roomId: string) => void;
   set: (p: Partial<Omit<UiState, 'set'>>) => void;
@@ -27,6 +29,7 @@ export const useUi = create<UiState>((set) => ({
   viewFrom: null,
   toggled: {},
   lights: {},
+  alignLevel: true,
   toggle: (id) => set((s) => ({ toggled: { ...s.toggled, [id]: !s.toggled[id] } })),
   toggleLight: (id) => set((s) => ({ lights: { ...s.lights, [id]: !s.lights[id] } })),
   set: (p) => set(p),

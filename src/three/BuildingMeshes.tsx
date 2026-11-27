@@ -1,16 +1,22 @@
-import { useFrame } from '@react-three/fiber';
+import { isDoorOpen } from '../model/doorState';
+import { useFrame, type ThreeEvent } from '@react-three/fiber';
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { Catalog, Product } from '../model/catalog';
+import { itemProduct, leavesOf } from '../model/generic';
 import { productById } from '../model/catalog';
 import { detectRooms, lerp, wallLength, wallNormal, wallSideFacingRoom } from '../model/geometry';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { floorToFloor, levelAbove, levelBelow, levelById } from '../model/levels';
-import type { Building, FurnitureItem, Level, Opening, Point, Room, Wall, WallSide } from '../model/types';
+import type { Building, FloorZone, FurnitureItem, Level, Opening, Point, Room, Wall, WallSide } from '../model/types';
 import type { Selection } from '../store';
 import { useUi } from '../uiState';
 import { CEILING, ceramic, chrome, FACADE, fromProduct, glassMaterial, meterBox, plain, PLASTER, RAW_FLOOR, surfaceMaterial, type Surface } from './materials';
-import { RoofMesh } from './RoofMesh';
+import { facadeSurface, RoofMesh } from './RoofMesh';
+import { atticProfiles, clipUnderRoof, prismGeometry, type WallProfile } from './attic';
+import { floorOffsetAt } from './physics';
+import { levelOutline } from '../model/footprint';
+import { facadeOpeningsAt } from '../model/sectionFacts';
 
 export interface Pick {
   sel: NonNullable<Selection>;
@@ -26,9 +32,22 @@ interface Props {
   showCeiling: boolean;
   night: boolean;
   onPick?: (sel: NonNullable<Selection>) => void;
+  onMenu?: (t: MenuTarget) => void;
 }
 
-type ClickHandler = (e: { stopPropagation: () => void; delta: number }) => void;
+type ClickHandler = (e: { stopPropagation: () => void; delta: number; face?: { materialIndex: number } | null }) => void;
+
+/** Face d'un mur touchée : les boîtes de mur portent la face gauche en matériau 4, la droite en 5. */
+const faceSide = (face?: { materialIndex: number } | null): WallSide | undefined =>
+  face?.materialIndex === 4 ? 'gauche' : face?.materialIndex === 5 ? 'droite' : undefined;
+
+/** Élément visé par un clic droit dans la visite. */
+export interface MenuTarget {
+  sel: NonNullable<Selection>;
+  /** Point touché, en coordonnées du plan (mètres). */
+  at: Point;
+  screen: { x: number; y: number };
+}
 
 /** Interrupteur d'une pièce : à côté de la première porte, côté pièce, à 1,10 m. */
 export interface SwitchSpot {
@@ -66,7 +85,7 @@ export function switchSpots(b: Building, rooms: Room[]): SwitchSpot[] {
   return out;
 }
 
-export function BuildingMeshes({ building, catalog, selection, visibleLevels, showRoof, showCeiling, night, onPick }: Props) {
+export function BuildingMeshes({ building, catalog, selection, visibleLevels, showRoof, showCeiling, night, onPick, onMenu }: Props) {
   const rooms = useMemo(() => detectRooms(building), [building]);
   const toggled = useUi((s) => s.toggled);
   const lights = useUi((s) => s.lights);
@@ -76,7 +95,21 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
   const click = (sel: NonNullable<Selection>): ClickHandler => (e) => {
     if (!onPick || e.delta > 4) return;
     e.stopPropagation();
-    onPick(sel);
+    onPick(sel.kind === 'wall' ? { ...sel, side: faceSide(e.face) } : sel);
+  };
+  const contextMenu = (e: ThreeEvent<MouseEvent>) => {
+    if (!onMenu) return;
+    let o: THREE.Object3D | null = e.object;
+    let sel: NonNullable<Selection> | null = null;
+    while (o && !sel) {
+      sel = (o.userData?.sel as NonNullable<Selection> | undefined) ?? null;
+      o = o.parent;
+    }
+    if (!sel) return;
+    e.stopPropagation();
+    e.nativeEvent.preventDefault();
+    if (sel.kind === 'wall') sel = { ...sel, side: faceSide(e.face) };
+    onMenu({ sel, at: { x: e.point.x, y: e.point.z }, screen: { x: e.nativeEvent.clientX, y: e.nativeEvent.clientY } });
   };
 
   // Faces de mur tournées vers une pièce (les autres sont des façades).
@@ -98,7 +131,7 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
   const holes = useMemo(() => {
     const m = new Map<string, Point[][]>();
     for (const f of building.furniture) {
-      const p = productById(catalog, f.productId);
+      const p = itemProduct(catalog, f);
       if (p?.category !== 'escalier') continue;
       const up = levelAbove(building, f.levelId);
       if (!up) continue;
@@ -117,11 +150,36 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
   }, [building, catalog]);
 
   const spots = useMemo(() => switchSpots(building, rooms), [building, rooms]);
+  // Combles aménagés : murs mansardés et pignons qui suivent la pente du toit
+  const profiles = useMemo(() => {
+    const fn = atticProfiles(building);
+    return fn ? new Map(building.walls.map((w) => [w.id, fn(w)])) : null;
+  }, [building]);
+  // Planchers : sous chaque étage, une dalle sur toute l'emprise du niveau du dessous (murs compris)
+  const outlines = useMemo(() => {
+    const m = new Map<string, Point[][]>();
+    for (const l of building.levels) {
+      const below = levelBelow(building, l.id);
+      if (!below) continue;
+      m.set(l.id, levelOutline(building.walls.filter((w) => w.levelId === below.id)));
+    }
+    return m;
+  }, [building.levels, building.walls]);
   const lowest = Math.min(...building.levels.map((l) => l.elevation));
+  // Tranche des planchers, vue de dehors entre deux niveaux : même parement que les façades
+  const slabEdge = useMemo(() => surfaceMaterial(facadeSurface(building, catalog)), [building, catalog]);
   const roofLevel = building.roof?.levelId;
+  const groundId = [...building.levels].sort((m, n) => Math.abs(m.elevation) - Math.abs(n.elevation))[0]?.id;
+  const plinth = building.plinth ?? 0;
+  const plinthOutline = useMemo(
+    () => (plinth > 0.02 && groundId ? levelOutline(building.walls.filter((w) => w.levelId === groundId)) : []),
+    [plinth, groundId, building.walls],
+  );
 
   return (
-    <group>
+    <group onContextMenu={contextMenu}>
+      {groundId && visibleLevels.has(groundId) && plinthOutline.map((o, i) => <Plinth key={`pl-${i}`} outline={o} height={plinth} />)}
+      {groundId && visibleLevels.has(groundId) && plinthOutline.length > 0 && <EntranceSteps building={building} levelId={groundId} height={plinth} />}
       {building.levels
         .filter((l) => visibleLevels.has(l.id))
         .map((level) => {
@@ -131,11 +189,15 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
           const underRoof = roofLevel === level.id && building.roof?.type !== 'plat';
           return (
             <group key={level.id}>
+              {below && floorThickness > 0.02 && (outlines.get(level.id) ?? []).map((o, i) => (
+                <Slab key={`slab-${i}`} outline={o} top={level.elevation - 0.01} thickness={floorThickness - 0.014} holes={holes.get(level.id) ?? []} edge={slabEdge} />
+              ))}
               {lRooms.map((r) => (
                 <Floor
                   key={r.label.id}
                   room={r}
                   elevation={level.elevation}
+                  offset={r.label.floorOffset ?? 0}
                   thickness={floorThickness}
                   holes={holes.get(level.id) ?? []}
                   surface={fromProduct(productById(catalog, r.label.floorProductId), RAW_FLOOR)}
@@ -143,7 +205,19 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
                   onClick={click({ kind: 'room', id: r.label.id })}
                 />
               ))}
-              {showCeiling && !underRoof && lRooms.map((r) => <Ceiling key={`c-${r.label.id}`} room={r} height={level.elevation + level.height} />)}
+              {(building.floorZones ?? [])
+                .filter((z) => z.levelId === level.id && z.productId)
+                .map((z) => (
+                  <ZoneFloor
+                    key={z.id}
+                    zone={z}
+                    elevation={level.elevation + floorOffsetAt(lRooms, level.id, { x: z.x + z.w / 2, y: z.y + z.h / 2 })}
+                    surface={fromProduct(productById(catalog, z.productId), RAW_FLOOR)}
+                    selected={isSel('zone', z.id)}
+                    onClick={click({ kind: 'zone', id: z.id })}
+                  />
+                ))}
+              {showCeiling && (!underRoof || building.roof?.eave != null) && lRooms.map((r) => <Ceiling key={`c-${r.label.id}`} room={r} height={level.elevation + roomCeiling(r, level) - 0.004} />)}
               {building.walls
                 .filter((w) => w.levelId === level.id)
                 .map((w) => (
@@ -154,9 +228,11 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
                     openings={building.openings.filter((o) => o.wallId === w.id)}
                     catalog={catalog}
                     facing={facing.get(w.id)}
+                    profile={profiles?.get(w.id) ?? null}
                     selected={isSel('wall', w.id)}
                     selectedOpening={selection?.kind === 'opening' ? selection.id : null}
                     toggled={toggled}
+                    building={building}
                     onClick={click({ kind: 'wall', id: w.id })}
                     onOpeningClick={(id) => click({ kind: 'opening', id })}
                     onOpeningToggle={toggle}
@@ -165,9 +241,10 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
               {building.furniture
                 .filter((f) => f.levelId === level.id)
                 .map((f) => {
-                  const p = productById(catalog, f.productId);
+                  const p = itemProduct(catalog, f);
+                  const lift = floorOffsetAt(lRooms, level.id, f);
                   return p ? (
-                    <FurnitureMesh key={f.id} item={f} product={p} level={level} selected={isSel('furniture', f.id)} onClick={click({ kind: 'furniture', id: f.id })} />
+                    <FurnitureMesh key={f.id} item={f} product={p} level={lift ? { ...level, elevation: level.elevation + lift } : level} selected={isSel('furniture', f.id)} onClick={click({ kind: 'furniture', id: f.id })} />
                   ) : null;
                 })}
               {lRooms.map((r) => (
@@ -195,7 +272,14 @@ export function BuildingMeshes({ building, catalog, selection, visibleLevels, sh
           );
         })}
       {showRoof && building.roof && (
-        <RoofMesh building={building} catalog={catalog} selected={selection?.kind === 'roof'} onClick={click({ kind: 'roof', id: 'roof' })} />
+        <RoofMesh
+          building={building}
+          catalog={catalog}
+          selected={selection?.kind === 'roof'}
+          onClick={click({ kind: 'roof', id: 'roof' })}
+          selectedWindow={selection?.kind === 'roofWindow' ? selection.id : null}
+          onWindowClick={(id) => click({ kind: 'roofWindow', id })}
+        />
       )}
     </group>
   );
@@ -208,25 +292,107 @@ function shapeOf(poly: Point[], holes: Point[][] = []): THREE.Shape {
   return s;
 }
 
-function Floor({ room, elevation, thickness, holes, surface, selected, onClick }: { room: Room; elevation: number; thickness: number; holes: Point[][]; surface: Surface; selected: boolean; onClick: ClickHandler }) {
+/** Hauteur du plafond d'une pièce au-dessus du niveau (sol décalé + hauteur propre). */
+export function roomCeiling(r: Room, level: Level): number {
+  return (r.label.floorOffset ?? 0) + (r.label.ceilingHeight ?? level.height);
+}
+
+function Floor({ room, elevation, offset, thickness, holes, surface, selected, onClick }: { room: Room; elevation: number; offset: number; thickness: number; holes: Point[][]; surface: Surface; selected: boolean; onClick: ClickHandler }) {
   // Trémies entièrement contenues dans la pièce
   const inside = [...holes.filter((h) => h.every((p) => pointInside(p, room.polygon))), ...(room.holes ?? [])];
+  const depth = Math.max(0, thickness + offset);
   const geom = useMemo(() => {
     const shape = shapeOf(room.polygon, inside);
-    return thickness > 0 ? new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: false }) : new THREE.ShapeGeometry(shape);
+    // Sol décalé : la dalle s'épaissit (estrade) ou descend (pièce en contrebas).
+    return depth > 0.001 ? new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false }) : new THREE.ShapeGeometry(shape);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [room, thickness, JSON.stringify(inside)]);
-  const mats = thickness > 0 ? [surfaceMaterial(surface, selected), surfaceMaterial(CEILING)] : surfaceMaterial(surface, selected);
+  }, [room, depth, JSON.stringify(inside)]);
+  const mats = depth > 0.001 ? [surfaceMaterial(surface, selected), surfaceMaterial(CEILING)] : surfaceMaterial(surface, selected);
   return (
     <mesh
       geometry={geom}
       rotation-x={-Math.PI / 2}
-      position-y={elevation - thickness + 0.001}
+      position-y={elevation + offset - depth + 0.001}
       material={mats}
       userData={{ sel: { kind: 'room', id: room.label.id } }}
       onClick={onClick}
       receiveShadow
-      castShadow={thickness > 0}
+      castShadow={depth > 0.001}
+    />
+  );
+}
+
+const PLINTH = plain('#8a8279', 0.95);
+
+/** Marches devant les portes de façade du rez-de-chaussée, du terrain jusqu'au seuil. */
+function EntranceSteps({ building, levelId, height }: { building: Building; levelId: string; height: number }) {
+  const doors = useMemo(() => facadeOpeningsAt(building, levelId).filter((f) => f.opening.kind === 'porte'), [building, levelId]);
+  const n = Math.max(1, Math.round(height / 0.18));
+  const rise = height / n;
+  return (
+    <>
+      {doors.map(({ opening: o, wall, center, u, out }) => {
+        const angle = Math.atan2(u.y, u.x);
+        const off = wall.thickness / 2;
+        if (o.productId === 'ex-porte-garage') {
+          // Porte de garage : une rampe en pente douce jusqu'au terrain
+          const run = Math.max(1, height * 5);
+          const slope = Math.atan2(height, run);
+          const sign = out.x * -u.y + out.y * u.x > 0 ? 1 : -1;
+          const d = off + run / 2;
+          return (
+            <mesh key={`ramp-${o.id}`} position={[center.x + out.x * d, -height / 2 - 0.04, center.y + out.y * d]} rotation={[sign * slope, -angle, 0, 'YXZ']} material={PLINTH} receiveShadow>
+              <boxGeometry args={[o.width + 0.2, 0.1, Math.hypot(run, height)]} />
+            </mesh>
+          );
+        }
+        // Marches de 30 cm, la plus haute contre le seuil
+        return Array.from({ length: n }, (_, i) => {
+          const top = -i * rise;
+          const depth = 0.3 * (i + 1);
+          const d = off + depth / 2;
+          const h = height + top + 0.02;
+          return (
+            <mesh key={`st-${o.id}-${i}`} position={[center.x + out.x * d, top - h / 2, center.y + out.y * d]} rotation-y={-angle} material={PLINTH} receiveShadow castShadow>
+              <boxGeometry args={[o.width + 0.3, h, depth]} />
+            </mesh>
+          );
+        });
+      })}
+    </>
+  );
+}
+
+/** Soubassement : la maison posée au-dessus du terrain, sur toute l'emprise du rez-de-chaussée. */
+function Plinth({ outline, height }: { outline: Point[]; height: number }) {
+  const geom = useMemo(() => new THREE.ExtrudeGeometry(shapeOf(outline, []), { depth: height + 0.02, bevelEnabled: false }), [outline, height]);
+  return <mesh geometry={geom} rotation-x={-Math.PI / 2} position-y={-height - 0.02} material={PLINTH} receiveShadow castShadow />;
+}
+
+/** Dalle de plancher entre deux niveaux, trémies d'escalier découpées. */
+function Slab({ outline, top, thickness, holes, edge }: { outline: Point[]; top: number; thickness: number; holes: Point[][]; edge: THREE.Material }) {
+  const geom = useMemo(() => {
+    const inside = holes.filter((h) => h.every((p) => pointInside(p, outline)));
+    return new THREE.ExtrudeGeometry(shapeOf(outline, inside), { depth: thickness, bevelEnabled: false });
+  }, [outline, thickness, holes]);
+  return <mesh geometry={geom} rotation-x={-Math.PI / 2} position-y={top - thickness} material={[surfaceMaterial(RAW_FLOOR), edge]} receiveShadow castShadow />;
+}
+
+/** Sol posé sur une partie de pièce : légèrement au-dessus du sol de la pièce. */
+function ZoneFloor({ zone, elevation, surface, selected, onClick }: { zone: FloorZone; elevation: number; surface: Surface; selected: boolean; onClick: ClickHandler }) {
+  const geom = useMemo(() => {
+    const { x, y, w, h } = zone;
+    return new THREE.ShapeGeometry(shapeOf([{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }]));
+  }, [zone]);
+  return (
+    <mesh
+      geometry={geom}
+      rotation-x={-Math.PI / 2}
+      position-y={elevation + 0.005}
+      material={surfaceMaterial(surface, selected)}
+      userData={{ sel: { kind: 'zone', id: zone.id } }}
+      onClick={onClick}
+      receiveShadow
     />
   );
 }
@@ -242,13 +408,19 @@ function pointInside(p: Point, poly: Point[]): boolean {
 }
 
 function Ceiling({ room, height }: { room: Room; height: number }) {
-  const geom = useMemo(() => new THREE.ShapeGeometry(shapeOf(room.polygon, room.holes)), [room]);
+  // Plan (x, y) tel quel puis rotation +90° autour de X : le point (x, y) arrive en (x, 0, y), face tournée vers le bas.
+  const geom = useMemo(() => {
+    const s = new THREE.Shape(room.polygon.map((p) => new THREE.Vector2(p.x, p.y)));
+    for (const h of room.holes ?? []) s.holes.push(new THREE.Path(h.map((p) => new THREE.Vector2(p.x, p.y))));
+    return new THREE.ShapeGeometry(s);
+  }, [room]);
   return <mesh geometry={geom} rotation-x={Math.PI / 2} position-y={height} material={surfaceMaterial(CEILING, false, { side: THREE.FrontSide })} receiveShadow />;
 }
 
 /** Suspension au plafond + lumière de la pièce (éteinte = intensité nulle, sans recompiler les shaders). */
 function Lamp({ room, level, underRoof, on, night }: { room: Room; level: Level; underRoof: boolean; on: boolean; night: boolean }) {
-  const top = level.elevation + (underRoof ? Math.min(level.height + 1.2, 2.4) : level.height);
+  const h = roomCeiling(room, level);
+  const top = level.elevation + (underRoof ? Math.min(h + 1.2, 2.4) : h);
   const y = top - 0.45;
   const bulb = useMemo(() => new THREE.MeshStandardMaterial({ color: '#fff7e0', emissive: new THREE.Color('#ffd48a'), emissiveIntensity: 0, roughness: 0.4 }), []);
   bulb.emissiveIntensity = on ? 2.2 : 0;
@@ -265,7 +437,8 @@ function Lamp({ room, level, underRoof, on, night }: { room: Room; level: Level;
       <mesh position-y={y - 0.03} material={bulb}>
         <sphereGeometry args={[0.045, 12, 8]} />
       </mesh>
-      <pointLight position-y={y - 0.08} intensity={on ? (night ? 9 : 4) : 0} distance={0} decay={2} color="#ffe2b8" />
+      {/* Lumière montée seulement quand elle est allumée : chaque lumière coûte à chaque image. */}
+      {on && <pointLight position-y={y - 0.08} intensity={night ? 9 : 4} distance={0} decay={2} color="#ffe2b8" />}
     </group>
   );
 }
@@ -296,8 +469,10 @@ export function wallPieces(w: Wall, openings: Opening[]): Piece[] {
   return pieces.filter((p) => p.x1 - p.x0 > 0.001 && p.y1 - p.y0 > 0.001);
 }
 
-function WallMesh({ wall, elevation, openings, catalog, facing, selected, selectedOpening, toggled, onClick, onOpeningClick, onOpeningToggle }: {
+function WallMesh({ wall, elevation, openings, catalog, facing, profile, selected, selectedOpening, toggled, building, onClick, onOpeningClick, onOpeningToggle }: {
   wall: Wall;
+  building: Building;
+  profile?: WallProfile | null;
   elevation: number;
   openings: Opening[];
   catalog: Catalog;
@@ -321,17 +496,23 @@ function WallMesh({ wall, elevation, openings, catalog, facing, selected, select
   };
   const left = surfaceMaterial(faceSurface('gauche'), selected);
   const right = surfaceMaterial(faceSurface('droite'), selected);
-  const edge = surfaceMaterial(facing && facing.size === 0 ? FACADE : PLASTER, selected);
+  // Tranches (tableaux des baies, bouts de mur) d'une façade : son parement extérieur, pas de l'enduit
+  const outSide: WallSide | null = facing && facing.size < 2 && wall.kind === 'porteur' ? (facing.has('gauche') ? 'droite' : 'gauche') : null;
+  const edge = surfaceMaterial(outSide ? faceSurface(outSide) : PLASTER, selected);
   // Ordre des faces d'une BoxGeometry : +x, -x, +y, -y, +z (gauche), -z (droite)
   const materials = [edge, edge, edge, edge, left, right];
   const pieces = useMemo(
     () =>
-      wallPieces(wall, openings).map((piece) => {
+      wallPieces(profile ? { ...wall, height: profile.height } : wall, openings).flatMap((piece) => {
         // Les blocs en bout de mur débordent d'une demi-épaisseur pour fermer les angles.
         const p = { ...piece, x0: piece.x0 <= 0.001 ? -th / 2 : piece.x0, x1: piece.x1 >= L - 0.001 ? L + th / 2 : piece.x1 };
-        return { p, geo: meterBox(p.x1 - p.x0, p.y1 - p.y0, th, p.x0, p.y0) };
+        // Sous un rampant : le haut du bloc suit la pente
+        const clip = profile ? clipUnderRoof(p.x0, p.x1, p.y0, p.y1, profile) : 'box';
+        if (clip === 'none') return [];
+        if (clip === 'box') return [{ p, geo: meterBox(p.x1 - p.x0, p.y1 - p.y0, th, p.x0, p.y0), placed: false }];
+        return [{ p, geo: prismGeometry(clip, th), placed: true }];
       }),
-    [wall, openings, th, L],
+    [wall, openings, th, L, profile],
   );
   useEffect(() => () => pieces.forEach((x) => x.geo.dispose()), [pieces]);
   // Côté où s'ouvrent les portes et fenêtres : vers une pièce si possible.
@@ -339,11 +520,11 @@ function WallMesh({ wall, elevation, openings, catalog, facing, selected, select
 
   return (
     <group position={[wall.a.x, elevation, wall.a.y]} rotation-y={angle}>
-      {pieces.map(({ p, geo }, i) => {
+      {pieces.map(({ p, geo, placed }, i) => {
         return (
           <mesh
             key={`${i}-${p.x0}-${p.x1}-${p.y0}`}
-            position={[(p.x0 + p.x1) / 2, (p.y0 + p.y1) / 2, 0]}
+            position={placed ? [0, 0, 0] : [(p.x0 + p.x1) / 2, (p.y0 + p.y1) / 2, 0]}
             geometry={geo}
             material={materials}
             userData={{ sel: { kind: 'wall', id: wall.id } }}
@@ -369,15 +550,40 @@ function WallMesh({ wall, elevation, openings, catalog, facing, selected, select
             );
           }),
       )}
+      {/* Volets battants, ouverts à plat contre la façade de part et d'autre de la fenêtre */}
+      {outSide &&
+        openings
+          .filter((o) => o.shutters)
+          .flatMap((o) =>
+            [-1, 1].map((sg) => {
+              const leaf = o.width / 2;
+              const x = o.offset + sg * (o.width / 2 + leaf / 2 + 0.01);
+              const z = (outSide === 'gauche' ? 1 : -1) * (th / 2 + 0.02);
+              return (
+                <group key={`vo-${o.id}-${sg}`} position={[x, o.sill + o.height / 2, z]}>
+                  <mesh material={SHUTTER} castShadow receiveShadow userData={{ sel: { kind: 'opening', id: o.id } }} onClick={onOpeningClick(o.id)}>
+                    <boxGeometry args={[leaf, o.height, 0.03]} />
+                  </mesh>
+                  {/* Lames horizontales */}
+                  {Array.from({ length: Math.max(4, Math.round(o.height / 0.12)) }, (_, i) => i).map((i, _, arr) => (
+                    <mesh key={i} position={[0, -o.height / 2 + ((i + 0.5) * o.height) / arr.length, (outSide === 'gauche' ? 1 : -1) * 0.017]} material={SHUTTER_SLAT}>
+                      <boxGeometry args={[leaf - 0.06, 0.02, 0.006]} />
+                    </mesh>
+                  ))}
+                </group>
+              );
+            }),
+          )}
       {openings.map((o) => {
-        const isOpen = o.kind === 'porte' ? !toggled[o.id] : !!toggled[o.id];
+        // Portes intérieures ouvertes par défaut ; portes de garage et d'entrée fermées (on les voit de dehors)
+        const isOpen = isDoorOpen(building, o, !!toggled[o.id]);
         const handle = onOpeningClick(o.id);
         return (
           <OpeningMesh
             key={o.id}
             o={o}
             th={th}
-            product={productById(catalog, o.productId)}
+            product={itemProduct(catalog, o)}
             selected={selectedOpening === o.id}
             open={isOpen}
             inward={inward}
@@ -390,13 +596,32 @@ function WallMesh({ wall, elevation, openings, catalog, facing, selected, select
   );
 }
 
+const SHUTTER = new THREE.MeshStandardMaterial({ color: '#2f4a3a', roughness: 0.6 });
+const SHUTTER_SLAT = new THREE.MeshStandardMaterial({ color: '#253d2f', roughness: 0.6 });
+const isGarage = (o: Opening) => !!o.productId?.includes('garage');
+
+/** Tablier qui monte ou descend en douceur. */
+function Lift({ target, children }: { target: number; children: React.ReactNode }) {
+  const ref = useRef<THREE.Group>(null);
+  useFrame((_, dt) => {
+    const g = ref.current;
+    if (!g) return;
+    g.position.y += (target - g.position.y) * Math.min(1, dt * 1.4);
+  });
+  return (
+    <group ref={ref} position-y={target}>
+      {children}
+    </group>
+  );
+}
+
 /** Battant animé : la rotation suit l'état ouvert / fermé en douceur. */
 function Swing({ target, children, position }: { target: number; children: React.ReactNode; position: [number, number, number] }) {
   const ref = useRef<THREE.Group>(null);
   useFrame((_, dt) => {
     const g = ref.current;
     if (!g) return;
-    g.rotation.y += (target - g.rotation.y) * Math.min(1, dt * 6);
+    g.rotation.y += (target - g.rotation.y) * Math.min(1, dt * 2.6);
   });
   return (
     <group ref={ref} position={position} rotation-y={target}>
@@ -431,41 +656,114 @@ function OpeningMesh({ o, th, product, selected, open, inward, onClick, onToggle
     },
   };
 
-  if (o.kind === 'porte') {
-    const leafW = o.width - 0.02;
-    const leafH = o.height - 0.02;
-    const glazed = product?.tags.includes('vitré');
+  const tags = product?.tags ?? [];
+  const leaves = Math.max(1, leavesOf(product, o.options));
+  // Chambranles des portes, sur les deux faces
+  const casings = (
+    <>
+      {[1, -1].map((side) => (
+        <group key={side} position-z={side * (th / 2 + 0.008)}>
+          <mesh position={[s - 0.035, o.height / 2, 0]} material={casing}>
+            <boxGeometry args={[0.07, o.height + 0.07, 0.016]} />
+          </mesh>
+          <mesh position={[s + o.width + 0.035, o.height / 2, 0]} material={casing}>
+            <boxGeometry args={[0.07, o.height + 0.07, 0.016]} />
+          </mesh>
+          <mesh position={[o.offset, o.height + 0.035, 0]} material={casing}>
+            <boxGeometry args={[o.width + 0.14, 0.07, 0.016]} />
+          </mesh>
+        </group>
+      ))}
+    </>
+  );
+
+  if (o.kind === 'porte' && isGarage(o) && !tags.includes('battante')) {
+    // Sectionnelle : panneaux horizontaux ; enroulable : lames fines ; basculante : un seul panneau nervuré.
+    // Le tablier remonte sous le plafond quand on l'ouvre.
+    const roll = tags.includes('enroulable');
+    const tilt = tags.includes('basculante');
+    const panels = tilt ? 1 : roll ? Math.max(8, Math.round(o.height / 0.08)) : Math.max(3, Math.round(o.height / 0.5));
+    const ph = (o.height - 0.04) / panels;
+    const ribs = tilt ? Math.max(6, Math.round(o.width / 0.12)) : 0;
     return (
       <group>
-        {/* Chambranles sur les deux faces */}
-        {[1, -1].map((side) => (
-          <group key={side} position-z={side * (th / 2 + 0.008)}>
-            <mesh position={[s - 0.035, o.height / 2, 0]} material={casing}>
-              <boxGeometry args={[0.07, o.height + 0.07, 0.016]} />
+        {casings}
+        <Lift target={open ? o.height - 0.25 : 0}>
+          {Array.from({ length: panels }, (_, i) => (
+            <mesh key={i} position={[o.offset, 0.02 + ph * (i + 0.5), 0]} material={frame} castShadow receiveShadow {...events}>
+              <boxGeometry args={[o.width - 0.02, ph - (roll ? 0.006 : 0.015), roll ? 0.03 : 0.045]} />
             </mesh>
-            <mesh position={[s + o.width + 0.035, o.height / 2, 0]} material={casing}>
-              <boxGeometry args={[0.07, o.height + 0.07, 0.016]} />
-            </mesh>
-            <mesh position={[o.offset, o.height + 0.035, 0]} material={casing}>
-              <boxGeometry args={[o.width + 0.14, 0.07, 0.016]} />
-            </mesh>
-          </group>
-        ))}
-        {/* Vantail pivotant sur ses paumelles */}
-        <Swing target={open ? -inward * Math.PI * 0.48 : 0} position={[s + 0.01, 0, 0]}>
-          <LeafMesh w={leafW} h={leafH} material={glazed ? [frame, frame, frame, frame, glassMaterial, glassMaterial] : frame} events={events} />
-          {glazed &&
-            [0.25, 0.5, 0.75].map((k) => (
-              <mesh key={k} position={[leafW / 2, leafH * k, 0]} material={frame} {...events}>
-                <boxGeometry args={[leafW, 0.03, 0.045]} />
+          ))}
+          {Array.from({ length: ribs }, (_, i) =>
+            [1, -1].map((side) => (
+              <mesh key={`${i}${side}`} position={[s + 0.06 + ((o.width - 0.12) * (i + 0.5)) / ribs, o.height / 2, side * 0.026]} material={frame} {...events}>
+                <boxGeometry args={[0.025, o.height - 0.12, 0.012]} />
               </mesh>
-            ))}
-          {[1, -1].map((side) => (
-            <mesh key={side} position={[leafW - 0.08, 1.02, side * 0.045]} material={chrome}>
+            )),
+          )}
+          {tilt && (
+            <mesh position={[o.offset, 1.0, -inward * 0.035]} material={chrome}>
+              <boxGeometry args={[0.18, 0.025, 0.025]} />
+            </mesh>
+          )}
+        </Lift>
+      </group>
+    );
+  }
+
+  if (o.kind === 'porte') {
+    // Simple ou double vantail (porte de garage battante : toujours deux vantaux)
+    const n = isGarage(o) ? 2 : Math.min(2, leaves);
+    const leafW = (o.width - 0.02) / n - (n > 1 ? 0.005 : 0);
+    const leafH = o.height - 0.02;
+    const glazed = tags.includes('vitré');
+    const moulded = tags.includes('moulures');
+    // Sens d'ouverture lu sur le plan (ou réglé) : côté du débattement et charnière ; sinon vers la pièce, charnière côté a
+    const towards = o.swing ? (o.swing.side === 'gauche' ? 1 : -1) : inward;
+    const angle = -towards * Math.PI * (n > 1 ? 0.46 : 0.48);
+    const atB = n === 1 && o.swing?.hinge === 'b';
+    // Vantail dessiné de x0 à x0 + leafW (x0 < 0 pour le vantail de droite, qui pivote sur l'autre bord)
+    const leaf = (x0: number, handleX: number) => (
+      <>
+        <LeafMesh w={leafW} h={leafH} x0={x0} material={glazed ? [frame, frame, frame, frame, glassMaterial, glassMaterial] : frame} events={events} />
+        {glazed &&
+          [0.25, 0.5, 0.75].map((k) => (
+            <mesh key={k} position={[x0 + leafW / 2, leafH * k, 0]} material={frame} {...events}>
+              <boxGeometry args={[leafW, 0.03, 0.045]} />
+            </mesh>
+          ))}
+        {moulded &&
+          !glazed &&
+          [0.3, 0.73].map((k) => (
+            <mesh key={k} position={[x0 + leafW / 2, leafH * k, 0]} material={frame} castShadow {...events}>
+              <boxGeometry args={[Math.max(0.1, leafW - 0.22), leafH * (k < 0.5 ? 0.42 : 0.34), 0.052]} />
+            </mesh>
+          ))}
+        {handleX >= 0 &&
+          [1, -1].map((side) => (
+            <mesh key={side} position={[x0 + handleX, 1.02, side * 0.045]} material={chrome}>
               <boxGeometry args={[0.13, 0.02, 0.02]} />
             </mesh>
           ))}
-        </Swing>
+      </>
+    );
+    return (
+      <group>
+        {casings}
+        {atB ? (
+          <Swing target={open ? -angle : 0} position={[s + o.width - 0.01, 0, 0]}>
+            {leaf(-leafW, 0.08)}
+          </Swing>
+        ) : (
+          <Swing target={open ? angle : 0} position={[s + 0.01, 0, 0]}>
+            {leaf(0, n > 1 ? -1 : leafW - 0.08)}
+          </Swing>
+        )}
+        {n > 1 && (
+          <Swing target={open ? -angle : 0} position={[s + o.width - 0.01, 0, 0]}>
+            {leaf(-leafW, 0.08)}
+          </Swing>
+        )}
       </group>
     );
   }
@@ -473,6 +771,34 @@ function OpeningMesh({ o, th, product, selected, open, inward, onClick, onToggle
   const yMid = o.sill + o.height / 2;
   const sashW = o.width - 2 * f;
   const sashH = o.height - 2 * f;
+  const fixed = tags.includes('fixe');
+  const sliding = tags.includes('coulissant');
+  const nSash = fixed ? 1 : sliding ? Math.max(2, leaves) : leaves;
+  const w1 = sashW / nSash;
+  // Un ouvrant : vitrage + cadre, de x0 à x0 + w1 (repère du dormant)
+  const sash = (x0: number, z: number, handle: number | null) => (
+    <group position-z={z}>
+      <mesh position={[x0 + w1 / 2, yMid, 0]} material={glassMaterial} {...events}>
+        <boxGeometry args={[w1 - 0.06, sashH - 0.06, 0.012]} />
+      </mesh>
+      {!fixed &&
+        [
+          [x0 + w1 / 2, o.sill + f + 0.025, w1, 0.05],
+          [x0 + w1 / 2, o.sill + o.height - f - 0.025, w1, 0.05],
+          [x0 + 0.025, yMid, 0.05, sashH],
+          [x0 + w1 - 0.025, yMid, 0.05, sashH],
+        ].map(([x, y, w, h], i) => (
+          <mesh key={i} position={[x, y, 0]} material={frame} castShadow {...events}>
+            <boxGeometry args={[w, h, 0.06]} />
+          </mesh>
+        ))}
+      {handle !== null && (
+        <mesh position={[x0 + handle, yMid, inward * 0.04]} material={chrome}>
+          <boxGeometry args={[0.02, 0.12, 0.02]} />
+        </mesh>
+      )}
+    </group>
+  );
   return (
     <group>
       {/* Dormant */}
@@ -486,6 +812,13 @@ function OpeningMesh({ o, th, product, selected, open, inward, onClick, onToggle
           <boxGeometry args={[w, h, 0.08]} />
         </mesh>
       ))}
+      {/* Montants entre les ouvrants d'un châssis fixe à plusieurs vitrages */}
+      {fixed &&
+        Array.from({ length: leaves - 1 }, (_, i) => (
+          <mesh key={i} position={[s + f + (sashW * (i + 1)) / leaves, yMid, 0]} material={frame} {...events}>
+            <boxGeometry args={[0.06, sashH, 0.08]} />
+          </mesh>
+        ))}
       {/* Tablette intérieure et seuil extérieur */}
       <mesh position={[o.offset, o.sill - 0.015, inward * (th / 2 + 0.03)]} material={plain('#ece9e2', 0.5)} receiveShadow>
         <boxGeometry args={[o.width + 0.1, 0.03, 0.1]} />
@@ -493,25 +826,43 @@ function OpeningMesh({ o, th, product, selected, open, inward, onClick, onToggle
       <mesh position={[o.offset, o.sill - 0.03, -inward * (th / 2 + 0.02)]} material={plain('#8d8a84', 0.8)} receiveShadow>
         <boxGeometry args={[o.width + 0.08, 0.05, 0.08]} />
       </mesh>
-      {/* Ouvrant : vitrage + petit bois, pivote vers l'intérieur */}
-      <Swing target={open ? inward * -1.2 : 0} position={[s + f, 0, inward * 0.02]}>
-        <mesh position={[sashW / 2, yMid, 0]} material={glassMaterial} {...events}>
-          <boxGeometry args={[sashW - 0.06, sashH - 0.06, 0.012]} />
-        </mesh>
-        {[
-          [sashW / 2, o.sill + f + 0.025, sashW, 0.05],
-          [sashW / 2, o.sill + o.height - f - 0.025, sashW, 0.05],
-          [0.025, yMid, 0.05, sashH],
-          [sashW - 0.025, yMid, 0.05, sashH],
-        ].map(([x, y, w, h], i) => (
-          <mesh key={i} position={[x, y, 0]} material={frame} castShadow {...events}>
-            <boxGeometry args={[w, h, 0.06]} />
-          </mesh>
-        ))}
-        <mesh position={[sashW - 0.05, yMid, inward * 0.04]} material={chrome}>
-          <boxGeometry args={[0.02, 0.12, 0.02]} />
-        </mesh>
-      </Swing>
+      {fixed ? (
+        <group position={[s + f, 0, 0]}>{sash(0, 0, null)}</group>
+      ) : sliding ? (
+        // Coulissant : deux vantaux sur deux rails ; ouvert, le premier glisse derrière le second
+        <group position={[s + f, 0, 0]}>
+          <Slide target={open ? w1 * 0.92 : 0}>{sash(0, inward * 0.025, w1 - 0.05)}</Slide>
+          {Array.from({ length: nSash - 1 }, (_, i) => (
+            <group key={i}>{sash(w1 * (i + 1), -inward * 0.025, i === nSash - 2 ? 0.05 : null)}</group>
+          ))}
+        </group>
+      ) : (
+        // À la française : ouvrants qui pivotent vers l'intérieur, par paires depuis chaque bord
+        Array.from({ length: nSash }, (_, i) => {
+          const left = nSash === 1 || i < nSash / 2 || (nSash === 3 && i === 1 && false);
+          const hingeX = left ? s + f + w1 * i : s + f + w1 * (i + 1);
+          return (
+            <Swing key={i} target={open ? inward * (left ? -1.2 : 1.2) : 0} position={[hingeX, 0, inward * 0.02]}>
+              {sash(left ? 0 : -w1, 0, left ? (i === Math.ceil(nSash / 2) - 1 || nSash === 1 ? w1 - 0.05 : null) : i === Math.ceil(nSash / 2) ? 0.05 : null)}
+            </Swing>
+          );
+        })
+      )}
+    </group>
+  );
+}
+
+/** Vantail coulissant : glisse en douceur le long du rail. */
+function Slide({ target, children }: { target: number; children: React.ReactNode }) {
+  const ref = useRef<THREE.Group>(null);
+  useFrame((_, dt) => {
+    const g = ref.current;
+    if (!g) return;
+    g.position.x += (target - g.position.x) * Math.min(1, dt * 2.4);
+  });
+  return (
+    <group ref={ref} position-x={target}>
+      {children}
     </group>
   );
 }
@@ -539,7 +890,7 @@ function RBox({ size, pos, radius = 0.03, material, rot }: { size: [number, numb
   return <mesh geometry={geo} position={pos} rotation={rot} material={material} castShadow receiveShadow />;
 }
 
-const fabric = (color: string, selected: boolean) => surfaceMaterial({ color, pattern: { kind: 'carpet' }, roughness: 1 }, selected);
+const fabric = (color: string, selected: boolean) => surfaceMaterial({ color, pattern: { kind: 'carpet', photo: 'fabric' }, roughness: 0.95 }, selected);
 const woodMat = (color: string, selected: boolean, w = 0.25) => surfaceMaterial({ color, pattern: { kind: 'planks', w, h: 2 }, roughness: 0.55 }, selected);
 const metal = (color: string, selected: boolean) => plain(color, 0.35, selected, 0.6);
 
@@ -695,7 +1046,7 @@ function FurnitureMesh({ item, product: p, level, selected, onClick }: { item: F
         break;
       }
       case 'armoire': {
-        const body = p.tags.includes('bois') || c !== '#f2f2ef' ? woodMat(c, selected, 0.3) : plain(c, 0.45, selected);
+        const body = p.tags.includes('bois') || (!p.generic && c !== '#f2f2ef') ? woodMat(c, selected, 0.3) : plain(c, 0.45, selected);
         const n = Math.max(2, Math.round(w / 0.5));
         parts = (
           <>
@@ -717,7 +1068,7 @@ function FurnitureMesh({ item, product: p, level, selected, onClick }: { item: F
         break;
       }
       case 'rangement': {
-        const shelf = p.tags.includes('métal') || c === '#262626' ? metal(c, selected) : woodMat(c, selected, 0.3);
+        const shelf = p.tags.includes('métal') || (!p.generic && c === '#262626') ? metal(c, selected) : woodMat(c, selected, 0.3);
         const open = h > 1.2;
         const books = ['#8b3a3a', '#2f4f6f', '#c9a227', '#4e6b4a', '#d8d2c4', '#6b4f7a'];
         parts = open ? (
@@ -847,8 +1198,8 @@ function FurnitureMesh({ item, product: p, level, selected, onClick }: { item: F
   );
 }
 
-function LeafMesh({ w, h, material, events }: { w: number; h: number; material: THREE.Material | THREE.Material[]; events: Record<string, unknown> }) {
+function LeafMesh({ w, h, x0 = 0, material, events }: { w: number; h: number; x0?: number; material: THREE.Material | THREE.Material[]; events: Record<string, unknown> }) {
   const geo = useMemo(() => meterBox(w, h, 0.04), [w, h]);
   useEffect(() => () => geo.dispose(), [geo]);
-  return <mesh position={[w / 2, h / 2 + 0.01, 0]} geometry={geo} material={material} castShadow {...events} />;
+  return <mesh position={[x0 + w / 2, h / 2 + 0.01, 0]} geometry={geo} material={material} castShadow {...events} />;
 }

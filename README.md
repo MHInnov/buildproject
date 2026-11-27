@@ -2,11 +2,13 @@
 
 Application web légère pour préparer un projet de rénovation, en 5 étapes :
 
-1. **Existant** : dessiner sa maison niveau par niveau (rez, étages, combles, sous-sol), avec murs porteurs et cloisons, portes, fenêtres, escaliers, sanitaires et toiture. On indique les matériaux en place (carrelage ancien, papier peint, simple vitrage, tuiles…) et leur état (bon, moyen, mauvais). On peut aussi **importer un plan** (image ou PDF), le mettre à l'échelle et le laisser retracer les murs, et ajouter des **points de vue** (photos prises d'un endroit précis) pour reporter sols, murs, portes, fenêtres et meubles au bon endroit.
-2. **Projet** : démolir, construire, remplacer des châssis, changer les sols et les murs, ajouter ou retirer des meubles. Le budget se met à jour à chaque action, avec métré.
-3. **Visite 3D** : vue d'ensemble (avec coupe par niveau et toit amovible), visite avec un personnage réaliste et animé (1,70 m) suivi de dos pour juger l'échelle, ou promenade à hauteur d'yeux, au niveau de son choix. On ouvre les portes et les fenêtres, on allume avec les interrupteurs, on passe du jour à la nuit ; murs, portes fermées et meubles bloquent le passage, les escaliers mènent à l'étage. Un clic sur un élément permet de le modifier. Un point de vue photo peut être superposé à la maquette pour comparer.
+1. **Existant** : dessiner sa maison niveau par niveau (rez, étages, combles, sous-sol), avec murs porteurs et cloisons, portes, fenêtres, escaliers, sanitaires et toiture. On indique les matériaux en place (carrelage ancien, papier peint, simple vitrage, tuiles…) et leur état (bon, moyen, mauvais). Les cotes de chaque mur s'affichent sur le plan (bouton ↔ pour les masquer), et la peinture ou le revêtement de chaque face de mur apparaît comme une bande de couleur le long du mur. On peut aussi **importer un plan** (image ou PDF), le mettre à l'échelle et le laisser retracer les murs, et ajouter des **points de vue** (photos prises d'un endroit précis) pour reporter sols, murs, portes, fenêtres et meubles au bon endroit.
+2. **Projet** : démolir, construire, remplacer des châssis, changer les sols (de toute la pièce ou d'une **zone de sol** seulement : coin cuisine, entrée…) et les murs, ajouter ou retirer des meubles. Le budget se met à jour à chaque action, avec métré.
+3. **Visite 3D** (textures photo réalistes : parquet, carrelage, brique, enduit, tuiles…) : vue d'ensemble (avec coupe par niveau et toit amovible), visite avec un personnage réaliste et animé (1,70 m), la caméra toujours placée dans son dos (Z/S pour avancer ou reculer, Q/D pour tourner), pour juger l'échelle, ou promenade à hauteur d'yeux, au niveau de son choix. On ouvre les portes et les fenêtres, on allume avec les interrupteurs, on passe du jour à la nuit ; murs, portes fermées et meubles bloquent le passage, les escaliers mènent à l'étage. Un clic sur un élément permet de le modifier. Un point de vue photo peut être superposé à la maquette pour comparer.
 4. **Artisans** : carnet d'artisans et choix d'un artisan par poste.
 5. **Résumé** : budget poste par poste (matériaux + fourchette de main d'œuvre), mode détail avec le métré et les tâches de chaque corps de métier, impression PDF.
+
+Dans les deux plans, le **clic droit** ouvre un menu d'actions sur l'élément visé : ajouter une porte ou une fenêtre à l'endroit cliqué sur un mur, couper un mur, pivoter ou dupliquer un meuble, poser un sol sur une partie de pièce, supprimer…
 
 Le choix des produits accepte une description en langage naturel, par exemple « grand canapé pas trop foncé » ou « sol bois clair moins de 40 € ».
 
@@ -57,18 +59,120 @@ Ouvrir ensuite http://localhost:7080. Le port 7080 est le port convenu pour ce p
 
 Les projets dessinés restent dans le navigateur (stockage local), pas dans le conteneur : on peut arrêter et relancer l'image sans rien perdre. Le menu ☰ permet de les exporter en JSON.
 
+## Retraçage d'un plan existant
+
+Importez le plan (image, scan ou PDF) dans l'existant : l'application reconnaît seule la façon dont les murs sont dessinés (noirs pleins, encre, gris ou en couleur, hachurés, ou en double trait), leur épaisseur, les portes (par l'arc de débattement) et les fenêtres (traits de vitrage, même un seul trait au cœur du mur), et en déduit l'échelle (largeur des portes intérieures, à défaut épaisseur des façades). « Retracer les murs » dessine le tout ; étalonner sur une cote connue reste possible pour plus de précision. L'IA, si elle est activée (locale ou Claude, voir « Avec ou sans IA »), relit en plus chaque porte et fenêtre, retrouve les baies oubliées et nomme les pièces.
+
+Ce que fait le retraçage, dans l'ordre :
+
+- plusieurs lectures du dessin sont essayées (traits noirs, encre, aplats, double trait à plusieurs largeurs) et la plus cohérente est gardée : celle qui ferme le plus de pièces, avec des murs qui se rejoignent et qui correspondent à du dessin ;
+- les murs creux (deux parois et un vide, doublages) sont réunis en un seul mur ;
+- les murs sont raccordés entre eux (bouts alignés, angles dessinés en retrait, baies contre un angle) pour que les pièces se ferment ;
+- sont écartés : le cadre de la feuille et du cartouche, les cotes, les symboles pleins (repères de pièce), les textes et les pointillés ;
+- un étage sous combles garde ses pignons et ses cloisons même si ses pièces, bordées de rampants, ne se ferment pas.
+
+**Tous les plans d'un coup** (« Importer tous les plans (niveaux et coupes) ») : on dépose ensemble les plans de chaque niveau et les coupes, en images ou en PDF de plusieurs pages. Chaque page est classée d'après son nom, son cartouche et son dessin (modifiable), puis :
+
+- chaque plan importé remplace ce qui était dessiné sur son niveau (murs, pièces, mobilier, sols) ;
+- sur un PDF, l'échelle est lue dans le cartouche (« 1/50 ») avec le format de la page ; un plan étalonné donne la sienne aux plans de même format ; sinon chaque plan a son estimation (deux feuilles de même format peuvent être à des échelles différentes) ;
+- le rez-de-chaussée sert de référence : les autres niveaux sont calés dessus par leurs murs de façade et de pignon, ce qui corrige aussi leur échelle quand elle n'était qu'estimée (un étage dessiné à une autre échelle retrouve la bonne taille) ; les niveaux manquants sont créés ;
+- les fenêtres ne sont placées que dans les murs extérieurs ;
+- la coupe donne les hauteurs sous plafond, l'épaisseur des planchers et la forme du toit (plat, monopente, deux pans et sa pente) ; avec plusieurs coupes, la première qui donne une hauteur fait foi. Une coupe tournée sur la page est remise droite, et des hauteurs invraisemblables sont écartées ;
+- une même page présente dans deux documents (le plan du rez-de-chaussée seul et dans le dossier complet) n'est retenue qu'une fois, et les plans en trop par rapport aux niveaux que montrent les coupes sont écartés (la raison s'affiche, le classement reste modifiable) ;
+- les portes de garage (larges baies, de part et d'autre d'un poteau) sont reconnues dans les façades ;
+- **combles aménagés** : un dernier niveau sans façade le long des égouts devient un étage sous combles. Les murs bas (jambettes) sont retrouvés sur le plan et ferment les pièces côté extérieur, les fenêtres de toit (Velux) dessinées en pointillé sont posées dans les rampants, les pignons montent jusqu'au toit et, en 3D, murs et plafonds suivent la pente ;
+- un plancher (dalle) couvre toute l'emprise du niveau du dessous, sous chaque étage, trémies d'escalier comprises ;
+- **jardin** : le plan d'implantation (maison en noir au milieu de sa parcelle) est reconnu ; la maison dessinée est superposée au rez-de-chaussée, ce qui donne l'échelle et l'orientation, et le contour de la parcelle devient le jardin (pelouse et haie en 3D, contour et surface sur le plan du rez-de-chaussée, retirable dans « Ma maison »).
+
+## Chambres sous mansarde et fenêtres de toit
+
+- **Étage aménagé sous la pente** : dans **Toiture** (bouton « ⌂ Toit »), cochez « Étage aménagé sous la pente (chambres mansardées) » et indiquez la hauteur, à l'intérieur, où la pente rencontre les murs extérieurs. Les murs extérieurs de l'étage côté gouttière s'arrêtent sous la pente, les pignons montent jusqu'au faîtage, le rampant fait le plafond en 3D et les zones de moins de 1,80 m sont hachurées sur le plan. Un étage saisi à l'ancienne (hauteur du niveau = murs bas) est converti.
+- **Fenêtres de toit (Velux)** : outil « Fenêtre de toit » sur le niveau qui porte le toit (ou « + Fenêtre de toit » dans Toiture). Un clic pose la fenêtre dans le pan, entre égout et faîtage ; on la glisse pour la déplacer et on choisit le modèle (55 × 98, 78 × 118, 78 × 140, 114 × 118…) dans le panneau, qui indique à quelle hauteur arrivent le bas et le haut de la fenêtre. Dans le projet, l'ajout, le remplacement ou la suppression d'une fenêtre de toit sont chiffrés (ouverture de la toiture, pose et raccord).
+
 ## Avec ou sans IA
 
 Tout fonctionne sans IA : retraçage du plan par analyse d'image, report des éléments d'une photo par géométrie et couleur.
-Dans **Menu > Administration**, on peut activer l'option **Avec IA** (Claude, d'Anthropic) avec sa propre clé API : elle lit les cotes et les pièces d'un plan, et reconnaît les éléments d'une photo. La clé reste dans le navigateur et les images partent directement chez Anthropic ; l'usage est facturé sur le compte de la clé. Le module IA n'est téléchargé que s'il est activé.
+Dans **Menu > Administration**, on peut activer l'option **Avec IA** et choisir laquelle :
+
+- **IA locale (open source)** : un modèle de vision (Qwen2.5-VL par défaut) tourne avec [Ollama](https://ollama.com) sur la machine ou un serveur du réseau. Les plans ne quittent pas le réseau, rien n'est facturé. L'application reste une page web ; seule l'IA tourne à côté, derrière le relais `/ia-locale` de l'application.
+- **Claude (API Anthropic)** : renseignez soit votre propre clé (les images partent alors directement chez Anthropic, usage facturé sur le compte de la clé), soit l'**adresse de l'API** d'un serveur de l'entreprise compatible avec l'API d'Anthropic, qui garde la clé (la clé devient alors facultative).
+
+Ces réglages restent dans le navigateur. À l'import des plans, la fenêtre « Importer tous les plans » propose **Sans IA** / **Avec IA** ; sur un plan seul, « Analyser avec l'IA » fait la même relecture.
+
+Ce que fait l'IA, après le retraçage sans IA (qui reste la base) :
+
+- **chaque porte et fenêtre trouvée est relue sur une vue rapprochée**, recadrée et tournée pour que le mur soit horizontal : vraie porte, fenêtre, porte-fenêtre, porte de garage, ou rien du tout (fausse porte lue sur un pointillé, un trait de meuble) ; côté de la charnière et sens du débattement ; porte à deux vantaux ;
+- **chaque façade est relue par tronçons de 4,5 m** pour retrouver les baies que le retraçage a manquées ;
+- **les pièces sans nom** sont nommées d'après le texte écrit dedans (ou leurs équipements) ;
+- **les coupes** : les cotes écrites donnent les hauteurs sous plafond, l'épaisseur des planchers, les allèges et linteaux des façades, le soubassement, la pente et le débord du toit ;
+- avec Claude, le plan entier est aussi lu d'un coup (noms des pièces, ouvertures).
+
+Rien n'est imposé : une fausse porte n'est retirée que si l'IA en est sûre, une fenêtre n'est jamais mise dans une cloison, et ce qui est douteux ou ajouté par l'IA est marqué d'un **« ? » orange** sur le plan. Un clic ouvre l'inspecteur, qui donne la raison (« L'IA y voit plutôt une fenêtre », « Ajoutée par l'IA… ») avec **Valider** ou **Supprimer** ; les ouvertures corrigées ou confirmées gardent une note. Toute la relecture s'annule d'un coup (Ctrl+Z).
+
+### Lancer l'IA locale
+
+Le plus simple, avec Docker Compose depuis un clone du dépôt (l'application reste sur http://localhost:7080) :
+
+```bash
+# Carte graphique NVIDIA (pilote + NVIDIA Container Toolkit) : fortement conseillé
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile ia up --build
+
+# Sans carte graphique (processeur seul, bien plus lent)
+docker compose --profile ia up --build
+```
+
+Au premier lancement, le service `ollama-modele` télécharge le modèle (≈ 6 Go pour `qwen2.5vl:7b`, gardé ensuite dans le volume `ollama`). Pour un autre modèle : `IA_MODELE=qwen2.5vl:3b docker compose --profile ia up --build`, puis choisir le même dans l'administration (le bouton « Télécharger le modèle » le fait aussi depuis la page). Ollama n'ouvre aucun port : seule l'application le joint.
+
+**Mac (Apple Silicon)** : Docker ne donne pas accès à la puce graphique. Installez plutôt Ollama sur le Mac (il utilise la puce graphique), lancez `ollama pull qwen2.5vl:7b`, puis l'application seule en lui indiquant ce serveur :
+
+```bash
+OLLAMA_URL=http://host.docker.internal:11434 docker compose up --build
+# ou, avec l'image publiée :
+docker run --rm -p 7080:80 -e OLLAMA_URL=http://host.docker.internal:11434 --add-host host.docker.internal:host-gateway ghcr.io/mhinnov/buildproject:mvp-renovation
+```
+
+Même chose sous Windows ou Linux avec Ollama déjà installé. En développement (`npm run dev`), le relais `/ia-locale` pointe sur `http://localhost:11434` (ou `OLLAMA_URL`).
+
+**Matériel nécessaire** (mémoire graphique ou, sans carte graphique, mémoire vive) :
+
+| Modèle | Téléchargement | Mémoire conseillée | Remarque |
+| --- | --- | --- | --- |
+| `qwen2.5vl:3b` | ≈ 3 Go | 6 Go | léger, se trompe plus sur le sens des portes |
+| `qwen2.5vl:7b` (par défaut) | ≈ 6 Go | 8 Go (ex. RTX 3060 / 4060) | bon compromis |
+| `qwen3-vl:8b` | ≈ 6 Go | 8 à 10 Go | plus récent |
+| `llama3.2-vision:11b` | ≈ 8 Go | 12 Go | |
+| `qwen2.5vl:32b` | ≈ 21 Go | 24 Go (ex. RTX 3090 / 4090) | le plus précis |
+
+Durée indicative pour un plan d'étage (une trentaine de vues) : 1 à 3 minutes avec une carte graphique de 8 Go, 10 à 30 minutes au processeur seul (16 Go de mémoire vive au moins pour le modèle 7B). Sur un Mac M1/M2/M3 avec 16 Go, compter 3 à 6 minutes.
 
 ## Raccourcis de la visite
 
 | Action | Geste |
 | --- | --- |
-| Marcher | Z/W, Q/A, S, D ou flèches ; Maj pour courir |
+| Avancer / reculer | Z/W, S ou ↑ ↓ ; Maj pour courir |
+| Tourner | Q/A, D ou ← → (la souris n'est pas nécessaire) |
+| Regarder en haut / en bas (hauteur d'yeux) | R, F ou Page↑ / Page↓ |
 | Ouvrir une porte, allumer | touche E à proximité, ou double-clic sur la porte, clic sur l'interrupteur |
+| Actions sur un meuble, un mur, une porte | clic droit (au centre de l'écran en vue à hauteur d'yeux) |
 | Tourner la caméra (personnage) | glisser ; molette pour rapprocher |
+
+## Points de vue photo
+
+Dans l'existant, on place un point de vue sur le plan et on y joint la photo prise sur place. En projet, ce point de vue est figé : « Voir la photo du projet » affiche la photo réelle avec les modifications appliquées (démolitions, peintures, sols, meubles), avec un curseur avant / après. Les zones que le projet ne change pas restent celles de la photo.
+
+## Catalogues fournisseurs
+
+**Menu > Administration** permet d'importer le catalogue d'une marque au format CSV (Excel) ou JSON ; un modèle CSV est téléchargeable au même endroit. Les produits importés s'ajoutent aux choix de l'application et restent dans le navigateur. IKEA et Quick-Step ne publient pas de catalogue ouvert ni d'API publique : il faut obtenir le fichier produits auprès de la marque ou d'un distributeur partenaire.
+
+Des **connecteurs** permettent aussi de rechercher des produits en ligne et de les ajouter au catalogue, avec votre propre compte :
+
+| Source | Service | Ce qu'il faut |
+| --- | --- | --- |
+| IKEA | acteur Apify `mynewhome/ikea` (communautaire, non officiel) | jeton API Apify |
+| Brico.be | recherche Brico de la place de marché Writ (non affiliée à Brico) | clé API Writ `wt_…` (offre Pro) |
+| Diffusion Menuiserie (Quick-Step) | aucun : pas d'API ni d'export, reprise automatique du site non autorisée | demander le fichier produits et l'importer en CSV |
+
+Rien n'est appelé tant que la clé d'un connecteur n'est pas renseignée. Les clés restent dans le navigateur. Les appels passent par le serveur de l'application (`/connecteurs/…` dans `nginx.conf`, et le même relais en `npm run dev`), car ces services ne peuvent pas être appelés directement depuis une page web.
 
 ## Raccourcis du plan
 
@@ -98,20 +202,22 @@ Tout tourne dans le navigateur (« local-first ») : pas de serveur nécessaire 
 - `src/ui/` : plan 2D (SVG), panneau de propriétés, artisans, résumé.
 - `src/three/` : visite 3D (three.js via React Three Fiber), chargée seulement à l'ouverture de l'étape 3 ; `physics.ts` gère sols, escaliers et collisions.
 - `src/textures/` : textures procédurales (parquet, carrelage, brique, tuiles…).
-- `src/ai.ts`, `src/settings.ts` : option IA, désactivée par défaut.
+- `src/ai.ts`, `src/settings.ts` : option IA (locale avec Ollama, ou Claude), désactivée par défaut ; `src/aiReview.ts` et `src/model/aiReview.ts` : relecture des plans par vues rapprochées.
 
 ## Limites connues du MVP
 
 - **Le catalogue et les prix sont fictifs** (produits génériques). Ils seront remplacés par des flux fournisseurs réels.
 - Les fourchettes de main d'œuvre sont indicatives et à valider avec des artisans.
-- Le retraçage automatique fonctionne bien sur des plans nets (murs pleins ou hachurés foncés) ; un plan photographié de travers ou très annoté demandera des retouches.
+- Le retraçage automatique fonctionne sur des plans nets ou scannés (murs pleins, encre, hachurés, double trait) ; l'échelle estimée peut s'écarter de 10 à 20 % (étalonner sur une cote la rend exacte), et un plan photographié de travers ou très annoté demandera des retouches.
 - Les points de vue servent à placer et reconnaître les éléments, pas à mesurer les pièces : les cotes viennent du plan ou du relevé.
-- Textures procédurales (générées dans le navigateur, sans images à télécharger) pour garder l'application légère.
+- Visite 3D : textures photo réelles (≈ 14 Mo au total, chargées à la demande), teintées à la couleur exacte du produit et mises à l'échelle de ses carreaux ou lames. Les matériaux de l'existant ont chacun leur photo (tuiles canal ou plates anciennes, tuiles béton, ardoises en écailles, tomettes hexagonales, parquet mosaïque, plancher ancien, brique rouge ou jaune, pierre calcaire, moellons, meulière, enduit à la chaux, enduit écaillé, bardage), comme les nouveaux parements de façade (enduit taloché, briquettes, pierre, bardage douglas ou peint). Le plan 2D garde des motifs dessinés, plus lisibles.
+- Extérieurs et charpente (panneau « maison » de l'étape Existant et panneau Toiture) : sol du jardin (gazon, herbe, prairie, terre, gravier), abords de la maison (gravier, pavés granit ou anciens, pavés ou dalles béton, dalles de pierre, terrasse bois) sur la largeur voulue, bois de la charpente (sapin, chêne ancien, bois brut). Les chevrons se voient sous les débords, toute la charpente dans des combles perdus, et pannes et faîtage dans des combles aménagés si on les laisse apparents.
 - Rendu « Qualité haute » (occlusion ambiante, antialiasing) prévu pour un ordinateur récent ; « Qualité standard » pour les machines modestes.
 
 ## Crédits des ressources 3D
 
 - Personnage : « Michelle » (Adobe Mixamo, repris des exemples three.js), animations « X Bot » (Mixamo) reciblées sur son squelette. Les conditions de Mixamo autorisent l'usage dans un projet, y compris commercial, mais pas la redistribution du fichier seul : à remplacer par un modèle maison avant une diffusion large.
 - Éclairage d'ambiance : HDRI « apartment » de Poly Haven (CC0), via `@pmndrs/assets`.
+- Textures des matériaux : photos [ambientCG](https://ambientcg.com) (CC0), liste dans `public/textures/CREDITS.md`, préparées par `scripts/build-textures.py`.
 - Pas encore d'annuaire automatique d'artisans (phase 3) : le lien « Chercher à proximité » ouvre une recherche Google Maps.
 - La règle de TVA à 6 % (logement de plus de 10 ans) est simplifiée et à vérifier au cas par cas.

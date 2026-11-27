@@ -133,7 +133,9 @@ describe('recherche', () => {
     expect(f.excludeTones).toEqual(['fonce']);
     expect(f.size).toBe('grand');
     const { results } = searchCatalog(DEMO_CATALOG, 'Un grand canapé pas trop foncé');
-    expect(results[0].product.id).toBe('canape-angle-beige');
+    // Un seul canapé générique, réglable (dimensions, couleur) ; les anciennes fiches figées ne sont plus proposées
+    expect(results[0].product.id).toBe('canape-3p-gris');
+    expect(results.some((r) => r.product.hidden)).toBe(false);
   });
 
   it('applique un budget maximum', () => {
@@ -201,5 +203,134 @@ describe('visite : collisions', () => {
     expect(blocked(world, { x: 2, y: 2 }, 0, open)).toBe(false);
     // Vantail rabattu dans la pièce depuis la paumelle (x = 1,56)
     expect(blocked(world, { x: 1.56, y: 0.5 }, 0, open)).toBe(true);
+  });
+});
+
+describe('zones de sol', () => {
+  const zone = { id: 'z1', levelId: 'rdc', x: 6.5, y: 0.5, w: 2, h: 1.5, productId: 'sol-carrelage-ciment' };
+
+  it('une zone ajoutée puis modifiée reste une seule opération', () => {
+    let ops = pushOperation([], { type: 'addFloorZone', zone: { ...zone, productId: null } });
+    ops = pushOperation(ops, { type: 'setFloorZone', zoneId: 'z1', productId: 'sol-carrelage-ciment' });
+    expect(ops).toHaveLength(1);
+    const b = applyOperations(demoBuilding(), ops);
+    expect(b.floorZones?.[0].productId).toBe('sol-carrelage-ciment');
+    expect(pushOperation(ops, { type: 'removeFloorZone', zoneId: 'z1' })).toHaveLength(0);
+  });
+
+  it('la zone est chiffrée à part et déduite du sol de la pièce', () => {
+    const p = demoProject();
+    const room = detectRooms(p.existing).find((r) => r.label.id === 'r-cuisine')!;
+    p.operations = [{ type: 'setFloor', roomId: 'r-cuisine', productId: 'sol-strat-chene-clair' }];
+    const before = computeEstimate(p, DEMO_CATALOG);
+    const areaOf = (e: ReturnType<typeof computeEstimate>, pid: string) =>
+      e.lots.flatMap((l) => l.lines).find((l) => l.id === `floor-${pid}`)?.materials[0];
+    expect(areaOf(before, 'sol-strat-chene-clair')).toBeTruthy();
+    p.operations.push({ type: 'addFloorZone', zone });
+    const after = computeEstimate(p, DEMO_CATALOG);
+    const lines = after.lots.flatMap((l) => l.lines);
+    const zoneLine = lines.find((l) => l.id === 'floor-sol-carrelage-ciment')!;
+    expect(zoneLine.subtitle).toContain('3 m²');
+    const solLine = lines.find((l) => l.id === 'floor-sol-strat-chene-clair')!;
+    expect(solLine.subtitle).toContain(`${(room.area - 3).toLocaleString('fr-BE', { maximumFractionDigits: 1 })}`);
+  });
+});
+
+describe('textures photo', () => {
+  it('chaque aspect du catalogue a une photo à son échelle réelle', async () => {
+    const { photoFor, photoSize } = await import('../../three/photoMaterials');
+    for (const p of DEMO_CATALOG.products) {
+      if (!p.pattern) continue;
+      const key = photoFor(p.pattern);
+      expect(key, p.id).toBeTruthy();
+      const [w, h] = photoSize(key!, p.pattern);
+      expect(w).toBeGreaterThan(0.2);
+      expect(h).toBeGreaterThan(0.2);
+    }
+    // 60 × 60 cm : 8 carreaux sur la photo
+    expect(photoSize('tiles-large', { kind: 'tiles', w: 0.6, h: 0.6 })).toEqual([4.8, 4.8]);
+  });
+});
+
+describe('hauteurs par pièce et par mur', () => {
+  it('les réglages successifs d’une pièce se cumulent en une opération', () => {
+    let ops = pushOperation([], { type: 'setRoomHeights', roomId: 'r-cuisine', ceilingHeight: 2.8 });
+    ops = pushOperation(ops, { type: 'setRoomHeights', roomId: 'r-cuisine', floorOffset: -0.2 });
+    expect(ops).toHaveLength(1);
+    const label = applyOperations(demoBuilding(), ops).rooms.find((r) => r.id === 'r-cuisine')!;
+    expect(label.ceilingHeight).toBe(2.8);
+    expect(label.floorOffset).toBe(-0.2);
+  });
+
+  it('une pièce en contrebas abaisse le sol sous les pieds', async () => {
+    const { walkWorld, groundAt } = await import('../../three/physics');
+    const b = applyOperations(demoBuilding(), [{ type: 'setRoomHeights', roomId: 'r-cuisine', floorOffset: -0.15 }]);
+    const room = detectRooms(b).find((r) => r.label.id === 'r-cuisine')!;
+    const world = walkWorld(b, DEMO_CATALOG);
+    expect(groundAt(world, room.label.at, 0)).toBeCloseTo(-0.15);
+  });
+
+  it('la hauteur d’un mur ajouté reste dans son opération', () => {
+    let ops = pushOperation([], { type: 'addWall', wall: w('nw', 0, 0, 3, 0) });
+    ops = pushOperation(ops, { type: 'setWallHeight', wallId: 'nw', height: 1.1 });
+    expect(ops).toHaveLength(1);
+    expect(applyOperations(empty(), ops).walls[0].height).toBe(1.1);
+  });
+});
+
+describe('import de catalogue fournisseur', () => {
+  it('lit le modèle CSV (séparateur ;, virgule décimale, dimensions en cm)', async () => {
+    const { parseCatalogFile, CSV_TEMPLATE } = await import('../../catalogImport');
+    const r = parseCatalogFile(CSV_TEMPLATE, 'modele.csv', 'Test');
+    expect(r.errors).toEqual([]);
+    expect(r.products).toHaveLength(4);
+    const [sol, carrelage, canape] = r.products;
+    expect(sol).toMatchObject({ category: 'sol', saleUnit: 'paquet', packSize: 2.22, price: 34.9, color: '#b88a55' });
+    expect(sol.pattern).toMatchObject({ kind: 'planks', w: 0.19, h: 1.28 });
+    expect(carrelage.pattern?.kind).toBe('tiles');
+    expect(canape).toMatchObject({ subcategory: 'canape', saleUnit: 'piece', size: { w: 2.28, d: 0.95, h: 0.83 } });
+  });
+
+  it('signale les lignes incomplètes et accepte le JSON', async () => {
+    const { parseCatalogFile } = await import('../../catalogImport');
+    const r = parseCatalogFile(JSON.stringify([{ name: 'Lampe', category: 'luminaire', price: 20 }, { name: 'Chaise', category: 'furniture', subcategory: 'chair', price: '45,00' }]), 'x.json', 'B');
+    expect(r.errors).toHaveLength(1);
+    expect(r.products[0]).toMatchObject({ category: 'meuble', subcategory: 'chaise', price: 45, brand: 'B' });
+  });
+});
+
+describe('connecteurs de catalogues', () => {
+  it('reconnaît les résultats emballés et en tire des produits', async () => {
+    const { findItems, toFound, foundToProducts, parseDimensions } = await import('../../connectors');
+    expect(parseDimensions('Largeur: 80 cm, Profondeur: 28 cm, Hauteur: 202 cm')).toEqual({ w: 80, d: 28, h: 202 });
+    expect(parseDimensions('BILLY 80x28x202 cm')).toEqual({ w: 80, d: 28, h: 202 });
+    const ikea = [{ name: 'BILLY', typeName: 'Bibliothèque, blanc', price: { currentPrice: 59.99 }, measurements: '80x28x202 cm', url: 'https://example.test/billy', image: 'https://example.test/billy.jpg', id: '00263850' }];
+    const found = toFound(findItems(ikea), 'IKEA', 'meuble');
+    expect(found[0]).toMatchObject({ name: 'BILLY Bibliothèque, blanc', price: 59.99, brand: 'IKEA' });
+    const { products, errors } = foundToProducts(found);
+    expect(errors).toEqual([]);
+    expect(products[0]).toMatchObject({ category: 'meuble', subcategory: 'rangement', color: '#f2f1ec', size: { w: 0.8, d: 0.28, h: 2.02 } });
+    const brico = { success: true, data: { products: [{ title: 'Stratifié chêne naturel 8 mm', price: '24,95 €/m²', brand: 'Quick-Step', url: 'https://example.test/s' }] } };
+    const sol = foundToProducts(toFound(findItems(brico), 'Brico', 'sol')).products[0];
+    expect(sol).toMatchObject({ category: 'sol', brand: 'Quick-Step', saleUnit: 'paquet', packSize: 1, price: 24.95 });
+  });
+
+  it("n'appelle rien sans clé", async () => {
+    const { searchConnector } = await import('../../connectors');
+    await expect(searchConnector('ikea', 'billy', 10, 'meuble')).rejects.toThrow(/non configuré/);
+    await expect(searchConnector('brico', 'parquet', 10, 'sol')).rejects.toThrow(/non configuré/);
+  });
+});
+
+describe('pièces avec des coordonnées non arrondies', () => {
+  it('ferme les pièces même quand les découpes laissent des écarts de l’ordre du dixième de millimètre', () => {
+    const b = empty();
+    // Coordonnées issues d'un retraçage (échelle quelconque) : les jonctions en T tombent à 0,1 mm près
+    const pts: [number, number, number, number, number][] = [
+      [1.16, 1.16, 1.16, 8.9, 0.3], [1.16, 5.52, 6.97, 5.52, 0.1], [6.97, 6, 10.84, 6, 0.1], [1.16, 8.9, 10.84, 8.9, 0.3],
+      [6.97, 1.16, 6.97, 8.9, 0.15], [10.84, 1.16, 10.84, 8.9, 0.3], [1.16, 1.16, 10.84, 1.16, 0.3],
+    ];
+    pts.forEach(([ax, ay, bx, by, t], i) => insertWall(b, { ...w(`t${i}`, ax, ay, bx, by), thickness: t }));
+    expect(detectRooms(b)).toHaveLength(4);
   });
 });

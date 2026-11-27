@@ -1,22 +1,25 @@
 import { create } from 'zustand';
 import { DEMO_CATALOG } from './data/catalog';
+import { loadImported, mergeCatalogs } from './catalogImport';
 import { demoProject, emptyProject } from './data/demoProject';
 import type { Catalog } from './model/catalog';
 import { migrateProject } from './model/levels';
 import { applyOperations, pushOperation } from './model/operations';
-import type { Building, Operation, Project } from './model/types';
+import type { Building, DwellingKind, Operation, Project, WallSide } from './model/types';
 
 export type Step = 'existant' | 'projet' | 'visite' | 'artisans' | 'resume';
-export type Tool = 'select' | 'wall' | 'room' | 'door' | 'window' | 'furniture' | 'viewpoint' | 'calibrate';
+export type Tool = 'select' | 'wall' | 'room' | 'zone' | 'door' | 'window' | 'furniture' | 'viewpoint' | 'calibrate' | 'roofWindow';
 
 export type Selection =
-  | { kind: 'wall'; id: string }
+  | { kind: 'wall'; id: string; side?: WallSide }
   | { kind: 'viewpoint'; id: string }
   | { kind: 'roof'; id: 'roof' }
+  | { kind: 'roofWindow'; id: string }
   | { kind: 'level'; id: string }
   | { kind: 'opening'; id: string }
   | { kind: 'room'; id: string }
   | { kind: 'furniture'; id: string }
+  | { kind: 'zone'; id: string }
   | null;
 
 interface State {
@@ -46,7 +49,7 @@ interface State {
   redo: () => void;
   loadProject: (p: Project) => void;
   resetDemo: () => void;
-  resetEmpty: () => void;
+  resetEmpty: (kind?: DwellingKind) => void;
 }
 
 const STORAGE_KEY = 'construprojet:v1';
@@ -97,7 +100,7 @@ export const useStore = create<State>((set, get) => {
   }
   return {
     project,
-    catalog: DEMO_CATALOG,
+    catalog: mergeCatalogs(DEMO_CATALOG, loadImported()),
     step: 'existant',
     tool: 'select',
     levelId,
@@ -151,7 +154,7 @@ export const useStore = create<State>((set, get) => {
     },
     loadProject: (p) => commit(p),
     resetDemo: () => commit(demoProject()),
-    resetEmpty: () => commit(emptyProject()),
+    resetEmpty: (kind) => commit(emptyProject(kind)),
   };
 });
 

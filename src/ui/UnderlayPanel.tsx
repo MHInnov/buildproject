@@ -1,61 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { aiReadPlan } from '../ai';
 import { putAsset, shrinkImage, useAsset } from '../assets';
-import { dist, insertWall, newId, projectOnSegment } from '../model/geometry';
+import { dist } from '../model/geometry';
 import { levelById } from '../model/levels';
-import type { Opening, Wall } from '../model/types';
-import { guessScale, vectorize, type Bitmap } from '../model/vectorize';
-import { aiReady, useSettings } from '../settings';
+import { autoVectorize, guessScale, WALL_STYLE_LABELS, type AutoVectorizeResult } from '../model/vectorize';
+import { alignWalls, footprint, parseDrawingScale, pdfScale } from '../model/plans';
+import { applyAiReading, applyTrace, groundLevel } from '../traceApply';
+import { aiIsLocal, aiReady, useSettings } from '../settings';
+import { reviewLevel } from '../aiReview';
+import { decode, isPdf, maskToDataUrl, nextFrame, pdfPages } from '../planFiles';
 import { useStore } from '../store';
+import { PlansImport } from './PlansImport';
 import { useUi } from '../uiState';
-
-/** Rend la première page d'un PDF dans un canvas (pdf.js n'est chargé qu'à ce moment-là). */
-async function pdfToCanvas(file: File): Promise<HTMLCanvasElement> {
-  const pdfjs = await import('pdfjs-dist');
-  const worker = await import('pdfjs-dist/build/pdf.worker.min.mjs?url');
-  pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
-  const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
-  const page = await doc.getPage(1);
-  const base = page.getViewport({ scale: 1 });
-  const viewport = page.getViewport({ scale: 2400 / Math.max(base.width, base.height) });
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.round(viewport.width);
-  canvas.height = Math.round(viewport.height);
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#fff';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  await page.render({ canvas, canvasContext: ctx, viewport }).promise;
-  return canvas;
-}
-
-async function decode(dataUrl: string, maxSide: number): Promise<{ bmp: Bitmap; k: number }> {
-  const img = await createImageBitmap(await (await fetch(dataUrl)).blob());
-  const k = Math.min(1, maxSide / Math.max(img.width, img.height));
-  const c = document.createElement('canvas');
-  c.width = Math.round(img.width * k);
-  c.height = Math.round(img.height * k);
-  const ctx = c.getContext('2d', { willReadFrequently: true })!;
-  ctx.drawImage(img, 0, 0, c.width, c.height);
-  const d = ctx.getImageData(0, 0, c.width, c.height);
-  return { bmp: { width: d.width, height: d.height, data: d.data }, k };
-}
-
-function maskToDataUrl(mask: Uint8Array, w: number, h: number): string {
-  const c = document.createElement('canvas');
-  c.width = w;
-  c.height = h;
-  const ctx = c.getContext('2d')!;
-  const img = ctx.createImageData(w, h);
-  for (let i = 0; i < mask.length; i++) {
-    if (!mask[i]) continue;
-    img.data[i * 4] = 31;
-    img.data[i * 4 + 1] = 111;
-    img.data[i * 4 + 2] = 235;
-    img.data[i * 4 + 3] = 255;
-  }
-  ctx.putImageData(img, 0, 0);
-  return c.toDataURL('image/png');
-}
 
 /** Importer un plan existant (image ou PDF), l'étalonner, puis le faire retracer automatiquement. */
 export function UnderlayPanel() {
@@ -73,11 +29,20 @@ export function UnderlayPanel() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [realLength, setRealLength] = useState('');
-  const [minThick, setMinThick] = useState(7);
+  const [found, setFound] = useState<string | null>(null);
+  const [multi, setMulti] = useState(false);
+  const [aiReport, setAiReport] = useState<string[]>([]);
   const levelWalls = existing.walls.filter((w) => w.levelId === levelId).length;
 
   useEffect(() => () => useUi.getState().set({ tracePreview: null, moveUnderlay: false }), []);
-  useEffect(() => ui.set({ tracePreview: null }), [levelId, minThick]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    ui.set({ tracePreview: null });
+    setFound(null);
+  }, [levelId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const describe = (r: AutoVectorizeResult) =>
+    `Reconnu : ${WALL_STYLE_LABELS[r.style]}, murs de ${Math.round(r.thick * 100)} cm et cloisons de ${Math.round(r.thin * 100)} cm, ` +
+    `${r.walls.length} murs, ${r.openings.filter((o) => o.kind === 'porte').length} portes, ${r.openings.filter((o) => o.kind === 'fenetre').length} fenêtres, ${r.rooms} pièce${r.rooms > 1 ? 's' : ''}.`;
 
   const setUl = (fn: (u: NonNullable<typeof ul>) => void) =>
     editExisting((b) => {
@@ -85,25 +50,68 @@ export function UnderlayPanel() {
       if (l?.underlay) fn(l.underlay);
     });
 
+  /**
+   * Murs de référence pour caler ce plan : ceux déjà dessinés sur ce niveau, sinon ceux du rez-de-chaussée
+   * (ou du niveau le plus proche qui en a). Les murs recopiés automatiquement d'un autre niveau comptent aussi.
+   */
+  const reference = (b: typeof existing) => {
+    const own = b.walls.filter((w) => w.levelId === levelId);
+    if (own.length) return own;
+    const g = groundLevel(b);
+    const ground = b.walls.filter((w) => w.levelId === g.id);
+    if (ground.length) return ground;
+    const any = [...b.levels].sort((m, n) => Math.abs(m.elevation - (level?.elevation ?? 0)) - Math.abs(n.elevation - (level?.elevation ?? 0)));
+    for (const l of any) {
+      const ws = b.walls.filter((w) => w.levelId === l.id);
+      if (ws.length) return ws;
+    }
+    return [];
+  };
+
+  /** Même document, même résolution : on reprend l'échelle d'un plan déjà importé sur un autre niveau. */
+  const sharedScale = (b: typeof existing, width: number, height: number) => {
+    const others = b.levels.filter((l) => l.id !== levelId && l.underlay).map((l) => l.underlay!);
+    const same = others.filter((u) => Math.abs(u.width - width) / width < 0.02 && Math.abs(u.height - height) / height < 0.02);
+    return (same.find((u) => u.calibrated) ?? same[0])?.scale ?? null;
+  };
+
   async function onFile(file: File) {
     setError(null);
     setBusy('Lecture du plan…');
     try {
-      const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-      const shrunk = await shrinkImage(isPdf ? await pdfToCanvas(file) : file, 2400, 0.86);
-      const { bmp, k } = await decode(shrunk.dataUrl, 1200);
-      const scale = guessScale(bmp) * k;
+      const page = isPdf(file) ? (await pdfPages(file, 2400, 1))[0] : null;
+      const shrunk = await shrinkImage(page ? page.canvas : file, 2400, 0.86);
+      // Échelle écrite dans le cartouche du PDF (« 1/50 ») : exacte, avec le format de la page
+      const denom = page ? parseDrawingScale(page.text) : null;
+      const pdfKnown = denom && page?.pxPerPt ? pdfScale(page.pxPerPt * (shrunk.width / page.canvas.width), denom) : null;
+      setBusy('Analyse du dessin des murs…');
+      await nextFrame();
+      const { bmp, k } = await decode(shrunk.dataUrl, 1600);
+      const b0 = useStore.getState().project.existing;
+      const shared = sharedScale(b0, shrunk.width, shrunk.height);
+      // L'aspect des murs est reconnu tout seul ; l'échelle s'en déduit (murs extérieurs ≈ 30 cm),
+      // sauf si un autre niveau du même dossier a déjà la sienne.
+      const estimate = autoVectorize(bmp);
+      const known = shared ?? (pdfKnown && (!estimate || Math.abs(pdfKnown / (estimate.scale * k) - 1) < 0.35) ? pdfKnown : null);
+      const auto = known ? autoVectorize(bmp, { scale: known / k }) : estimate;
+      const scale = known ?? (auto?.scale ?? guessScale(bmp)) * k;
       const assetId = await putAsset(shrunk.dataUrl);
+      // Calage sur les murs connus (ce niveau, ou le rez-de-chaussée)
+      const ref = reference(b0);
+      const al = auto && ref.length ? alignWalls(auto.walls, ref, !known) : null;
+      const placeOk = al && al.fit > 0.25;
       editExisting((b) => {
         const l = b.levels.find((x) => x.id === levelId);
         if (!l) return;
-        const walls = b.walls.filter((w) => w.levelId === levelId);
-        const x0 = walls.length ? Math.min(...walls.map((w) => Math.min(w.a.x, w.b.x))) : 0;
-        const y0 = walls.length ? Math.min(...walls.map((w) => Math.min(w.a.y, w.b.y))) : 0;
-        l.underlay = { assetId, x: x0, y: y0, scale, width: shrunk.width, height: shrunk.height, opacity: 0.55, visible: true, calibrated: false };
+        const fb = auto ? footprint(auto.walls) : null;
+        const x = placeOk ? al!.dx : fb && !ref.length ? -fb.x0 : 0;
+        const y = placeOk ? al!.dy : fb && !ref.length ? -fb.y0 : 0;
+        l.underlay = { assetId, x, y, scale: scale * (placeOk ? al!.k : 1), width: shrunk.width, height: shrunk.height, opacity: 0.55, visible: true, calibrated: false };
       });
-      setTool('calibrate');
-      ui.set({ calibration: [] });
+      if (auto) {
+        ui.set({ tracePreview: maskToDataUrl(auto.mask, bmp.width, bmp.height) });
+        setFound(describe(auto) + (denom && known === pdfKnown ? ` Échelle 1/${denom} lue sur le PDF.` : '') + (placeOk ? ` Calé sur les murs déjà connus (${Math.round(al!.fit * 100)} % se superposent).` : ''));
+      } else setFound(null);
     } catch (e) {
       setError(`Impossible de lire ce fichier (${(e as Error).message}).`);
     }
@@ -113,63 +121,26 @@ export function UnderlayPanel() {
   async function trace(apply: boolean) {
     if (!ul || !src) return;
     setError(null);
-    setBusy(apply ? 'Retraçage…' : 'Analyse…');
+    setBusy(apply ? 'Retraçage…' : 'Analyse du dessin des murs…');
     try {
+      await nextFrame();
       const { bmp, k } = await decode(src, 1600);
-      const scale = ul.scale / k;
-      const r = vectorize(bmp, { scale, minThickness: minThick / 100 });
+      // Le plan affiché a déjà son échelle (estimée, partagée ou étalonnée) : le retraçage la reprend.
+      const r = autoVectorize(bmp, { scale: ul.scale / k });
+      if (!r || !r.walls.length) {
+        throw new Error('aucun mur reconnu sur ce plan. Vérifiez qu’il est bien droit et lisible (un PDF d’architecte donne le meilleur résultat), ou dessinez les murs à la main par-dessus');
+      }
+      setFound(describe(r));
       if (!apply) {
         ui.set({ tracePreview: maskToDataUrl(r.mask, bmp.width, bmp.height) });
         setBusy(null);
         return;
       }
-      if (!r.walls.length) throw new Error('aucun mur trouvé : réduisez l’épaisseur minimale ou étalonnez le plan');
-      if (levelWalls && !confirm(`Remplacer les ${levelWalls} murs déjà dessinés sur ce niveau par le retraçage ?`)) {
+      if (levelWalls && !confirm(`Remplacer les ${levelWalls} murs déjà dessinés sur ${level?.name ?? 'ce niveau'} par le retraçage ?`)) {
         setBusy(null);
         return;
       }
-      const level_ = level!;
-      editExisting((b) => {
-        const old = new Set(b.walls.filter((w) => w.levelId === levelId).map((w) => w.id));
-        b.walls = b.walls.filter((w) => !old.has(w.id));
-        b.openings = b.openings.filter((o) => !old.has(o.wallId));
-        const placed: { wall: Wall; openings: typeof r.openings }[] = [];
-        r.walls.forEach((tw, i) => {
-          const wall: Wall = {
-            id: newId('w'),
-            levelId,
-            a: { x: tw.a.x + ul.x, y: tw.a.y + ul.y },
-            b: { x: tw.b.x + ul.x, y: tw.b.y + ul.y },
-            thickness: tw.thickness,
-            height: level_.height,
-            kind: tw.thickness >= 0.2 ? 'porteur' : 'cloison',
-            finish: { gauche: null, droite: null },
-          };
-          insertWall(b, wall);
-          placed.push({ wall, openings: r.openings.filter((o) => o.wall === i) });
-        });
-        // Les ouvertures sont rattachées au tronçon de mur qui les contient après découpe.
-        for (const { wall, openings } of placed) {
-          for (const o of openings) {
-            const L = dist(wall.a, wall.b);
-            const t = o.offset / L;
-            const pt = { x: wall.a.x + (wall.b.x - wall.a.x) * t, y: wall.a.y + (wall.b.y - wall.a.y) * t };
-            const piece = b.walls.find((w) => w.levelId === levelId && projectOnSegment(pt, w.a, w.b).d < 0.02);
-            if (!piece) continue;
-            const op: Opening = {
-              id: newId('o'),
-              wallId: piece.id,
-              kind: o.kind,
-              offset: dist(piece.a, pt),
-              width: o.width,
-              height: o.kind === 'porte' ? 2.05 : 1.25,
-              sill: o.kind === 'porte' ? 0 : 0.9,
-              productId: o.kind === 'porte' ? 'ex-porte-isoplane' : 'ex-fenetre-bois-simple',
-            };
-            b.openings.push(op);
-          }
-        }
-      });
+      editExisting((b) => applyTrace(b, levelId, r, ul.x, ul.y));
       ui.set({ tracePreview: null });
       setUl((u) => void (u.opacity = Math.min(u.opacity, 0.35)));
     } catch (e) {
@@ -181,38 +152,17 @@ export function UnderlayPanel() {
   async function aiNames() {
     if (!ul || !src) return;
     setError(null);
+    setAiReport([]);
     setBusy("L'IA lit le plan…");
     try {
-      const res = await aiReadPlan(src, ul.width, ul.height);
-      editExisting((b) => {
-        for (const r of res.rooms) {
-          b.rooms = b.rooms.filter((x) => !(x.levelId === levelId && dist(x.at, { x: ul.x + r.x * ul.scale, y: ul.y + r.y * ul.scale }) < 0.5));
-          b.rooms.push({ id: newId('r'), levelId, at: { x: ul.x + r.x * ul.scale, y: ul.y + r.y * ul.scale }, name: r.name, floorProductId: null });
-        }
-        // Portes et fenêtres que le retraçage n'a pas vues
-        const walls = b.walls.filter((w) => w.levelId === levelId);
-        for (const o of res.openings) {
-          const pt = { x: ul.x + o.x * ul.scale, y: ul.y + o.y * ul.scale };
-          let best: { w: Wall; d: number } | null = null;
-          for (const w of walls) {
-            const d = projectOnSegment(pt, w.a, w.b).d;
-            if (d < 0.4 && (!best || d < best.d)) best = { w, d };
-          }
-          if (!best) continue;
-          const offset = dist(best.w.a, projectOnSegment(pt, best.w.a, best.w.b).point);
-          if (b.openings.some((x) => x.wallId === best!.w.id && Math.abs(x.offset - offset) < 0.5)) continue;
-          b.openings.push({
-            id: newId('o'),
-            wallId: best.w.id,
-            kind: o.kind,
-            offset,
-            width: Math.max(0.5, Math.min(3, o.width_px * ul.scale)),
-            height: o.kind === 'porte' ? 2.05 : 1.25,
-            sill: o.kind === 'porte' ? 0 : 0.9,
-            productId: o.kind === 'porte' ? 'ex-porte-isoplane' : 'ex-fenetre-bois-simple',
-          });
-        }
-      });
+      const local = aiIsLocal();
+      if (!local) {
+        const res = await aiReadPlan(src, ul.width, ul.height);
+        editExisting((b) => applyAiReading(b, levelId, ul, res));
+      }
+      // Relecture vue par vue : chaque ouverture, chaque façade (et les pièces sans nom avec l'IA locale)
+      const rv = await reviewLevel(levelId, setBusy, { rooms: local });
+      setAiReport([...rv.lines, ...rv.warnings.map((w) => `⚠ ${w}`)]);
     } catch (e) {
       setError(`Lecture par l'IA impossible : ${(e as Error).message}`);
     }
@@ -224,7 +174,17 @@ export function UnderlayPanel() {
 
   return (
     <>
-      <h4>Plan existant (image ou PDF)</h4>
+      <h4>Plans existants</h4>
+      {multi && <PlansImport onClose={() => setMulti(false)} />}
+      <p className="muted small">
+        Le plus simple : importez d'un coup tous les plans (chaque niveau et les coupes). Ils sont retracés ensemble, les étages calés sur le rez-de-chaussée.
+      </p>
+      <button className="btn btn--primary" onClick={() => setMulti(true)} disabled={!!busy}>
+        Importer tous les plans (niveaux et coupes)…
+      </button>
+      <h4 className="underlay__level">
+        Plan de ce niveau : <span className="tag">{level?.name ?? '—'}</span>
+      </h4>
       <input
         ref={input}
         type="file"
@@ -238,9 +198,12 @@ export function UnderlayPanel() {
       />
       {!ul && (
         <>
-          <p className="muted small">Importez le plan d'architecte, un scan ou une photo bien droite du plan : il s'affiche sous le dessin et peut être retracé automatiquement.</p>
+          <p className="muted small">
+            Ou seulement le plan de {level?.name.toLowerCase() ?? 'ce niveau'} (plan d'architecte, scan ou photo bien droite) : il s'affiche sous le dessin et peut être retracé
+            automatiquement. Changez de niveau avec les onglets au-dessus du plan.
+          </p>
           <button className="btn" onClick={() => input.current?.click()} disabled={!!busy}>
-            Importer un plan…
+            Importer le plan de {level?.name.toLowerCase() ?? 'ce niveau'}…
           </button>
         </>
       )}
@@ -281,7 +244,7 @@ export function UnderlayPanel() {
                 )
               ) : (
                 <p className="muted small">
-                  {ul.calibrated ? 'Échelle mesurée. ' : 'Échelle estimée d’après l’épaisseur des murs. '}
+                  {ul.calibrated ? 'Échelle mesurée. ' : 'Échelle estimée d’après l’épaisseur des murs (facultatif : étalonner pour plus de précision). '}
                   <button className="link" onClick={() => { setTool('calibrate'); ui.set({ calibration: [] }); }}>
                     {ul.calibrated ? 'Refaire' : 'Étalonner sur une cote'}
                   </button>
@@ -290,27 +253,38 @@ export function UnderlayPanel() {
             </li>
             <li>
               <strong>Retracer automatiquement</strong>
-              <label className="field">
-                <span>Épaisseur minimale d'un mur : {minThick} cm</span>
-                <input type="range" min={3} max={25} value={minThick} onChange={(e) => setMinThick(Number(e.target.value))} />
-              </label>
               <div className="actions">
                 <button className="btn" onClick={() => void trace(false)} disabled={!!busy}>
-                  Aperçu
+                  Aperçu des murs reconnus
                 </button>
                 <button className="btn btn--primary" onClick={() => void trace(true)} disabled={!!busy}>
                   Retracer les murs
                 </button>
               </div>
-              <p className="muted small">Les murs épais deviennent porteurs, les trous dans les murs des portes (vides) ou des fenêtres (traits fins). Vérifiez et corrigez ensuite à la main.</p>
+              {found && <p className="small">{found}</p>}
+              <p className="muted small">
+                Aucun réglage : l'application reconnaît d'elle-même comment les murs sont dessinés (noirs, gris ou en couleur, hachurés, ou en double trait), leur épaisseur et les
+                portes et fenêtres. Les murs épais deviennent porteurs. Vérifiez et corrigez ensuite à la main.
+              </p>
             </li>
             {settings.aiEnabled && (
               <li>
                 <strong>Lire le plan avec l'IA</strong>
-                <p className="muted small">Nomme les pièces et ajoute les portes et fenêtres oubliées.</p>
-                <button className="btn" onClick={() => void aiNames()} disabled={!!busy || !aiReady(settings)} title={aiReady(settings) ? '' : "Renseignez la clé API dans l'administration"}>
+                <p className="muted small">
+                  {settings.aiProvider === 'locale' ? `IA locale (${settings.localModel}), rien n'est envoyé dehors. ` : ''}
+                  Relit chaque porte et fenêtre (fausses portes, porte ou fenêtre, sens d'ouverture), cherche les baies oubliées sur les façades et nomme les pièces. Les corrections
+                  douteuses sont marquées « ? » sur le plan.
+                </p>
+                <button className="btn" onClick={() => void aiNames()} disabled={!!busy || !aiReady(settings)} title={aiReady(settings) ? '' : "Réglez l'IA dans l'administration"}>
                   Analyser avec l'IA
                 </button>
+                {aiReport.length > 0 && (
+                  <ul className="log">
+                    {aiReport.map((l, i) => (
+                      <li key={i}>{l}</li>
+                    ))}
+                  </ul>
+                )}
               </li>
             )}
           </ol>

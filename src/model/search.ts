@@ -127,7 +127,7 @@ export interface SearchResult {
 
 export function searchCatalog(catalog: Catalog, query: string, restrictTo?: Category[]): { filters: SearchFilters; results: SearchResult[] } {
   const filters = parseQuery(query);
-  let pool = catalog.products;
+  let pool = catalog.products.filter((p) => !p.hidden);
   const cats = restrictTo?.length ? restrictTo : filters.categories;
   if (cats.length) pool = pool.filter((p) => cats.includes(p.category));
   if (filters.subcategories.length) {

@@ -1,9 +1,10 @@
+import { itemPrice, withOptions } from './generic';
 import type { Catalog, LaborTask, Product } from './catalog';
 import { productById, taskById } from './catalog';
-import { detectRooms, wallFaceArea, wallLength } from './geometry';
+import { detectRooms, inRoom, wallFaceArea, wallLength } from './geometry';
 import { applyOperations } from './operations';
 import { roofArea, roofInsulationArea } from './roof';
-import type { Building, Lot, Operation, Project, Wall } from './types';
+import type { Building, FloorZone, ItemOptions, Lot, Operation, Project, Room, Wall } from './types';
 import { CONDITION_LABELS, LOT_ORDER } from './types';
 
 export interface MaterialLine {
@@ -107,6 +108,9 @@ export function paintMaterial(p: Product, area: number): MaterialLine {
   };
 }
 
+const zoneArea = (z: FloorZone) => Math.max(0, z.w) * Math.max(0, z.h);
+const zoneInRoom = (z: FloorZone, r: Room) => z.levelId === r.label.levelId && inRoom({ x: z.x + z.w / 2, y: z.y + z.h / 2 }, r);
+
 function floorLaborTask(p: Product, catalog: Catalog): LaborTask {
   if (p.tags.includes('carrelage')) return taskById(catalog, 'pose-carrelage-sol');
   if (p.tags.includes('parquet')) return taskById(catalog, 'pose-parquet');
@@ -184,7 +188,8 @@ export function computeEstimate(project: Project, catalog: Catalog): Estimate {
       }
       case 'addOpening': {
         const o = op.opening;
-        const p = productById(catalog, o.productId);
+        const base = productById(catalog, o.productId);
+        const p = base && { ...withOptions(base, o.options)!, price: itemPrice(base, o.options, { w: o.width, h: o.height }) };
         const items: LaborLine[] = [];
         if (isExistingWall(o.wallId)) items.push(labor(taskById(catalog, 'creation-baie'), 1));
         items.push(labor(taskById(catalog, o.kind === 'porte' ? 'pose-porte' : 'pose-chassis'), 1));
@@ -224,8 +229,9 @@ export function computeEstimate(project: Project, catalog: Catalog): Estimate {
       case 'replaceOpening': {
         const before = stateBefore(i);
         const o = before.openings.find((x) => x.id === op.openingId);
-        const p = productById(catalog, op.productId);
-        if (!o || !p) return;
+        const base = productById(catalog, op.productId);
+        if (!o || !base) return;
+        const p = { ...withOptions(base, op.options)!, price: itemPrice(base, op.options, { w: o.width, h: o.height }) };
         const porte = o.kind === 'porte';
         lines.push(
           finalize({
@@ -249,14 +255,36 @@ export function computeEstimate(project: Project, catalog: Catalog): Estimate {
         const doors = projected.openings.filter((o) => o.kind === 'porte' && room.wallIds.includes(o.wallId));
         const plinth = Math.max(0, room.perimeter - doors.reduce((s, d) => s + d.width, 0));
         const acc = floorsByProduct.get(op.productId) ?? { area: 0, plinth: 0, rooms: [] as string[], removal: new Map<string, number>() };
-        acc.area += room.area;
+        // Les zones de sol posées dans la pièce gardent leur propre revêtement.
+        const zonesArea = (projected.floorZones ?? []).filter((z) => z.productId && zoneInRoom(z, room)).reduce((t, z) => t + zoneArea(z), 0);
+        const area = Math.max(0, room.area - zonesArea);
+        acc.area += area;
         acc.plinth += plinth;
         acc.rooms.push(room.label.name);
         // La dépose dépend du revêtement actuel (carrelage, moquette, plancher…).
         const before = stateBefore(i).rooms.find((r) => r.id === op.roomId);
         const old = productById(catalog, before?.floorProductId);
-        addTo(acc.removal, old ? old.removal : 'depose-sol', room.area);
+        addTo(acc.removal, old ? old.removal : 'depose-sol', area);
         floorsByProduct.set(op.productId, acc);
+        return;
+      }
+      case 'addFloorZone':
+      case 'setFloorZone': {
+        const id = op.type === 'addFloorZone' ? op.zone.id : op.zoneId;
+        const z = projected.floorZones?.find((x) => x.id === id);
+        if (!z?.productId) return;
+        const before = stateBefore(i);
+        const room = rooms.find((r) => zoneInRoom(z, r));
+        const acc = floorsByProduct.get(z.productId) ?? { area: 0, plinth: 0, rooms: [] as string[], removal: new Map<string, number>() };
+        const area = zoneArea(z);
+        acc.area += area;
+        acc.rooms.push(`zone de ${room?.label.name ?? 'pièce'}`);
+        // Sous la zone : l'ancien revêtement de la zone, sinon celui de la pièce.
+        const oldZone = before.floorZones?.find((x) => x.id === id);
+        const oldRoom = room && before.rooms.find((r) => r.id === room.label.id);
+        const old = productById(catalog, oldZone?.productId ?? oldRoom?.floorProductId);
+        addTo(acc.removal, old ? old.removal : 'depose-sol', area);
+        floorsByProduct.set(z.productId, acc);
         return;
       }
       case 'setWallFinish': {
@@ -291,7 +319,9 @@ export function computeEstimate(project: Project, catalog: Catalog): Estimate {
           );
           return;
         }
-        furnitureByProduct.set(op.item.productId, (furnitureByProduct.get(op.item.productId) ?? 0) + 1);
+        // Meubles identiques (même fiche, mêmes réglages) regroupés
+        const key = JSON.stringify([op.item.productId, op.item.options ?? null]);
+        furnitureByProduct.set(key, (furnitureByProduct.get(key) ?? 0) + 1);
         return;
       }
       case 'setRoofCovering': {
@@ -307,6 +337,56 @@ export function computeEstimate(project: Project, catalog: Catalog): Estimate {
             materials: [packMaterial(p, area)],
             labor: [labor(taskById(catalog, 'depose-couverture'), area), labor(taskById(catalog, 'pose-couverture'), area)],
             warnings: ['Un échafaudage et une autorisation peuvent être nécessaires : à confirmer avec le couvreur.'],
+          }),
+        );
+        return;
+      }
+      case 'addRoofWindow': {
+        const p = productById(catalog, op.window.productId);
+        const pitch = projected.roof?.pitch ?? 45;
+        const h = op.window.length / Math.cos((pitch * Math.PI) / 180);
+        lines.push(
+          finalize({
+            id: `op-${i}`,
+            lot: 'menuiserie',
+            title: `Nouvelle fenêtre de toit ${Math.round(op.window.width * 100)} × ${Math.round(h * 100)} cm`,
+            subtitle: p?.name ?? 'Modèle à choisir',
+            materials: p ? [{ label: p.name, quantity: 1, unit: 'pièce', unitPrice: p.price, total: p.price }] : [],
+            labor: [labor(taskById(catalog, 'tremie-toit'), 1), labor(taskById(catalog, 'pose-fenetre-toit'), 1)],
+            warnings: ['Une fenêtre de toit sur la façade à rue peut demander un permis : à vérifier à la commune.'],
+          }),
+        );
+        return;
+      }
+      case 'replaceRoofWindow': {
+        const p = productById(catalog, op.productId);
+        const w = stateBefore(i).roof?.windows?.find((x) => x.id === op.windowId);
+        if (!p || !w) return;
+        lines.push(
+          finalize({
+            id: `op-${i}`,
+            lot: 'menuiserie',
+            title: 'Remplacement de fenêtre de toit',
+            subtitle: p.name,
+            materials: [{ label: p.name, quantity: 1, unit: 'pièce', unitPrice: p.price, total: p.price }],
+            labor: [labor(taskById(catalog, 'depose-fenetre-toit'), 1), labor(taskById(catalog, 'pose-fenetre-toit'), 1)],
+            warnings: [],
+          }),
+        );
+        return;
+      }
+      case 'removeRoofWindow': {
+        const w = stateBefore(i).roof?.windows?.find((x) => x.id === op.windowId);
+        if (!w) return;
+        lines.push(
+          finalize({
+            id: `op-${i}`,
+            lot: 'toiture',
+            title: "Suppression d'une fenêtre de toit",
+            subtitle: 'Toiture refermée et isolée',
+            materials: [],
+            labor: [labor(taskById(catalog, 'depose-fenetre-toit'), 1), labor(taskById(catalog, 'rebouchage-toit'), 1)],
+            warnings: [],
           }),
         );
         return;
@@ -383,9 +463,11 @@ export function computeEstimate(project: Project, catalog: Catalog): Estimate {
     );
   }
 
-  for (const [pid, qty] of furnitureByProduct) {
-    const p = productById(catalog, pid);
-    if (!p) continue;
+  for (const [key, qty] of furnitureByProduct) {
+    const [pid, options] = JSON.parse(key) as [string, ItemOptions | null];
+    const base = productById(catalog, pid);
+    if (!base) continue;
+    const p = { ...withOptions(base, options ?? undefined)!, price: itemPrice(base, options ?? undefined) };
     const task =
       p.subcategory === 'cuisine'
         ? 'pose-cuisine'
@@ -398,7 +480,7 @@ export function computeEstimate(project: Project, catalog: Catalog): Estimate {
               : 'montage-meuble';
     lines.push(
       finalize({
-        id: `furn-${pid}`,
+        id: `furn-${key}`,
         lot: taskById(catalog, task).lot,
         title: `${qty > 1 ? `${qty} × ` : ''}${p.name}`,
         materials: [{ label: p.name, quantity: qty, unit: 'pièce', unitPrice: p.price, total: round2(qty * p.price) }],
