@@ -889,7 +889,9 @@ function traceMask(source: Uint8Array, ink: Uint8Array, w: number, h: number, sc
         const glazed = !solidGap && isGlazing(dark, w, A.horizontal, (A.c + B.c) / 2, th, A.e, B.s);
         // Des traits de vitrage l'emportent sur un arc partiel (souvent un trait voisin) ; pas sur un arc entier
         const found = solidGap ? null : doorSwing(dark, w, h, A.horizontal, (A.c + B.c) / 2, th, A.e, B.s, 1.25 / scale);
-        const sw = found && (found.full || !glazed) ? found : null;
+        // Charnière loin des tableaux, au milieu d'une baie vitrée : l'arc est celui d'une porte voisine
+        const inset = found ? (found.hinge === 0 ? found.at - A.e : B.s - found.at) : 0;
+        const sw = found && (found.full || !glazed) && !(glazed && !found.double && inset > 0.25 * gap) ? found : null;
         const arc = !!sw;
         const glass = !arc && glazed;
         if (solidGap) {
