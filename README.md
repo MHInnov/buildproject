@@ -25,15 +25,27 @@ Le projet est enregistré automatiquement dans le navigateur. Le menu ☰ permet
 
 ## Tester avec Docker
 
-Il suffit de Docker (Docker Desktop sur Mac ou Windows). L'image contient un petit serveur nginx qui sert l'application, sans Node.js ni base de données.
+Il suffit de Docker (Docker Desktop sur Mac ou Windows).
 
-**Le plus simple : l'image publiée sur le registre GitHub** (rien à construire) :
+**Une seule commande : l'application et l'IA locale dans le même conteneur** (image publiée sur le registre GitHub, rien à construire) :
+
+```bash
+docker run -d --name construprojet -p 7080:80 --gpus all -v construprojet-ia:/root/.ollama ghcr.io/mhinnov/buildproject:mvp-renovation-ia
+```
+
+Ouvrir http://localhost:7080. L'application est utilisable tout de suite ; au premier lancement, le modèle de vision (`qwen2.5vl:7b`, ≈ 6 Go) se télécharge en arrière-plan et l'IA s'active d'elle-même une fois prête (l'import se fait sans IA en attendant). Le volume `construprojet-ia` garde le modèle : les lancements suivants sont immédiats. Arrêter : `docker stop construprojet` ; relancer : `docker start construprojet`.
+
+- `--gpus all` demande une carte graphique NVIDIA (pilote et NVIDIA Container Toolkit ; sous Windows, Docker Desktop avec WSL 2 le fournit). **Sans carte graphique, retirez `--gpus all`** : l'application démarre **sans IA** (retraçage seul), et l'IA reste activable dans Menu › Administration, en bien plus lent.
+- Autre modèle : ajoutez `-e IA_MODELE=qwen2.5vl:3b` (voir « Matériel nécessaire » plus bas) ; `-e IA_MODELE=` n'en télécharge aucun.
+- Suivre le téléchargement du modèle : `docker logs -f construprojet`.
+
+**Sans IA, image légère** (juste le serveur web) :
 
 ```bash
 docker run --rm -p 7080:80 ghcr.io/mhinnov/buildproject:mvp-renovation
 ```
 
-Le workflow `.github/workflows/docker.yml` la publie à chaque push, pour Intel/AMD et ARM (Mac Apple Silicon). Étiquettes : le nom de la branche (`/` remplacé par `-`, ex. `mvp-renovation`), `latest` pour la branche principale, le commit court (`sha-xxxxxxx`) et les tags `v*`. Une fois le MVP fusionné dans `main`, utiliser `ghcr.io/mhinnov/buildproject:latest`.
+Le workflow `.github/workflows/docker.yml` publie les deux images à chaque push, pour Intel/AMD et ARM (Mac Apple Silicon). Étiquettes : le nom de la branche (`/` remplacé par `-`, ex. `mvp-renovation`, et `mvp-renovation-ia` pour l'image avec IA), `latest` / `latest-ia` pour la branche principale, le commit court (`sha-xxxxxxx`) et les tags `v*`. Une fois le MVP fusionné dans `main`, utiliser `ghcr.io/mhinnov/buildproject:latest-ia`.
 
 **Sans cloner le dépôt** (Docker récupère le code sur GitHub et construit l'image, environ 2 minutes la première fois) :
 
@@ -42,10 +54,11 @@ docker build -t construprojet https://github.com/mhinnov/buildproject.git#mvp-re
 docker run --rm -p 7080:80 construprojet
 ```
 
-**Depuis un clone du dépôt**, avec Docker Compose :
+**Depuis un clone du dépôt**, avec Docker Compose (image avec IA, construite sur place) :
 
 ```bash
-docker compose up --build        # Ctrl+C pour arrêter
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build   # avec carte graphique NVIDIA
+docker compose up --build                                                    # sans carte graphique
 ```
 
 **Avec une image déjà construite** (fichier `construprojet-image-amd64.tar.gz`, processeurs Intel/AMD ; sur Mac Apple Silicon elle tourne via l'émulation de Docker Desktop) :
@@ -111,27 +124,21 @@ Rien n'est imposé : une fausse porte n'est retirée que si l'IA en est sûre, u
 
 ### Lancer l'IA locale
 
-Le plus simple, avec Docker Compose depuis un clone du dépôt (l'application reste sur http://localhost:7080) :
+Une seule commande, l'image tout-en-un (voir « Tester avec Docker ») :
 
 ```bash
-# Carte graphique NVIDIA (pilote + NVIDIA Container Toolkit) : fortement conseillé
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile ia up --build
-
-# Sans carte graphique (processeur seul, bien plus lent)
-docker compose --profile ia up --build
+docker run -d --name construprojet -p 7080:80 --gpus all -v construprojet-ia:/root/.ollama ghcr.io/mhinnov/buildproject:mvp-renovation-ia
 ```
 
-Au premier lancement, le service `ollama-modele` télécharge le modèle (≈ 6 Go pour `qwen2.5vl:7b`, gardé ensuite dans le volume `ollama`). Pour un autre modèle : `IA_MODELE=qwen2.5vl:3b docker compose --profile ia up --build`, puis choisir le même dans l'administration (le bouton « Télécharger le modèle » le fait aussi depuis la page). Ollama n'ouvre aucun port : seule l'application le joint.
+Le conteneur fait tourner le serveur web et Ollama ; Ollama n'ouvre aucun port, seule l'application le joint par son relais `/ia-locale`. L'IA locale est choisie d'office dans l'administration la première fois (activée s'il y a une carte graphique) ; « Tester » y vérifie que le modèle est prêt.
 
-**Mac (Apple Silicon)** : Docker ne donne pas accès à la puce graphique. Installez plutôt Ollama sur le Mac (il utilise la puce graphique), lancez `ollama pull qwen2.5vl:7b`, puis l'application seule en lui indiquant ce serveur :
+**Mac (Apple Silicon)** : Docker ne donne pas accès à la puce graphique (l'image tout-en-un y marche, mais au processeur). Mieux vaut installer Ollama sur le Mac (il utilise la puce graphique), lancer `ollama pull qwen2.5vl:7b`, puis l'image légère en lui indiquant ce serveur :
 
 ```bash
-OLLAMA_URL=http://host.docker.internal:11434 docker compose up --build
-# ou, avec l'image publiée :
-docker run --rm -p 7080:80 -e OLLAMA_URL=http://host.docker.internal:11434 --add-host host.docker.internal:host-gateway ghcr.io/mhinnov/buildproject:mvp-renovation
+docker run --rm -p 7080:80 -e OLLAMA_URL=http://host.docker.internal:11434 ghcr.io/mhinnov/buildproject:mvp-renovation
 ```
 
-Même chose sous Windows ou Linux avec Ollama déjà installé. En développement (`npm run dev`), le relais `/ia-locale` pointe sur `http://localhost:11434` (ou `OLLAMA_URL`).
+Même chose sous Windows ou Linux avec Ollama déjà installé (sous Linux, ajouter `--add-host host.docker.internal:host-gateway`). En développement (`npm run dev`), le relais `/ia-locale` pointe sur `http://localhost:11434` (ou `OLLAMA_URL`).
 
 **Matériel nécessaire** (mémoire graphique ou, sans carte graphique, mémoire vive) :
 

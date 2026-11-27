@@ -1,7 +1,7 @@
 # Carte graphique NVIDIA pour l'IA locale (pilote NVIDIA et NVIDIA Container Toolkit installés) :
-#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile ia up --build
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
 services:
-  ollama:
+  app:
     deploy:
       resources:
         reservations:

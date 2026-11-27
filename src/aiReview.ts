@@ -76,7 +76,7 @@ export async function reviewLevel(levelId: string, progress: (msg: string) => vo
       return await fn();
     } catch (e) {
       const m = (e as Error).message;
-      if (/injoignable|ne répond pas|n'est pas installé|à temps|clé|401|403/i.test(m) || ++failures > 4) throw e;
+      if (/injoignable|ne répond pas|n'est pas installé|téléchargement|relancez|à temps|clé|401|403/i.test(m) || ++failures > 4) throw e;
       return null;
     }
   };

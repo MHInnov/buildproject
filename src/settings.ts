@@ -17,10 +17,12 @@ export interface AdminSettings {
    * vision open source servi par Ollama sur la machine ou le réseau de l'utilisateur, rien ne sort).
    */
   aiProvider: AiProvider;
-  /** Adresse du serveur Ollama. Par défaut le relais /ia-locale de l'application (docker compose --profile ia). */
+  /** Adresse du serveur Ollama. Par défaut le relais /ia-locale de l'application (image tout-en-un « -ia »). */
   localUrl: string;
   /** Modèle de vision Ollama (ex. qwen2.5vl:7b). */
   localModel: string;
+  /** L'IA locale de l'image tout-en-un a déjà été réglée d'office dans ce navigateur (une seule fois). */
+  bundledApplied?: boolean;
 }
 
 export type AiProvider = 'claude' | 'locale';
@@ -58,9 +60,9 @@ export const useSettings = create<AdminSettings & { update: (p: Partial<AdminSet
   ...load(),
   update: (p) => {
     set(p);
-    const { aiEnabled, apiKey, apiUrl, model, aiProvider, localUrl, localModel } = get();
+    const { aiEnabled, apiKey, apiUrl, model, aiProvider, localUrl, localModel, bundledApplied } = get();
     try {
-      localStorage.setItem(KEY, JSON.stringify({ aiEnabled, apiKey, apiUrl, model, aiProvider, localUrl, localModel }));
+      localStorage.setItem(KEY, JSON.stringify({ aiEnabled, apiKey, apiUrl, model, aiProvider, localUrl, localModel, bundledApplied }));
     } catch {
       /* ignore */
     }
@@ -85,3 +87,47 @@ export const aiIsLocal = (s: AdminSettings = useSettings.getState()) => s.aiProv
 
 /** L'IA est utilisable : activée et API configurée. */
 export const aiReady = (s: AdminSettings = useSettings.getState()) => s.aiEnabled && apiConfigured(s);
+
+/**
+ * IA locale livrée avec l'application (image Docker tout-en-un) : son modèle, la présence d'une carte
+ * graphique et l'état du modèle (téléchargé au premier lancement). Null avec l'image légère ou en développement.
+ */
+export interface BundledAi {
+  model: string;
+  gpu: boolean;
+  status: 'demarrage' | 'telechargement' | 'pret' | 'erreur' | 'sans-modele';
+}
+
+export const useBundledAi = create<{ info: BundledAi | null }>(() => ({ info: null }));
+
+export async function fetchBundledAi(): Promise<BundledAi | null> {
+  try {
+    const res = await fetch('/ia-locale.json', { cache: 'no-store' });
+    // Sans image tout-en-un, le serveur renvoie la page de l'application (HTML) : pas d'IA livrée
+    if (!res.ok || !(res.headers.get('content-type') ?? '').includes('json')) return null;
+    const info = (await res.json()) as BundledAi;
+    if (typeof info?.model !== 'string') return null;
+    useBundledAi.setState({ info });
+    return info;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Au démarrage : avec l'image tout-en-un, l'IA locale est choisie d'office (une seule fois par navigateur,
+ * les réglages faits ensuite dans l'administration restent). Elle n'est activée que s'il y a une carte
+ * graphique ; sans carte graphique, l'application reste sans IA (on peut l'activer, en plus lent).
+ */
+export async function detectBundledAi(): Promise<void> {
+  const info = await fetchBundledAi();
+  const s = useSettings.getState();
+  if (!info || s.bundledApplied) return;
+  s.update({
+    bundledApplied: true,
+    aiProvider: 'locale',
+    localUrl: DEFAULT_LOCAL_URL,
+    ...(info.model ? { localModel: info.model } : {}),
+    aiEnabled: info.gpu || (s.aiEnabled && s.aiProvider === 'locale'),
+  });
+}

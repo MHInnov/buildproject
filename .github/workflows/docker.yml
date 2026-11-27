@@ -38,6 +38,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
+          target: app
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
@@ -55,3 +56,39 @@ jobs:
           docker exec smoke nginx -T | grep -q 'location /connecteurs/apify/'
           docker logs smoke
           docker rm -f smoke
+
+      # Image tout-en-un (application + IA locale Ollama), mêmes étiquettes suffixées « -ia »
+      - id: meta-ia
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          flavor: suffix=-ia,onlatest=true
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: ia
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta-ia.outputs.tags }}
+          labels: ${{ steps.meta-ia.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Vérifie que l'image tout-en-un sert l'application sur le port 7080 et qu'Ollama répond derrière le relais
+      # (sans télécharger de modèle : IA_MODELE vide)
+      - name: Test de démarrage (image avec IA)
+        run: |
+          IMAGE=$(echo "${{ steps.meta-ia.outputs.tags }}" | head -n1)
+          docker run -d --name smoke-ia -p 7080:80 -e IA_MODELE= "$IMAGE"
+          for i in $(seq 1 40); do curl -fsS http://localhost:7080/ia-locale/api/tags >/dev/null && break; sleep 1; done
+          curl -fsS http://localhost:7080/ | grep -q '<div id="root">'
+          curl -fsS http://localhost:7080/ia-locale/api/tags | grep -q '"models"'
+          curl -fsS http://localhost:7080/ia-locale.json | grep -q '"gpu":false'
+          docker logs smoke-ia
+          docker rm -f smoke-ia
