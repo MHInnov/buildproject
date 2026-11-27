@@ -6,10 +6,11 @@ import { isFloorKind, PLAN_KIND_LABELS, parseDrawingScale, pdfScale, type PlanKi
 import type { Bitmap, TracedWall } from '../model/vectorize';
 import { decode, isPdf, nextFrame, pdfPages, type PlanPage } from '../planFiles';
 import { analysePlan, classifyPages, importPlans, levelFor, type ImportReport, type PlanInput } from '../plansImport';
-import { aiReady, apiConfigured, useSettings } from '../settings';
+import { aiIsLocal, aiReady, apiConfigured, useSettings } from '../settings';
+import { reviewLevel } from '../aiReview';
 import { AdminDialog } from './AdminDialog';
 import { useStore } from '../store';
-import { applyAiReading } from '../traceApply';
+import { applyAiReading, applyStoreys } from '../traceApply';
 
 interface Item {
   id: string;
@@ -137,37 +138,63 @@ export function PlansImport({ onClose }: { onClose: () => void }) {
       editExisting((b) => void (rep = importPlans(b, inputs)));
       const r = rep as ImportReport | null;
       if (!r) throw new Error('rien à importer');
-      // IA facultative : noms des pièces et ouvertures manquées
+      // IA facultative. Claude lit d'abord le plan entier (noms des pièces, ouvertures manquées) ; puis, avec
+      // Claude comme avec l'IA locale, chaque ouverture et chaque façade est relue sur une vue rapprochée
       if (useAi && apiConfigured()) {
+        const local = aiIsLocal();
         const b1 = useStore.getState().project.existing;
         for (const it of used.filter((x) => isFloorKind(x.kind))) {
           const l = b1.levels.find((x) => x.underlay?.assetId && inputs.find((i) => i.name === it.label)?.assetId === x.underlay.assetId);
           if (!l?.underlay) continue;
-          setBusy(`L'IA lit ${it.label}…`);
           try {
-            const res = await aiReadPlan(it.dataUrl, it.width, it.height);
-            const ul = l.underlay;
-            editExisting((b) => applyAiReading(b, l.id, ul, res));
-            r.lines.push(`${l.name} : ${res.rooms.length} pièces nommées par l'IA.`);
+            if (!local) {
+              setBusy(`L'IA lit ${it.label}…`);
+              const res = await aiReadPlan(it.dataUrl, it.width, it.height);
+              const ul = l.underlay;
+              editExisting((b) => applyAiReading(b, l.id, ul, res));
+              r.lines.push(`${l.name} : ${res.rooms.length} pièces nommées par l'IA.`);
+            }
+            const rv = await reviewLevel(l.id, setBusy, { rooms: local });
+            r.lines.push(...rv.lines);
+            r.warnings.push(...rv.warnings);
           } catch (e) {
             r.warnings.push(`IA, ${it.label} : ${(e as Error).message}`);
           }
         }
       }
-      // IA : cotes des coupes (allèges, linteaux, soubassement, toit), plus sûres que le dessin
+      // IA : cotes des coupes (hauteurs sous plafond, allèges, linteaux, soubassement, toit), plus sûres que le dessin
       if (useAi && apiConfigured()) {
+        let storeysDone = false;
         for (const it of used.filter((x) => x.kind === 'coupe')) {
           setBusy(`L'IA lit les cotes de ${it.label}…`);
           try {
             const facts = await aiReadSection(it.dataUrl);
             let notes: string[] = [];
-            editExisting((b) => void (notes = applySectionFacts(b, facts)));
+            editExisting((b) => {
+              notes = applySectionFacts(b, facts);
+              // Hauteurs sous plafond : la première coupe qui en donne fait foi, comme pour la lecture du dessin
+              const st = (facts.storeys ?? []).filter((x) => x.height >= 1.6 && x.height <= 6).sort((m, n) => m.storey - n.storey);
+              if (storeysDone || !st.length) return;
+              const sorted = [...b.levels].sort((m, n) => m.elevation - n.elevation);
+              const g = sorted.indexOf([...b.levels].sort((m, n) => Math.abs(m.elevation) - Math.abs(n.elevation))[0]);
+              const first = sorted[g + st[0].storey];
+              // Niveaux consécutifs seulement : un trou dans la liste décalerait les étages
+              const run = st.filter((x, i) => x.storey === st[0].storey + i);
+              if (!first) return;
+              const changed = applyStoreys(b, run.map((x) => ({ height: Math.round(x.height * 100) / 100, slab: x.slab ?? 0 })), first.id);
+              if (changed.length) {
+                storeysDone = true;
+                notes.push(`hauteurs sous plafond : ${changed.map((id) => b.levels.find((l) => l.id === id)!).map((l) => `${l.name} ${l.height.toFixed(2).replace('.', ',')} m`).join(', ')}`);
+              }
+            });
             r.lines.push(...notes.map((n) => `${it.label} (IA) : ${n}`));
           } catch (e) {
             r.warnings.push(`IA, ${it.label} : ${(e as Error).message}`);
           }
         }
       }
+      // Une seule fois la phrase commune à tous les niveaux relus
+      r.lines = r.lines.filter((l, i) => r.lines.indexOf(l) === i);
       if (r.levelId) setLevel(r.levelId);
       setReport(r);
     } catch (e) {
@@ -201,8 +228,10 @@ export function PlansImport({ onClose }: { onClose: () => void }) {
           <span className="muted small">
             {useAi
               ? apiOk
-                ? "Après le tracé, l'IA nomme les pièces et ajoute les portes et fenêtres manquées (appel à l'API définie dans les paramètres)."
-                : "Aucune API n'est définie : l'import se fera sans IA tant qu'elle n'est pas renseignée."
+                ? settings.aiProvider === 'locale'
+                  ? `Après le tracé, l'IA locale (${settings.localModel}) relit chaque porte et fenêtre, cherche les baies oubliées, nomme les pièces et lit les cotes des coupes. Rien ne quitte votre réseau ; compter de 1 à 5 minutes par plan selon la carte graphique.`
+                  : "Après le tracé, Claude nomme les pièces, relit chaque porte et fenêtre, cherche les baies oubliées et lit les cotes des coupes (appel à l'API définie dans les paramètres)."
+                : "Aucune IA n'est définie : l'import se fera sans IA tant qu'elle n'est pas renseignée."
               : 'Tout est retracé sur cet appareil, sans envoyer les plans.'}
           </span>
           {useAi && (
@@ -216,7 +245,7 @@ export function PlansImport({ onClose }: { onClose: () => void }) {
               }}
               disabled={!!busy}
             >
-              Paramètres de l'API…
+              Paramètres de l'IA…
             </button>
           )}
         </div>

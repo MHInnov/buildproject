@@ -6,7 +6,8 @@ import { levelById } from '../model/levels';
 import { autoVectorize, guessScale, WALL_STYLE_LABELS, type AutoVectorizeResult } from '../model/vectorize';
 import { alignWalls, footprint, parseDrawingScale, pdfScale } from '../model/plans';
 import { applyAiReading, applyTrace, groundLevel } from '../traceApply';
-import { aiReady, useSettings } from '../settings';
+import { aiIsLocal, aiReady, useSettings } from '../settings';
+import { reviewLevel } from '../aiReview';
 import { decode, isPdf, maskToDataUrl, nextFrame, pdfPages } from '../planFiles';
 import { useStore } from '../store';
 import { PlansImport } from './PlansImport';
@@ -30,6 +31,7 @@ export function UnderlayPanel() {
   const [realLength, setRealLength] = useState('');
   const [found, setFound] = useState<string | null>(null);
   const [multi, setMulti] = useState(false);
+  const [aiReport, setAiReport] = useState<string[]>([]);
   const levelWalls = existing.walls.filter((w) => w.levelId === levelId).length;
 
   useEffect(() => () => useUi.getState().set({ tracePreview: null, moveUnderlay: false }), []);
@@ -150,10 +152,17 @@ export function UnderlayPanel() {
   async function aiNames() {
     if (!ul || !src) return;
     setError(null);
+    setAiReport([]);
     setBusy("L'IA lit le plan…");
     try {
-      const res = await aiReadPlan(src, ul.width, ul.height);
-      editExisting((b) => applyAiReading(b, levelId, ul, res));
+      const local = aiIsLocal();
+      if (!local) {
+        const res = await aiReadPlan(src, ul.width, ul.height);
+        editExisting((b) => applyAiReading(b, levelId, ul, res));
+      }
+      // Relecture vue par vue : chaque ouverture, chaque façade (et les pièces sans nom avec l'IA locale)
+      const rv = await reviewLevel(levelId, setBusy, { rooms: local });
+      setAiReport([...rv.lines, ...rv.warnings.map((w) => `⚠ ${w}`)]);
     } catch (e) {
       setError(`Lecture par l'IA impossible : ${(e as Error).message}`);
     }
@@ -261,10 +270,21 @@ export function UnderlayPanel() {
             {settings.aiEnabled && (
               <li>
                 <strong>Lire le plan avec l'IA</strong>
-                <p className="muted small">Nomme les pièces et ajoute les portes et fenêtres oubliées.</p>
-                <button className="btn" onClick={() => void aiNames()} disabled={!!busy || !aiReady(settings)} title={aiReady(settings) ? '' : "Renseignez la clé API dans l'administration"}>
+                <p className="muted small">
+                  {settings.aiProvider === 'locale' ? `IA locale (${settings.localModel}), rien n'est envoyé dehors. ` : ''}
+                  Relit chaque porte et fenêtre (fausses portes, porte ou fenêtre, sens d'ouverture), cherche les baies oubliées sur les façades et nomme les pièces. Les corrections
+                  douteuses sont marquées « ? » sur le plan.
+                </p>
+                <button className="btn" onClick={() => void aiNames()} disabled={!!busy || !aiReady(settings)} title={aiReady(settings) ? '' : "Réglez l'IA dans l'administration"}>
                   Analyser avec l'IA
                 </button>
+                {aiReport.length > 0 && (
+                  <ul className="log">
+                    {aiReport.map((l, i) => (
+                      <li key={i}>{l}</li>
+                    ))}
+                  </ul>
+                )}
               </li>
             )}
           </ol>
